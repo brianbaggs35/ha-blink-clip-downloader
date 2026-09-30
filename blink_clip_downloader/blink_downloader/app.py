@@ -34,6 +34,7 @@ from .downloader import (
     TwoFARequired,
     probe_clip_duration,
 )
+from .e2e_fixtures import E2EFixtures
 from .event_watcher import HAEventWatcher
 from .gdrive_client import GDriveClient
 from .gdrive_queue import GDriveUploadQueue
@@ -142,9 +143,18 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             on_camera_renamed=self._handle_camera_renamed,
             on_camera_replaced=self._handle_camera_replaced,
         )
-        self._live_view = LiveViewManager(
-            get_camera=self._downloader.get_camera,
-            list_camera_names=self._downloader.list_camera_names,
+        # The HA integration job opts into these substitutes only after its
+        # production-mode checks have completed.
+        self._e2e_fixtures = (
+            E2EFixtures() if os.environ.get("BLINK_E2E_FIXTURES") == "1" else None
+        )
+        self._live_view = (
+            self._e2e_fixtures.live_view
+            if self._e2e_fixtures is not None
+            else LiveViewManager(
+                get_camera=self._downloader.get_camera,
+                list_camera_names=self._downloader.list_camera_names,
+            )
         )
         self._digest = DailyDigest(
             notifier=self._notifier,
@@ -230,13 +240,21 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             db=self._db,
             port=config.media_server_port,
             trigger_download=self._trigger_immediate_download,
-            two_fa_callback=self._downloader.submit_two_fa_code,
-            auth_state_getter=lambda: {
-                "state": self._downloader.auth_state,
-                "message": self._downloader.auth_message,
-                "two_fa_result_seq": self._downloader.two_fa_result_seq,
-                "two_fa_result_ok": self._downloader.two_fa_result_ok,
-            },
+            two_fa_callback=(
+                self._e2e_fixtures.auth.submit_two_fa
+                if self._e2e_fixtures is not None
+                else self._downloader.submit_two_fa_code
+            ),
+            auth_state_getter=(
+                self._e2e_fixtures.auth.status
+                if self._e2e_fixtures is not None
+                else lambda: {
+                    "state": self._downloader.auth_state,
+                    "message": self._downloader.auth_message,
+                    "two_fa_result_seq": self._downloader.two_fa_result_seq,
+                    "two_fa_result_ok": self._downloader.two_fa_result_ok,
+                }
+            ),
             analyzer=self._analyzer,
             analysis_queue=self._analysis_queue,
             notification_dispatcher=self._alert_dispatcher,
@@ -251,15 +269,37 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
                 config.ai_face_recognition_resolution
             ],
             live_view=self._live_view,
-            list_camera_names=self._downloader.list_camera_names,
-            get_camera_snapshot=self._downloader.get_camera_snapshot,
+            list_camera_names=(
+                self._e2e_fixtures.list_camera_names
+                if self._e2e_fixtures is not None
+                else self._downloader.list_camera_names
+            ),
+            get_camera_snapshot=(
+                self._e2e_fixtures.get_camera_snapshot
+                if self._e2e_fixtures is not None
+                else self._downloader.get_camera_snapshot
+            ),
             update_auto_analysis_cameras=self._set_auto_analysis_disabled_cameras,
-            get_sync_module_snapshot=self._downloader.get_sync_module_snapshot,
-            arm_sync_module=self._downloader.set_sync_module_armed,
-            arm_camera=self._downloader.set_camera_armed,
+            get_sync_module_snapshot=(
+                self._e2e_fixtures.sync_module.snapshot
+                if self._e2e_fixtures is not None
+                else self._downloader.get_sync_module_snapshot
+            ),
+            arm_sync_module=(
+                self._e2e_fixtures.sync_module.arm_module
+                if self._e2e_fixtures is not None
+                else self._downloader.set_sync_module_armed
+            ),
+            arm_camera=(
+                self._e2e_fixtures.sync_module.arm_camera
+                if self._e2e_fixtures is not None
+                else self._downloader.set_camera_armed
+            ),
             direct_access_login=config.direct_access_login,
             supervisor_token=config.supervisor_token,
         )
+        if self._e2e_fixtures is not None:
+            self._e2e_fixtures.enable_face_recognition(self._media_server)
         self._event_watcher = HAEventWatcher(
             supervisor_token=config.supervisor_token,
             on_motion=self._on_blink_motion,
@@ -723,36 +763,33 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             await asyncio.sleep(0)
 
         if self._config.enable_library_db:
-            # Re-populate the library with any clip files left behind under
-            # download_path from a previous installation (e.g. /data was
-            # wiped on uninstall but /share/blink-clips was not). Runs as a
-            # background task — a large library means an unbounded number of
-            # rglob()/stat() syscalls, and awaiting it inline here used to
-            # delay the media server task above from ever getting scheduled,
-            # leaving HA ingress with nothing listening on port 8099 (seen as
-            # a 504) for however long the filesystem walk took.
-            self._bg_tasks.append(
-                asyncio.create_task(self._reimport_library(), name="library_reimport")
-            )
-            # Backfill duration for clips stuck at 0/unset (see
-            # _backfill_clip_durations) — same "don't block startup"
-            # reasoning as the reimport above.
-            self._bg_tasks.append(
-                asyncio.create_task(
-                    self._backfill_clip_durations(), name="duration_backfill"
+            if self._e2e_fixtures is None:
+                # Keep startup maintenance away from the deterministic
+                # database fixtures: the browser suite seeds its own rows
+                # after startup, and a filesystem reimport/backfill/prune
+                # racing those rows would make the same E2E run nondeterministic.
+                # Production startup retains the existing maintenance path.
+                self._bg_tasks.append(
+                    asyncio.create_task(
+                        self._reimport_library(), name="library_reimport"
+                    )
                 )
-            )
-            # One-time cleanup of clip rows left orphaned by a since-fixed
-            # archiver.py bug (see ClipArchiver.prune_orphaned_archives) —
-            # runs before gdrive_queue starts below so it doesn't spend a
-            # cycle attempting uploads for rows this removes. Unconditional
-            # regardless of archive_enabled: this repairs existing bad data
-            # rather than depending on archiving being on right now.
-            self._bg_tasks.append(
-                asyncio.create_task(
-                    self._archiver.prune_orphaned_archives(), name="archive_prune"
+                # Backfill duration for clips stuck at 0/unset (see
+                # _backfill_clip_durations) — same non-blocking startup
+                # reasoning as the library reimport above.
+                self._bg_tasks.append(
+                    asyncio.create_task(
+                        self._backfill_clip_durations(), name="duration_backfill"
+                    )
                 )
-            )
+                # One-time cleanup of clip rows left orphaned by a since-fixed
+                # archiver.py bug (see ClipArchiver.prune_orphaned_archives).
+                self._bg_tasks.append(
+                    asyncio.create_task(
+                        self._archiver.prune_orphaned_archives(),
+                        name="archive_prune",
+                    )
+                )
             # Started unconditionally alongside the tasks above, not gated
             # behind Blink auth like AnalysisQueue (_finish_startup below) —
             # Drive backup only needs already-downloaded clips and the DB,

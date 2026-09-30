@@ -1,4 +1,4 @@
-import { test, expect } from './coverage-fixtures'
+import { appApiUrl, test, expect } from './coverage-fixtures'
 import type { Page, Route } from '@playwright/test'
 
 // Saving camera configs is a read-modify-write of one shared JSON file, so
@@ -52,7 +52,7 @@ async function conflictFirst(page: Page, n: number) {
 
 /** Read the stored configs over HTTP rather than through the UI. */
 async function storedDescription(page: Page, camera: string): Promise<string> {
-  const response = await page.request.get('/api/ai/camera-configs')
+  const response = await page.request.get(appApiUrl('/api/ai/camera-configs'))
   const configs = (await response.json()) as { camera: string; description?: string }[]
   return configs.find((config) => config.camera === camera)?.description ?? ''
 }
@@ -63,9 +63,9 @@ test.afterEach(async ({ page }) => {
   // coverage-fixtures.ts reads it, throwing away everything the test just
   // exercised -- and this cleanup does not need a browser page at all.
   await page.unrouteAll({ behavior: 'ignoreErrors' })
-  const response = await page.request.get('/api/ai/camera-configs')
+  const response = await page.request.get(appApiUrl('/api/ai/camera-configs'))
   const configs = (await response.json()) as Record<string, unknown>[]
-  await page.request.put('/api/ai/camera-configs', {
+  await page.request.put(appApiUrl('/api/ai/camera-configs'), {
     data: configs.map((config) => (config.camera === CAMERA ? { ...config, description: '' } : config)),
   })
   expect(await storedDescription(page, CAMERA)).toBe('')

@@ -41,7 +41,7 @@ test('the Customize panel starts collapsed and expands on click', async ({ page 
   await expect(page.locator('#secfeed-cameras')).toBeVisible()
 })
 
-test('a Save that the backend refuses says so instead of looking like it worked', async ({ page }) => {
+test('a Save that the backend refuses says so instead of looking like it worked @standalone', async ({ page }) => {
   // Routed to a 500, so this one writes nothing — it deliberately sits
   // above the mutating test below and must leave the shared settings file
   // exactly as it found it.
@@ -74,7 +74,7 @@ test('a feed that cannot load says so instead of showing an empty grid', async (
   await page.unroute('**/api/security-feed/cameras')
 })
 
-test('a cross-tab Refresh re-reads the feed', async ({ page }) => {
+test('a cross-tab Refresh re-reads the feed @standalone', async ({ page }) => {
   let fetches = 0
   await page.route('**/api/security-feed/cameras', (route) => {
     fetches += 1
@@ -109,7 +109,9 @@ test('a cross-tab Refresh leaves unsaved Customize edits alone', async ({ page }
 })
 
 // "mutating test goes last" convention.
-test('saving Customize settings narrows the displayed cameras and persists across a reload', async ({ page }) => {
+test('saving Customize settings narrows the displayed cameras and persists across a reload @standalone', async ({
+  page,
+}) => {
   await page.getByRole('button', { name: 'Customize' }).click()
 
   await page.locator('#secfeed-cameras').click()

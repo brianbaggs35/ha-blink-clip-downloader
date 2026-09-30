@@ -710,6 +710,47 @@ print(json.dumps({"options": options}))
   echo "OK: Supervisor stored ${key}=${value}; the next start should pick it up"
 }
 
+cmd_configure_frontend_e2e_options() {
+  local info merged after
+  info="$(supervisor_api GET "/addons/${ADDON_SLUG}/info")"
+  merged="$(printf '%s' "$info" | python3 -c '
+import json, sys
+options = json.load(sys.stdin)["data"]["options"]
+options.update({
+    "ai_analysis_enabled": True,
+    "ai_prompt_debug_enabled": True,
+    "ai_face_recognition_enabled": True,
+    "ollama_url": "http://127.0.0.1:1",
+    "ollama_model": "llava",
+    "archive_enabled": True,
+    "archive_after_days": 5,
+})
+print(json.dumps({"options": options}))
+')"
+  supervisor_api POST "/addons/${ADDON_SLUG}/options" "$merged" >/dev/null
+
+  after="$(supervisor_api GET "/addons/${ADDON_SLUG}/info")"
+  if ! printf '%s' "$after" | python3 -c '
+import json, sys
+options = json.load(sys.stdin)["data"]["options"]
+expected = {
+    "ai_analysis_enabled": True,
+    "ai_prompt_debug_enabled": True,
+    "ai_face_recognition_enabled": True,
+    "ollama_url": "http://127.0.0.1:1",
+    "ollama_model": "llava",
+    "archive_enabled": True,
+    "archive_after_days": 5,
+}
+if any(options.get(key) != value for key, value in expected.items()):
+    raise SystemExit("Supervisor did not persist all frontend E2E options")
+'; then
+    echo "Supervisor did not persist the frontend E2E options." >&2
+    return 1
+  fi
+  echo "OK: configured isolated analysis, archive, and face-recognition settings for Playwright"
+}
+
 cmd_assert_option_rejected() {
   # config.yaml's option schema is only worth anything if Supervisor
   # actually enforces it -- that schema is what stops a user typing a
@@ -1033,6 +1074,62 @@ SH
   echo "OK: seeded 3 playable clips with thumbnails under /share/blink-clips"
 }
 
+cmd_seed_frontend_e2e() {
+  local container
+  container="$(addon_container)" || return 1
+
+  local outer_server=/var/tmp/standalone_server.py
+  local outer_seed=/var/tmp/seed_frontend_e2e.py
+  local inner_server=/var/tmp/standalone_server.py
+  local inner_seed=/var/tmp/seed_frontend_e2e.py
+
+  if ! docker cp blink_clip_downloader/scripts/standalone_server.py \
+    "${CONTAINER_NAME}:${outer_server}" ||
+    ! docker cp blink_clip_downloader/scripts/seed_frontend_e2e.py \
+      "${CONTAINER_NAME}:${outer_seed}"; then
+    echo "Could not copy the frontend E2E seed helpers into ${CONTAINER_NAME}." >&2
+    return 1
+  fi
+  if ! docker exec "$CONTAINER_NAME" docker cp "$outer_server" "${container}:${inner_server}" ||
+    ! docker exec "$CONTAINER_NAME" docker cp "$outer_seed" "${container}:${inner_seed}"; then
+    echo "Could not copy the frontend E2E seed helpers into ${container}." >&2
+    return 1
+  fi
+
+  if ! docker exec "$CONTAINER_NAME" docker exec "$container" \
+    python3 "$inner_seed"; then
+    echo "Could not seed the frontend E2E fixtures in the add-on database." >&2
+    return 1
+  fi
+  echo "OK: seeded the production add-on database with frontend Playwright fixtures"
+}
+
+cmd_enable_frontend_e2e_fixtures() {
+  local container
+  container="$(addon_container)" || return 1
+
+  # Apply this only to the already-running CI add-on container, after every
+  # production-mode assertion has completed. The service restart keeps the
+  # container and its real ingress intact while launching the app with the
+  # explicit fixture flag; no image, repository file, or shipped option is
+  # changed.
+  if ! docker exec "$CONTAINER_NAME" docker exec "$container" sh -eu -c '
+    run=/etc/services.d/blink-downloader/run
+    if ! grep -q "^export BLINK_E2E_FIXTURES=1$" "$run"; then
+      grep -q "^exec python3 -m blink_downloader$" "$run"
+      sed -i "/^exec python3 -m blink_downloader$/i export BLINK_E2E_FIXTURES=1" "$run"
+    fi
+    s6-svc -r /run/service/blink-downloader
+  '; then
+    echo "Could not enable the isolated frontend E2E fixtures in ${container}." >&2
+    return 1
+  fi
+
+  poll "add-on responds after enabling frontend E2E fixtures" 60 3 \
+    curl -sf "http://127.0.0.1:${ADDON_PORT}/health" || return 1
+  echo "OK: enabled CI-only frontend E2E fixtures in the running add-on"
+}
+
 cmd_seed_data() {
   # Everything this job asserts through ingress had, until now, been an
   # *empty state*: no Blink account means no clips, so most tabs were only
@@ -1293,6 +1390,7 @@ case "${1:-}" in
     shift
     cmd_set_option "$@"
     ;;
+  configure-frontend-e2e-options) cmd_configure_frontend_e2e_options ;;
   assert-option-rejected)
     shift
     cmd_assert_option_rejected "$@"
@@ -1301,6 +1399,8 @@ case "${1:-}" in
   assert-signin) cmd_assert_signin ;;
   seed-data) cmd_seed_data ;;
   seed-media) cmd_seed_media ;;
+  seed-frontend-e2e) cmd_seed_frontend_e2e ;;
+  enable-frontend-e2e-fixtures) cmd_enable_frontend_e2e_fixtures ;;
   assert-seed-survived) cmd_assert_seed_survived ;;
   assert-clip-starred)
     shift
@@ -1319,7 +1419,7 @@ case "${1:-}" in
     cmd_diagnostics "$@"
     ;;
   *)
-    echo "Usage: $0 {prepare-addon-copy|wait-docker|serve-local-image <tar>|wait-core|discover|install|start|restart|assert-clean-log|assert-persisted <value>|assert-version <version>|enable-ingress-panel|set-option <key> <value>|assert-option-rejected <key> <value>|assert-capabilities|assert-signin|seed-data|assert-seed-survived|assert-clip-starred <clip>|assert-asset-persisted <name>|assert-log-contains <pattern> [description]|diagnostics <dir>}" >&2
+    echo "Usage: $0 {prepare-addon-copy|wait-docker|serve-local-image <tar>|wait-core|discover|install|start|restart|assert-clean-log|assert-persisted <value>|assert-version <version>|enable-ingress-panel|set-option <key> <value>|configure-frontend-e2e-options|assert-option-rejected <key> <value>|assert-capabilities|assert-signin|seed-data|seed-frontend-e2e|enable-frontend-e2e-fixtures|assert-seed-survived|assert-clip-starred <clip>|assert-asset-persisted <name>|assert-log-contains <pattern> [description]|diagnostics <dir>}" >&2
     exit 64
     ;;
 esac

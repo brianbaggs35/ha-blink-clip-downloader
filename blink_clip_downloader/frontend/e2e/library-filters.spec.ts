@@ -153,7 +153,7 @@ test('non-critical data (stats, cameras, tags, AI status, Google Drive status) f
   await expect(page.locator('.clip-card')).toHaveCount(TOTAL_CLIPS)
 })
 
-test('a malformed request is refused cleanly rather than erroring the page', async ({ page }) => {
+test('a malformed request is refused cleanly rather than erroring the page @standalone', async ({ page }) => {
   // Both of these used to reach PostgreSQL and come back as a bare 500: a
   // NUL byte is the one character its text type cannot hold, and an offset
   // larger than a bigint fails encoding rather than paging past the end.

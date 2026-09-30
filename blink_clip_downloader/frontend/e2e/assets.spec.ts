@@ -1,5 +1,5 @@
 import type { Locator, Page } from '@playwright/test'
-import { test, expect } from './coverage-fixtures'
+import { appApiUrl, test, expect } from './coverage-fixtures'
 
 // The Assets tab against the real backend: every write below goes through
 // media_server/assets.py to the redirected protected_assets.json and back.
@@ -47,7 +47,7 @@ async function chooseType(page: Page, label: string) {
 }
 
 async function assetsFromApi(page: Page) {
-  const response = await page.request.get('/api/assets')
+  const response = await page.request.get(appApiUrl('/api/assets'))
   expect(response.ok()).toBe(true)
   return (await response.json()).assets as {
     id: string
@@ -250,7 +250,7 @@ test('removing asks first, and a camera left with nothing goes back to one line'
 
   // Back to what standalone_server.py seeded, over HTTP.
   for (const asset of await assetsFromApi(page)) {
-    if (asset.name !== 'Mailbox') await page.request.delete(`/api/assets/${asset.id}`)
+    if (asset.name !== 'Mailbox') await page.request.delete(appApiUrl(`/api/assets/${asset.id}`))
   }
   expect((await assetsFromApi(page)).map((a) => a.name)).toEqual(['Mailbox'])
 })

@@ -999,7 +999,16 @@ Assistant's own API via the Automations tab's "Send test HA notification"
 button, and Supervisor-captured logs rendering on HA's own Settings > Apps
 > Log page — see `e2e/ha_integration_smoke.mjs`'s `checkHaNotification`/
 `checkAddonSupervisorTabs`), which `build`/`smoke-test` above don't touch
-at all. Three checks are worth knowing about specifically, because each
+at all. After those production-mode integration and durability checks, it
+also seeds the same deterministic data used by `frontend/e2e/` and runs that
+existing Playwright suite through the real ingress. A final, explicitly
+CI-only service restart substitutes only the external Blink camera/auth/
+Sync Module/Live View/face-model collaborators; the add-on's HTTP routes,
+database, browser, Supervisor, and ingress remain real. The Direct Access
+Sign-In spec targets the add-on's mapped direct port instead of ingress, so
+it can verify the real Supervisor-backed sign-in gate; the
+remaining interaction specs run through ingress. Three checks are worth
+knowing about specifically, because each
 guards something no other suite can see:
 `checkMediaThroughIngress` (in the post-seed pass) asserts a **206 with a
 correct `Content-Range`** for a `Range` request — Video.js needs that to
@@ -1040,8 +1049,10 @@ the production profile again on circumstantial evidence alone.
 `scripts/ci/ha_integration_setup.sh`'s subcommands (`prepare-addon-copy`/
 `wait-docker`/`serve-local-image`/`wait-core`/`discover`/`install`/`start`/
 `restart`/`assert-clean-log`/`assert-persisted`/`assert-version`/
-`enable-ingress-panel`/`diagnostics`) can each be run independently
-against an already-running container for local debugging, and
+`enable-ingress-panel`/`configure-frontend-e2e-options`/
+`seed-frontend-e2e`/`enable-frontend-e2e-fixtures`/`diagnostics`) can each
+be run independently against an already-running container for local
+debugging, and
 `scripts/run-act-ha-integration.sh` runs the whole workflow locally via
 `act`, mirroring `scripts/run-act.sh`'s conventions for `ci.yaml` but with
 one addition specific to this job: `--bind`, required because

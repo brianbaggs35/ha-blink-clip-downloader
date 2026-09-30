@@ -1301,6 +1301,44 @@ async def test_run_startup_error_marks_disconnected(app):
     assert app._media_server.extra_status.get("connected") is False
 
 
+async def test_run_e2e_mode_skips_library_maintenance(app):
+    import dataclasses
+
+    from blink_downloader.e2e_fixtures import E2EFixtures
+
+    app._e2e_fixtures = E2EFixtures()
+    app._config = dataclasses.replace(
+        app._config,
+        enable_library_db=True,
+        enable_media_server=False,
+    )
+    app._storage.ensure_directory = MagicMock()
+    app._db.init = AsyncMock()
+    app._db.close = AsyncMock()
+    app._media_server.stop = AsyncMock()
+    app._event_watcher.stop = AsyncMock()
+    app._gdrive_queue.start = AsyncMock()
+    app._gdrive_queue.stop = MagicMock()
+    app._gdrive_client.close = AsyncMock()
+    app._live_view.close = AsyncMock()
+    app._downloader.connect = AsyncMock(side_effect=RuntimeError("test stop"))
+    app._downloader.disconnect = AsyncMock()
+    app._notifier.close = AsyncMock()
+    app._ha_config_writer.close = AsyncMock()
+    app._alert_dispatcher.close = AsyncMock()
+    app._tracker.save = MagicMock()
+    app._interruptible_wait = AsyncMock(return_value=False)
+    app._reimport_library = AsyncMock()
+    app._backfill_clip_durations = AsyncMock()
+    app._archiver.prune_orphaned_archives = AsyncMock()
+
+    await app.run()
+
+    app._reimport_library.assert_not_awaited()
+    app._backfill_clip_durations.assert_not_awaited()
+    app._archiver.prune_orphaned_archives.assert_not_awaited()
+
+
 async def test_run_invalid_credentials_marks_disconnected(app):
     """AuthenticationError during startup must report connected=False via
     extra_status — before this fix, extra_status only ever gained a
@@ -2093,6 +2131,34 @@ def test_media_server_wired_to_downloader_camera_accessors(app):
     # accesses even for the same underlying function+instance - compare by
     # equality (which bound methods do support) instead.
     assert app._media_server._get_camera_snapshot == app._downloader.get_camera_snapshot
+
+
+def test_ci_e2e_mode_replaces_only_external_media_server_collaborators(
+    base_config, monkeypatch
+):
+    from blink_downloader.media_server import faces as faces_routes
+
+    original_availability_check = faces_routes.is_face_recognition_available
+    monkeypatch.setattr(
+        faces_routes,
+        "is_face_recognition_available",
+        original_availability_check,
+    )
+    monkeypatch.setenv("BLINK_E2E_FIXTURES", "1")
+
+    app = BlinkClipDownloaderApp(base_config)
+    fixtures = app._e2e_fixtures
+
+    assert fixtures is not None
+    assert app._live_view is fixtures.live_view
+    assert app._media_server._two_fa_callback == fixtures.auth.submit_two_fa
+    assert app._media_server._auth_state_getter == fixtures.auth.status
+    assert app._media_server._list_camera_names == fixtures.list_camera_names
+    assert app._media_server._get_camera_snapshot == fixtures.get_camera_snapshot
+    assert app._media_server._get_sync_module_snapshot == fixtures.sync_module.snapshot
+    assert app._media_server._arm_sync_module == fixtures.sync_module.arm_module
+    assert app._media_server._arm_camera == fixtures.sync_module.arm_camera
+    assert app._media_server._face_embedder is fixtures.face_embedder
 
 
 async def test_media_server_get_camera_snapshot_reaches_real_camera(app):
