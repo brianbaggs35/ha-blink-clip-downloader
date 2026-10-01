@@ -15,6 +15,7 @@ therefore resolved to itself and failed CI — where the optional, GPU-only
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -22,7 +23,10 @@ from typing import Any
 
 import aiohttp
 
-from ..model_catalog import _vision_model_score, is_vision_model
+from ..model_catalog import (
+    _OLLAMA_CLOUD_RECOMMENDED_MODELS,
+    _vision_model_score,
+)
 from .base import (
     _API_TIMEOUT,
     _HEALTH_TIMEOUT,
@@ -32,6 +36,7 @@ from .base import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+_MODEL_DETAILS_CONCURRENCY = 4
 
 
 async def _log_http_error(resp: aiohttp.ClientResponse) -> None:
@@ -123,7 +128,20 @@ class ClipAnalyzer(BaseAnalyzer):
             return False
 
     async def fetch_models(self) -> list[dict[str, Any]]:
-        """Fetch vision-capable models from Ollama, sorted best-first."""
+        """List installed local models or available Cloud vision models."""
+        models = await self._fetch_ollama_model_list()
+        if models is None:
+            return []
+
+        vision, other = await self._classify_models(models)
+        if self.provider_name == "ollama_cloud":
+            return self._sort_cloud_models(vision)
+
+        vision.sort(key=lambda model: model["score"], reverse=True)
+        return vision + other
+
+    async def _fetch_ollama_model_list(self) -> list[dict[str, Any]] | None:
+        """Fetch valid model summaries from Ollama's documented tags API."""
         try:
             session = self._get_session()
             async with session.get(
@@ -133,30 +151,108 @@ class ClipAnalyzer(BaseAnalyzer):
                     _LOGGER.warning(
                         "Ollama model listing returned HTTP %d", resp.status
                     )
-                    return []
+                    return None
                 data = await resp.json()
                 if not isinstance(data, dict) or not isinstance(
                     data.get("models"), list
                 ):
                     _LOGGER.warning("Ollama returned an invalid model-list response")
-                    return []
-                all_models = data.get("models", [])
-                vision = [
+                    return None
+                return [
                     model
-                    for model in all_models
-                    if isinstance(model, dict)
-                    and isinstance(model.get("name"), str)
-                    and is_vision_model(model["name"])
+                    for model in data["models"]
+                    if isinstance(model, dict) and isinstance(model.get("name"), str)
                 ]
-                for m in vision:
-                    m["score"] = _vision_model_score(m.get("name", ""))
-                return sorted(vision, key=lambda m: m.get("score", 0), reverse=True)
         # TimeoutError is deliberately not listed: since 3.3 it derives from
         # OSError, so naming both catches nothing extra and reads as though
         # it did. A timed-out model listing still lands here.
-        except (aiohttp.ClientError, OSError, json.JSONDecodeError) as exc:
+        except (
+            aiohttp.ClientError,
+            OSError,
+            json.JSONDecodeError,
+            UnicodeDecodeError,
+        ) as exc:
             _LOGGER.warning("Failed to fetch Ollama models: %s", exc)
-            return []
+            return None
+
+    async def _classify_models(
+        self, models: list[dict[str, Any]]
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Group model summaries by the capability returned from ``/api/show``."""
+        semaphore = asyncio.Semaphore(_MODEL_DETAILS_CONCURRENCY)
+
+        async def has_vision(model: dict[str, Any]) -> bool | None:
+            async with semaphore:
+                return await self._model_supports_vision(model["name"])
+
+        capabilities = await asyncio.gather(*(has_vision(model) for model in models))
+        vision: list[dict[str, Any]] = []
+        other: list[dict[str, Any]] = []
+        for model, supports_vision in zip(models, capabilities, strict=True):
+            if supports_vision is True:
+                model["score"] = _vision_model_score(model["name"])
+                vision.append(model)
+            elif supports_vision is False or self.provider_name != "ollama_cloud":
+                other.append(model)
+        return vision, other
+
+    @staticmethod
+    def _sort_cloud_models(models: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Put documented Cloud recommendations first, then sort by model id."""
+        recommended_order = {
+            name: index for index, name in enumerate(_OLLAMA_CLOUD_RECOMMENDED_MODELS)
+        }
+        for model in models:
+            if model["name"] in recommended_order:
+                model["recommended"] = True
+        return sorted(
+            models,
+            key=lambda model: (
+                recommended_order.get(model["name"], len(recommended_order)),
+                model["name"].casefold(),
+            ),
+        )
+
+    async def _model_supports_vision(self, model_name: str) -> bool | None:
+        """Read Ollama's documented capability metadata for one model."""
+        try:
+            async with self._get_session().post(
+                f"{self._ollama_url}/api/show",
+                json={"model": model_name},
+                timeout=_HEALTH_TIMEOUT,
+            ) as resp:
+                if resp.status != 200:
+                    _LOGGER.warning(
+                        "Ollama model details for %s returned HTTP %d",
+                        model_name,
+                        resp.status,
+                    )
+                    return None
+                data = await resp.json()
+                capabilities = (
+                    data.get("capabilities") if isinstance(data, dict) else None
+                )
+                if not isinstance(capabilities, list) or any(
+                    not isinstance(capability, str) for capability in capabilities
+                ):
+                    _LOGGER.warning(
+                        "Ollama returned invalid capability details for %s",
+                        model_name,
+                    )
+                    return None
+                return "vision" in capabilities
+        except (
+            aiohttp.ClientError,
+            OSError,
+            json.JSONDecodeError,
+            UnicodeDecodeError,
+        ) as exc:
+            _LOGGER.warning(
+                "Failed to fetch Ollama model details for %s: %s",
+                model_name,
+                exc,
+            )
+            return None
 
     async def _call_model(self, frames: list[bytes], prompt: str) -> str:
         return await self.call_ollama(frames, prompt)

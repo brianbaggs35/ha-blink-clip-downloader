@@ -34,6 +34,7 @@ const OPENAI_BEST_ESCALATION_MODEL = 'gpt-5.4-mini'
 type ModelTier = 'primary' | 'escalation'
 
 function isBestModel(m: AiModelEntry, index: number, provider: string | undefined, tier: ModelTier): boolean {
+  if (provider === 'ollama_cloud') return m.recommended === true
   if (provider === 'openai') {
     return m.name === (tier === 'primary' ? OPENAI_BEST_PRIMARY_MODEL : OPENAI_BEST_ESCALATION_MODEL)
   }
@@ -64,8 +65,12 @@ async function fetchModels() {
     if (models.value.length && !selectedModel.value) selectedModel.value = models.value[0].name
     toast.show(
       models.value.length
-        ? `Found ${models.value.length} vision model(s)`
-        : 'No vision models found on this Ollama server',
+        ? props.status.provider === 'ollama_cloud'
+          ? `Found ${models.value.length} available vision model(s)`
+          : `Found ${models.value.length} installed model(s)`
+        : props.status.provider === 'ollama_cloud'
+          ? 'No vision models available to this Ollama Cloud account'
+          : 'No models found on this Ollama server',
     )
   } catch {
     toast.show('Failed to fetch models', true)
