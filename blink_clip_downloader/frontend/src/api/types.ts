@@ -396,6 +396,7 @@ export interface AiModelEntry {
   display_name?: string
   description?: string
   size?: number
+  recommended?: boolean
   [key: string]: unknown
 }
 

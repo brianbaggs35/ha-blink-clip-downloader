@@ -9,6 +9,11 @@
   `https://ollama.com` instead of the retired `api.ollama.com` host. Failed
   and malformed responses now produce clear, bounded warnings rather than
   obscuring the provider's error or breaking analysis.
+- **Improved Ollama model discovery.** Local Ollama lists every installed
+  model, placing vision-capable ones first based on Ollama's `/api/show`
+  capabilities. Ollama Cloud lists the account's available vision models
+  from `/api/tags`, recommends Gemma 4 31B and GLM-5.3-Flash when available,
+  and checks each model's documented capability metadata.
 
 ## 6.0.8
 

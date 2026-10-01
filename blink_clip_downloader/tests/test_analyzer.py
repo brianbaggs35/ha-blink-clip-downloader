@@ -65,6 +65,25 @@ def _mock_session(**overrides: object) -> MagicMock:
     return s
 
 
+def _mock_model_details_response(capabilities: object, status: int = 200) -> AsyncMock:
+    response = AsyncMock()
+    response.status = status
+    response.json = AsyncMock(return_value={"capabilities": capabilities})
+    response.__aenter__ = AsyncMock(return_value=response)
+    response.__aexit__ = AsyncMock(return_value=False)
+    return response
+
+
+def _mock_model_details_post(
+    capabilities_by_name: dict[str, list[str]],
+) -> MagicMock:
+    return MagicMock(
+        side_effect=lambda _url, **kwargs: _mock_model_details_response(
+            capabilities_by_name[kwargs["json"]["model"]]
+        )
+    )
+
+
 @pytest.fixture
 def analyzer() -> ClipAnalyzer:
     return ClipAnalyzer(
@@ -849,7 +868,12 @@ async def test_fetch_models_success(analyzer: ClipAnalyzer) -> None:
     mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
     mock_resp.__aexit__ = AsyncMock(return_value=False)
 
-    analyzer._session = _mock_session(get=MagicMock(return_value=mock_resp))
+    analyzer._session = _mock_session(
+        get=MagicMock(return_value=mock_resp),
+        post=_mock_model_details_post(
+            {"llava:7b": ["vision"], "moondream:latest": ["vision"]}
+        ),
+    )
     models = await analyzer.fetch_models()
     assert len(models) == 2
     assert models[0]["name"] == "llava:7b"
@@ -1002,13 +1026,18 @@ def test_is_vision_model_not_vision() -> None:
 # ------------------------------------------------------------------
 
 
-async def test_fetch_models_filters_non_vision(analyzer: ClipAnalyzer) -> None:
+async def test_fetch_models_lists_all_models_with_vision_first(
+    analyzer: ClipAnalyzer,
+) -> None:
     models_data = {
         "models": [
             {"name": "llava:7b", "size": 4_000_000_000},
             {"name": "llama3:8b", "size": 6_000_000_000},
+            {"name": "qwen3-vl:4b"},
             {"name": "moondream:latest", "size": 1_500_000_000},
             {"name": "gemma:2b", "size": 2_000_000_000},
+            {"name": "qwen3.5:4b"},
+            {"name": "qwen2.5vl:3b"},
         ]
     }
     mock_resp = AsyncMock()
@@ -1017,13 +1046,47 @@ async def test_fetch_models_filters_non_vision(analyzer: ClipAnalyzer) -> None:
     mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
     mock_resp.__aexit__ = AsyncMock(return_value=False)
 
-    analyzer._session = _mock_session(get=MagicMock(return_value=mock_resp))
+    analyzer._session = _mock_session(
+        get=MagicMock(return_value=mock_resp),
+        post=_mock_model_details_post(
+            {
+                "llava:7b": ["completion", "vision"],
+                "llama3:8b": ["completion"],
+                "qwen3-vl:4b": ["completion", "vision"],
+                "moondream:latest": ["vision"],
+                "gemma:2b": ["completion"],
+                "qwen3.5:4b": ["completion", "vision"],
+                "qwen2.5vl:3b": ["completion", "vision"],
+            }
+        ),
+    )
     models = await analyzer.fetch_models()
     names = [m["name"] for m in models]
-    assert "llava:7b" in names
-    assert "moondream:latest" in names
-    assert "llama3:8b" not in names
-    assert "gemma:2b" not in names
+    assert names == [
+        "llava:7b",
+        "moondream:latest",
+        "qwen3-vl:4b",
+        "qwen3.5:4b",
+        "qwen2.5vl:3b",
+        "llama3:8b",
+        "gemma:2b",
+    ]
+    assert analyzer._session.post.call_count == 7
+    assert {
+        call.kwargs["json"]["model"] for call in analyzer._session.post.call_args_list
+    } == {
+        "llava:7b",
+        "llama3:8b",
+        "qwen3-vl:4b",
+        "moondream:latest",
+        "gemma:2b",
+        "qwen3.5:4b",
+        "qwen2.5vl:3b",
+    }
+    assert all(
+        call.args[0] == "http://localhost:11434/api/show"
+        for call in analyzer._session.post.call_args_list
+    )
 
 
 # ------------------------------------------------------------------
@@ -1126,8 +1189,10 @@ async def test_ollama_cloud_uses_cloud_base_url() -> None:
 async def test_ollama_cloud_fetch_models() -> None:
     models_data = {
         "models": [
-            {"name": "llava:7b", "size": 4_000_000_000},
-            {"name": "llama3:8b", "size": 5_000_000_000},
+            {"name": "glm-5.3-flash"},
+            {"name": "kimi-k3"},
+            {"name": "gemma4:31b"},
+            {"name": "glm-5.3"},
             {"name": 42},
             "malformed model",
         ]
@@ -1139,12 +1204,127 @@ async def test_ollama_cloud_fetch_models() -> None:
     mock_resp.__aexit__ = AsyncMock(return_value=False)
 
     a = OllamaCloudAnalyzer(api_key="key", model="llava:7b", prompt="test")
-    a._session = _mock_session(get=MagicMock(return_value=mock_resp))
+    a._session = _mock_session(
+        get=MagicMock(return_value=mock_resp),
+        post=_mock_model_details_post(
+            {
+                "glm-5.3-flash": ["completion", "thinking", "vision"],
+                "kimi-k3": ["completion", "vision"],
+                "gemma4:31b": ["completion", "thinking", "vision"],
+                "glm-5.3": ["completion", "thinking"],
+            }
+        ),
+    )
     models = await a.fetch_models()
-    # Should filter to vision-only
     names = [m["name"] for m in models]
-    assert "llava:7b" in names
-    assert "llama3:8b" not in names
+    assert names == [
+        "gemma4:31b",
+        "glm-5.3-flash",
+        "kimi-k3",
+    ]
+    assert models[0]["recommended"] is True
+    assert models[1]["recommended"] is True
+    assert "recommended" not in models[2]
+    assert all(
+        call.args[0] == "https://ollama.com/api/show"
+        for call in a._session.post.call_args_list
+    )
+
+
+async def test_cloud_model_details_failures_are_logged_and_excluded(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    tags_response = AsyncMock()
+    tags_response.status = 200
+    tags_response.json = AsyncMock(return_value={"models": [{"name": "unknown-model"}]})
+    tags_response.__aenter__ = AsyncMock(return_value=tags_response)
+    tags_response.__aexit__ = AsyncMock(return_value=False)
+    details_response = _mock_model_details_response([], status=503)
+    analyzer = OllamaCloudAnalyzer(api_key="key", model="gemma4:31b", prompt="test")
+    analyzer._session = _mock_session(
+        get=MagicMock(return_value=tags_response),
+        post=MagicMock(return_value=details_response),
+    )
+
+    with caplog.at_level(logging.WARNING):
+        assert await analyzer.fetch_models() == []
+
+    assert "Ollama model details for unknown-model returned HTTP 503" in caplog.text
+
+
+@pytest.mark.parametrize("capabilities", ["vision", [1]])
+async def test_invalid_model_capabilities_keep_local_model_list(
+    capabilities: object, caplog: pytest.LogCaptureFixture
+) -> None:
+    tags_response = AsyncMock()
+    tags_response.status = 200
+    tags_response.json = AsyncMock(return_value={"models": [{"name": "unknown-model"}]})
+    tags_response.__aenter__ = AsyncMock(return_value=tags_response)
+    tags_response.__aexit__ = AsyncMock(return_value=False)
+    details_response = _mock_model_details_response(capabilities)
+    analyzer = ClipAnalyzer(
+        ollama_url="http://localhost:11434", model="llava:7b", prompt="test"
+    )
+    analyzer._session = _mock_session(
+        get=MagicMock(return_value=tags_response),
+        post=MagicMock(return_value=details_response),
+    )
+
+    with caplog.at_level(logging.WARNING):
+        models = await analyzer.fetch_models()
+
+    assert [model["name"] for model in models] == ["unknown-model"]
+    assert "Ollama returned invalid capability details for unknown-model" in caplog.text
+
+
+async def test_non_object_model_details_are_logged_and_keep_local_model_list(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    tags_response = AsyncMock()
+    tags_response.status = 200
+    tags_response.json = AsyncMock(return_value={"models": [{"name": "unknown-model"}]})
+    tags_response.__aenter__ = AsyncMock(return_value=tags_response)
+    tags_response.__aexit__ = AsyncMock(return_value=False)
+    details_response = _mock_model_details_response([])
+    details_response.json = AsyncMock(return_value=[])
+    analyzer = ClipAnalyzer(
+        ollama_url="http://localhost:11434", model="llava:7b", prompt="test"
+    )
+    analyzer._session = _mock_session(
+        get=MagicMock(return_value=tags_response),
+        post=MagicMock(return_value=details_response),
+    )
+
+    with caplog.at_level(logging.WARNING):
+        models = await analyzer.fetch_models()
+
+    assert [model["name"] for model in models] == ["unknown-model"]
+    assert "Ollama returned invalid capability details for unknown-model" in caplog.text
+
+
+async def test_model_capability_connection_failure_is_logged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import aiohttp
+
+    tags_response = AsyncMock()
+    tags_response.status = 200
+    tags_response.json = AsyncMock(return_value={"models": [{"name": "unknown-model"}]})
+    tags_response.__aenter__ = AsyncMock(return_value=tags_response)
+    tags_response.__aexit__ = AsyncMock(return_value=False)
+    analyzer = ClipAnalyzer(
+        ollama_url="http://localhost:11434", model="llava:7b", prompt="test"
+    )
+    analyzer._session = _mock_session(
+        get=MagicMock(return_value=tags_response),
+        post=MagicMock(side_effect=aiohttp.ClientConnectionError("connection refused")),
+    )
+
+    with caplog.at_level(logging.WARNING):
+        models = await analyzer.fetch_models()
+
+    assert [model["name"] for model in models] == ["unknown-model"]
+    assert "Failed to fetch Ollama model details for unknown-model" in caplog.text
 
 
 # ------------------------------------------------------------------
@@ -1978,7 +2158,16 @@ async def test_fetch_models_sorted_best_first(analyzer: ClipAnalyzer) -> None:
     mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
     mock_resp.__aexit__ = AsyncMock(return_value=False)
 
-    analyzer._session = _mock_session(get=MagicMock(return_value=mock_resp))
+    analyzer._session = _mock_session(
+        get=MagicMock(return_value=mock_resp),
+        post=_mock_model_details_post(
+            {
+                "moondream:latest": ["vision"],
+                "llama3.2-vision:11b": ["vision"],
+                "llava:7b": ["vision"],
+            }
+        ),
+    )
     models = await analyzer.fetch_models()
 
     assert len(models) == 3
@@ -2001,7 +2190,10 @@ async def test_fetch_models_score_field_present(analyzer: ClipAnalyzer) -> None:
     mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
     mock_resp.__aexit__ = AsyncMock(return_value=False)
 
-    analyzer._session = _mock_session(get=MagicMock(return_value=mock_resp))
+    analyzer._session = _mock_session(
+        get=MagicMock(return_value=mock_resp),
+        post=_mock_model_details_post({"llava:7b": ["vision"]}),
+    )
     models = await analyzer.fetch_models()
 
     assert "score" in models[0]
