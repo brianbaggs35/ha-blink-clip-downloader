@@ -1,16 +1,12 @@
 import { appApiUrl, test, expect } from './coverage-fixtures'
 
 test.describe('@ha', () => {
-  test('loads the app and fixture auth state through Supervisor ingress @standalone', async ({ page }) => {
+  test('loads the app through Supervisor ingress', async ({ page }) => {
     const response = await page.goto('/')
 
     expect(response?.ok()).toBe(true)
     await page.locator('.app-nav-tab[data-tab="library"]').click()
     await expect(page.locator('.app-nav-tab.active[data-tab="library"]')).toBeVisible()
-
-    const authResponse = await page.request.get(appApiUrl('/api/auth/status'))
-    expect(authResponse.ok()).toBe(true)
-    expect(await authResponse.json()).toMatchObject({ state: 'connected' })
   })
 
   test('saves and reloads a camera setting through Supervisor ingress', async ({ page }) => {

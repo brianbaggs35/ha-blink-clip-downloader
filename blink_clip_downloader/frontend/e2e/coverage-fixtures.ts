@@ -1,4 +1,4 @@
-import { test as base, expect } from '@playwright/test'
+import { test as base } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
@@ -9,7 +9,8 @@ import path from 'node:path'
 // comment on how the build this runs against gets instrumented in the
 // first place (vite.config.ts's istanbul plugin, VITE_COVERAGE=true only).
 const COVERAGE_DIR = path.join(process.cwd(), '.nyc_output')
-const HA_INGRESS_URL = process.env.BLINK_E2E_HA === '1' ? process.env.HA_E2E_INGRESS_URL : undefined
+export const IS_HA_E2E = process.env.BLINK_E2E_HA === '1'
+const HA_INGRESS_URL = IS_HA_E2E ? process.env.HA_E2E_INGRESS_URL : undefined
 
 export function appPathname(requestUrl: string): string {
   return new URL(requestUrl).pathname.replace(/^\/api\/hassio_ingress\/[^/]+/, '') || '/'
@@ -25,7 +26,8 @@ export function ingressNavigationUrl(requestUrl: string, ingressBase: URL): stri
   const url = new URL(requestUrl, ingressBase)
   if (url.origin !== ingressBase.origin) return requestUrl
 
-  const ingressPath = ingressBase.pathname.replace(/\/+$/, '')
+  let ingressPath = ingressBase.pathname
+  while (ingressPath.endsWith('/')) ingressPath = ingressPath.slice(0, -1)
   if (url.pathname === ingressPath || url.pathname.startsWith(`${ingressPath}/`)) {
     return url.toString()
   }
@@ -66,4 +68,4 @@ export const test = base.extend({
   },
 })
 
-export { expect }
+export { expect } from '@playwright/test'
