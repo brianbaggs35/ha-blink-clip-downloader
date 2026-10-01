@@ -180,7 +180,7 @@ configuration:
   ollama_cloud_api_key:
     name: Ollama Cloud API 密钥
     description: >-
-      来自 api.ollama.com 的 API 密钥。当 ai_provider 为 “ollama_cloud” 时必填。
+      来自 ollama.com/settings/keys 的 API 密钥。当 ai_provider 为 “ollama_cloud” 时必填。
   moondream_api_key:
     name: Moondream API 密钥
     description: >-

@@ -1,6 +1,6 @@
 ---
 name: Blink Clip Downloader
-version: "v6.0.8"
+version: "v6.0.9"
 slug: blink_clip_downloader
 image: "ghcr.io/brianbaggs35/blink_clip_downloader"
 description: >-
@@ -181,7 +181,7 @@ options:
   ai_analysis_enabled: false
   # AI provider to use. Options:
   #   "ollama"          – Ollama server running a vision model on your LAN (free, private)
-  #   "ollama_cloud"    – Ollama Cloud API (api.ollama.com, needs ollama_cloud_api_key)
+  #   "ollama_cloud"    – Ollama Cloud API (ollama.com, needs ollama_cloud_api_key)
   #   "moondream_cloud" – Moondream Cloud API (needs moondream_api_key, billed per request)
   #   "moondream_local" – Moondream 0.5B INT8 model, run on this device (free, requires an NVIDIA/Apple Silicon GPU)
   #   "anthropic"       – Anthropic Claude API (needs anthropic_api_key, billed per token)
@@ -192,7 +192,7 @@ options:
   # [Ollama / Ollama Cloud] Vision model to use. Use "Fetch Models" in the web UI
   # to see available models on your server (e.g. llava:7b, llama3.2-vision:11b).
   ollama_model: ""
-  # [Ollama Cloud] API key from api.ollama.com (leave empty for local Ollama).
+  # [Ollama Cloud] API key from ollama.com/settings/keys (leave empty for local Ollama).
   ollama_cloud_api_key: ""
   # [Moondream Cloud] API key from moondream.ai.
   moondream_api_key: ""

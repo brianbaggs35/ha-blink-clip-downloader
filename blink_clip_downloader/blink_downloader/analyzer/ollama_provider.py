@@ -34,6 +34,23 @@ from .base import (
 _LOGGER = logging.getLogger(__name__)
 
 
+async def _log_http_error(resp: aiohttp.ClientResponse) -> None:
+    """Log an Ollama error response without dumping an unbounded body."""
+    try:
+        data = await resp.json(content_type=None)
+    except (aiohttp.ClientError, json.JSONDecodeError, UnicodeDecodeError):
+        data = None
+
+    error = data.get("error") if isinstance(data, dict) else None
+    if isinstance(error, str):
+        detail = "".join(character for character in error if character.isprintable())
+        detail = " ".join(detail.split())[:300]
+        if detail:
+            _LOGGER.warning("Ollama returned HTTP %d: %s", resp.status, detail)
+            return
+    _LOGGER.warning("Ollama returned HTTP %d", resp.status)
+
+
 class ClipAnalyzer(BaseAnalyzer):
     """Extracts frames from clips and sends them to an Ollama vision model."""
 
@@ -113,17 +130,32 @@ class ClipAnalyzer(BaseAnalyzer):
                 f"{self._ollama_url}/api/tags", timeout=_HEALTH_TIMEOUT
             ) as resp:
                 if resp.status != 200:
+                    _LOGGER.warning(
+                        "Ollama model listing returned HTTP %d", resp.status
+                    )
                     return []
                 data = await resp.json()
+                if not isinstance(data, dict) or not isinstance(
+                    data.get("models"), list
+                ):
+                    _LOGGER.warning("Ollama returned an invalid model-list response")
+                    return []
                 all_models = data.get("models", [])
-                vision = [m for m in all_models if is_vision_model(m.get("name", ""))]
+                vision = [
+                    model
+                    for model in all_models
+                    if isinstance(model, dict)
+                    and isinstance(model.get("name"), str)
+                    and is_vision_model(model["name"])
+                ]
                 for m in vision:
                     m["score"] = _vision_model_score(m.get("name", ""))
                 return sorted(vision, key=lambda m: m.get("score", 0), reverse=True)
         # TimeoutError is deliberately not listed: since 3.3 it derives from
         # OSError, so naming both catches nothing extra and reads as though
         # it did. A timed-out model listing still lands here.
-        except (aiohttp.ClientError, OSError, json.JSONDecodeError):
+        except (aiohttp.ClientError, OSError, json.JSONDecodeError) as exc:
+            _LOGGER.warning("Failed to fetch Ollama models: %s", exc)
             return []
 
     async def _call_model(self, frames: list[bytes], prompt: str) -> str:
@@ -135,9 +167,10 @@ class ClipAnalyzer(BaseAnalyzer):
 
         payload = {
             "model": self._model,
-            "system": _VISION_SYSTEM_PROMPT,
-            "prompt": prompt,
-            "images": images,
+            "messages": [
+                {"role": "system", "content": _VISION_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt, "images": images},
+            ],
             "stream": False,
             "format": "json",
         }
@@ -145,17 +178,35 @@ class ClipAnalyzer(BaseAnalyzer):
         try:
             session = self._get_session()
             async with session.post(
-                f"{self._ollama_url}/api/generate",
+                f"{self._ollama_url}/api/chat",
                 json=payload,
                 timeout=_API_TIMEOUT,
             ) as resp:
                 if resp.status != 200:
-                    _LOGGER.warning("Ollama returned HTTP %d", resp.status)
+                    await _log_http_error(resp)
                     return ""
-                data = await resp.json()
-                self._last_prompt_tokens = int(data.get("prompt_eval_count") or 0)
-                self._last_completion_tokens = int(data.get("eval_count") or 0)
-                return str(data.get("response", ""))
+                try:
+                    data = await resp.json()
+                except (aiohttp.ClientError, json.JSONDecodeError, UnicodeDecodeError):
+                    _LOGGER.warning("Ollama returned an invalid JSON response")
+                    return ""
+                if not isinstance(data, dict):
+                    _LOGGER.warning("Ollama returned an invalid chat response")
+                    return ""
+                message = data.get("message")
+                if not isinstance(message, dict) or not isinstance(
+                    message.get("content"), str
+                ):
+                    _LOGGER.warning("Ollama response did not contain message.content")
+                    return ""
+                try:
+                    self._last_prompt_tokens = int(data.get("prompt_eval_count") or 0)
+                    self._last_completion_tokens = int(data.get("eval_count") or 0)
+                except (TypeError, ValueError):
+                    _LOGGER.warning("Ollama response contained invalid token counts")
+                    self._last_prompt_tokens = 0
+                    self._last_completion_tokens = 0
+                return message["content"]
         except TimeoutError:
             _LOGGER.warning("Ollama request timed out")
             return ""
@@ -170,14 +221,14 @@ class ClipAnalyzer(BaseAnalyzer):
 
 
 class OllamaCloudAnalyzer(ClipAnalyzer):
-    """Analyzes clips via the Ollama Cloud API (api.ollama.com).
+    """Analyzes clips via the Ollama Cloud API (ollama.com).
 
     Behaves identically to :class:`ClipAnalyzer` (local Ollama) but targets
     the Ollama Cloud endpoint and authenticates every request with an API key
     via ``Authorization: Bearer <key>``.
     """
 
-    _CLOUD_BASE_URL = "https://api.ollama.com"
+    _CLOUD_BASE_URL = "https://ollama.com"
 
     def __init__(
         self,

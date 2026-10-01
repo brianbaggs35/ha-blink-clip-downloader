@@ -35,14 +35,14 @@ const PROVIDERS: ProviderInfo[] = [
     key: 'ollama_cloud',
     name: 'Ollama Cloud',
     tagline:
-      'Uses the Ollama Cloud API instead of a local server. Identical API surface to local Ollama, so model selection and token counting work the same way.',
+      'Uses the Ollama Cloud API instead of a local server. It uses the same chat API format as local Ollama, so model selection and token counting work the same way.',
     configFields: [
       'Ollama Server URL — leave empty to use the default Ollama Cloud endpoint',
       'Ollama Vision Model — model name (same as local Ollama)',
-      'Ollama Cloud API Key — API key from api.ollama.com',
+      'Ollama Cloud API Key — API key from ollama.com/settings/keys',
     ],
     notes: [],
-    link: { href: 'https://api.ollama.com', label: 'api.ollama.com' },
+    link: { href: 'https://ollama.com/search?c=cloud', label: 'Browse Cloud models' },
     secondaryLink: { href: 'https://ollama.com/pricing', kind: 'pricing' },
   },
   {

@@ -230,7 +230,7 @@ configuration:
   ollama_cloud_api_key:
     name: Clave API de Ollama Cloud
     description: >-
-      Clave API de api.ollama.com. Necesaria cuando ai_provider es
+      Clave API de ollama.com/settings/keys. Necesaria cuando ai_provider es
       «ollama_cloud».
   moondream_api_key:
     name: Clave API de Moondream
