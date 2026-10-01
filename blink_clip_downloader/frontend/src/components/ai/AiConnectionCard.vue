@@ -47,6 +47,15 @@ function modelLabel(m: AiModelEntry, index: number, provider: string | undefined
   return `${m.name}${gb}${star}`
 }
 
+function modelFetchMessage(modelCount: number, provider: string | undefined): string {
+  if (provider === 'ollama_cloud') {
+    if (modelCount > 0) return `Found ${modelCount} available vision model(s)`
+    return 'No vision models available to this Ollama Cloud account'
+  }
+  if (modelCount > 0) return `Found ${modelCount} installed model(s)`
+  return 'No models found on this Ollama server'
+}
+
 // PrimeVue's Select needs a {label, value} options array rather than <option>
 // children — the placeholder keeps the same "Select a model…" first entry
 // the native <select> used to have.
@@ -63,15 +72,7 @@ async function fetchModels() {
     const d = await fetchAiModels()
     models.value = d.models || []
     if (models.value.length && !selectedModel.value) selectedModel.value = models.value[0].name
-    toast.show(
-      models.value.length
-        ? props.status.provider === 'ollama_cloud'
-          ? `Found ${models.value.length} available vision model(s)`
-          : `Found ${models.value.length} installed model(s)`
-        : props.status.provider === 'ollama_cloud'
-          ? 'No vision models available to this Ollama Cloud account'
-          : 'No models found on this Ollama server',
-    )
+    toast.show(modelFetchMessage(models.value.length, props.status.provider))
   } catch {
     toast.show('Failed to fetch models', true)
   } finally {
