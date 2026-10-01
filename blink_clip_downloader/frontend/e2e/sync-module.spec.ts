@@ -108,7 +108,7 @@ test.beforeEach(async ({ page }) => {
   await page.waitForSelector('.app-nav-tab.active[data-tab="syncmodule"]')
 })
 
-test('shows the sync module info and every one of its cameras', async ({ page }) => {
+test('shows the sync module info and every one of its cameras @standalone', async ({ page }) => {
   // Library's own nav (always mounted, never v-if-gated) also lists every
   // camera name in its sidebar filter regardless of which tab is active, so
   // scope every assertion here to this tab's own page container.
@@ -124,12 +124,12 @@ test('shows the sync module info and every one of its cameras', async ({ page })
   await expect(garageCard.getByText('Offline', { exact: true })).toBeVisible()
 })
 
-test('starts with the system fully armed', async ({ page }) => {
+test('starts with the system fully armed @standalone', async ({ page }) => {
   await expect(page.locator('.system-hero-title')).toHaveText('System Armed')
   await expect(page.locator('.system-hero')).toHaveClass(/system-hero-armed/)
 })
 
-test('toggling one camera off switches the system to partially armed, and re-arming it restores fully armed', async ({
+test('toggling one camera off switches the system to partially armed, and re-arming it restores fully armed @standalone', async ({
   page,
 }) => {
   const frontDoorCard = page.locator('.sm-cam-card', { hasText: 'Front Door' })
@@ -152,7 +152,9 @@ test('toggling one camera off switches the system to partially armed, and re-arm
   await expect(page.locator('.system-hero')).toHaveClass(/system-hero-armed/)
 })
 
-test('disarming the entire system requires confirmation, and does nothing if declined', async ({ page }) => {
+test('disarming the entire system requires confirmation, and does nothing if declined @standalone', async ({
+  page,
+}) => {
   await page.getByRole('button', { name: 'Disarm Entire System' }).click()
   await expect(page.getByRole('button', { name: 'Confirm' })).toBeVisible()
   await page.getByRole('button', { name: 'Cancel' }).click()
@@ -160,7 +162,7 @@ test('disarming the entire system requires confirmation, and does nothing if dec
   await expect(page.locator('.system-hero-title')).toHaveText('System Armed')
 })
 
-test('pressing Escape on the disarm confirmation also declines, same as Cancel', async ({ page }) => {
+test('pressing Escape on the disarm confirmation also declines, same as Cancel @standalone', async ({ page }) => {
   await page.getByRole('button', { name: 'Disarm Entire System' }).click()
   await expect(page.getByRole('button', { name: 'Confirm' })).toBeVisible()
 
@@ -169,7 +171,7 @@ test('pressing Escape on the disarm confirmation also declines, same as Cancel',
   await expect(page.locator('.system-hero-title')).toHaveText('System Armed')
 })
 
-test('disarming and re-arming the entire system via the hero button', async ({ page }) => {
+test('disarming and re-arming the entire system via the hero button @standalone', async ({ page }) => {
   await page.getByRole('button', { name: 'Disarm Entire System' }).click()
   await page.getByRole('button', { name: 'Confirm' }).click()
 
@@ -183,7 +185,9 @@ test('disarming and re-arming the entire system via the hero button', async ({ p
   await expect(page.getByText('Entire system armed')).toBeVisible()
 })
 
-test("toggling the sync module's own switch also asks for confirmation before disarming", async ({ page }) => {
+test("toggling the sync module's own switch also asks for confirmation before disarming @standalone", async ({
+  page,
+}) => {
   const homeCard = page.locator('.sync-module-card', { hasText: 'Home' })
   await homeCard.locator('.sm-module-arm input[role="switch"]').click()
   await expect(page.getByRole('button', { name: 'Confirm' })).toBeVisible()
@@ -196,7 +200,7 @@ test("toggling the sync module's own switch also asks for confirmation before di
   await expect(page.locator('.system-hero-title')).toHaveText('System Armed')
 })
 
-test('a camera that refuses to arm says so and does not pretend it worked', async ({ page }) => {
+test('a camera that refuses to arm says so and does not pretend it worked @standalone', async ({ page }) => {
   // The optimistic switch has to be put back when the request fails, or
   // the tab reports a camera as armed that the sync module never armed —
   // the one thing this tab must never get wrong. Mocked at the API layer
@@ -211,7 +215,9 @@ test('a camera that refuses to arm says so and does not pretend it worked', asyn
   await expect(page.locator('.system-hero-title')).toHaveText('System Armed')
 })
 
-test('arming the entire system names the modules that refused, rather than claiming success', async ({ page }) => {
+test('arming the entire system names the modules that refused, rather than claiming success @standalone', async ({
+  page,
+}) => {
   // The hero button arms every module at once and collects the results,
   // so a module that refuses has to be named -- a blanket "Entire system
   // armed" over a module that is still disarmed is the one thing this tab

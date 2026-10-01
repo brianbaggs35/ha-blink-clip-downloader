@@ -205,7 +205,7 @@ test('hovering a row lights its zone, and choosing a zone lights its row', async
   await expect(card.locator('.asset-row', { hasText: 'Mailbox' })).toHaveClass(/highlighted/)
 })
 
-test('fits a phone: nothing scrolls sideways, and the editor takes the screen', async ({ page }) => {
+test('fits a phone: nothing scrolls sideways, and the editor takes the screen @standalone', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await openTab(page)
   const overflow = await page.locator('#page-assets').evaluate((el) => el.scrollWidth - el.clientWidth)

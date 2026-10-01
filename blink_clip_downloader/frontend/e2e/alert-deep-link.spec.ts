@@ -37,7 +37,9 @@ const PANEL = `<!doctype html>
 </script>
 </body></html>`
 
-test('inside Home Assistant, the panel route opens the clip, and a later alert opens its own', async ({ page }) => {
+test('inside Home Assistant, the panel route opens the clip, and a later alert opens its own @standalone', async ({
+  page,
+}) => {
   await page.route('**/__ha_panel__', (route) => route.fulfill({ status: 200, contentType: 'text/html', body: PANEL }))
   await page.goto('/__ha_panel__')
 

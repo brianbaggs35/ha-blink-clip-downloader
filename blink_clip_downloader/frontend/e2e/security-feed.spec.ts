@@ -12,7 +12,7 @@ test.beforeEach(async ({ page }) => {
   await page.waitForSelector('.app-nav-tab.active[data-tab="securityfeed"]')
 })
 
-test('renders a tile per camera with the info banner', async ({ page }) => {
+test('renders a tile per camera with the info banner @standalone', async ({ page }) => {
   await expect(page.locator('.secfeed-info-banner')).toContainText('only change when Blink itself records new motion')
   const tiles = page.locator('.secfeed-tile')
   // 4, not 3: list_camera_names() (standalone_server.py) also includes
@@ -25,7 +25,9 @@ test('renders a tile per camera with the info banner', async ({ page }) => {
   await expect(tiles.filter({ hasText: 'Test Scratch' })).toBeVisible()
 })
 
-test('shows a real snapshot for a camera with one cached, and the placeholder for one without', async ({ page }) => {
+test('shows a real snapshot for a camera with one cached, and the placeholder for one without @standalone', async ({
+  page,
+}) => {
   const frontDoorImg = page.locator('.secfeed-tile', { hasText: 'Front Door' }).locator('img')
   await expect(frontDoorImg).toBeVisible()
   await expect(frontDoorImg).not.toHaveClass(/secfeed-tile-image-hidden/)

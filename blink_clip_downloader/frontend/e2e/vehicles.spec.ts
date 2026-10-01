@@ -38,7 +38,9 @@ test('a description the backend refuses to store reports the failure rather than
   await expect(page.getByText('Failed to save description')).toBeVisible()
 })
 
-test('marking a camera as a car camera reveals the zone picker and persists after reload', async ({ page }) => {
+test('marking a camera as a car camera reveals the zone picker and persists after reload @standalone', async ({
+  page,
+}) => {
   const card = page.locator('.camera-card', { hasText: 'Test Scratch' })
   await expect(card.locator('.zone-picker')).toHaveCount(0)
 

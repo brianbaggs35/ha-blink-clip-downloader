@@ -28,7 +28,7 @@ test('a clip list that fails to load offers a retry', async ({ page }) => {
   await expect(page.locator('.clip-tile').first()).toBeVisible()
 })
 
-test('a clip deleted before its scan says so, and can be tried again', async ({ page }) => {
+test('a clip deleted before its scan says so, and can be tried again @standalone', async ({ page }) => {
   await page.route('**/api/ai/faces/scan/*', (route) => route.fulfill({ status: 404, body: 'Clip not found' }))
   await openBiometrics(page)
   await chooseScratchCamera(page)
@@ -61,7 +61,7 @@ test("a file that isn't a readable photo is explained", async ({ page }) => {
   await expect(page.locator('.face-tile')).toHaveCount(0)
 })
 
-test('an enrollment the server turns down reports the reason it gave', async ({ page }) => {
+test('an enrollment the server turns down reports the reason it gave @standalone', async ({ page }) => {
   await openBiometrics(page)
   await chooseScratchCamera(page)
   await page.locator('.clip-tile').click()

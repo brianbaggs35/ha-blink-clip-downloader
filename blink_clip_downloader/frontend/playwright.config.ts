@@ -26,9 +26,9 @@ if (HA_SUPERVISOR && (!HA_INGRESS_URL || !HA_STORAGE_STATE)) {
 // specific web UI workflows actually working end to end.
 export default defineConfig({
   testDir: './e2e',
-  // HA runs the shared suite except tests marked @standalone; the regular
-  // run keeps those tests and excludes only HA-specific additions.
-  grepInvert: HA_SUPERVISOR ? /@standalone/ : /@ha/,
+  // Keep HA-only checks out of the standalone run. The HA workflow explicitly
+  // excludes @standalone tests with --grep-invert.
+  grepInvert: HA_SUPERVISOR ? undefined : /@ha/,
   // The standalone sign-in run has a dedicated global setup; HA mode runs
   // that same spec against the add-on's real direct port and Supervisor auth.
   testIgnore: SIGNED_IN ? /direct-access-signin\.spec\.ts$/ : undefined,

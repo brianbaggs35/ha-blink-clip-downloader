@@ -215,7 +215,9 @@ test('deleting the only clip in an archive removes the whole group @standalone',
   await expect(page.getByText('2024-02-e2e.zip')).toHaveCount(0)
 })
 
-test('Google Drive card shows the disconnected setup prompt with no account configured', async ({ page }) => {
+test('Google Drive card shows the disconnected setup prompt with no account configured @standalone', async ({
+  page,
+}) => {
   const connectionCard = page.locator('.gdrive-connection-card')
   await expect(
     connectionCard.getByText('Set a Google OAuth Client ID and Secret above to connect an account.'),
@@ -287,7 +289,7 @@ test('Run Archiving Now sweeps the currently-eligible backlog immediately', asyn
   await expect(page.locator('.archive-panel')).toHaveCount(panelsBefore + 1)
 })
 
-test('Google Drive settings survive a full page reload, as an upgrade needs them to', async ({ page }) => {
+test('Google Drive settings survive a full page reload, as an upgrade needs them to @standalone', async ({ page }) => {
   // The same round trip the Home Assistant integration job restarts the
   // add-on around (see e2e/ha_integration_smoke.mjs's PERSISTENCE_MARKER):
   // a setting written through the UI has to come back from /data, not from

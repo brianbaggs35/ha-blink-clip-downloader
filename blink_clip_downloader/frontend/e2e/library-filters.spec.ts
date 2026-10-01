@@ -36,7 +36,7 @@ test('a backend that cannot list clips says so instead of showing an empty libra
   await expect(page.getByText('Failed to load clips')).toBeVisible()
 })
 
-test('loads with the seeded clips and per-camera counts in the sidebar', async ({ page }) => {
+test('loads with the seeded clips and per-camera counts in the sidebar @standalone', async ({ page }) => {
   await expect(page.locator('.app-nav-cam[data-camera="all"] .app-nav-cam-count')).toHaveText(String(TOTAL_CLIPS))
   for (const camera of ['Front Door', 'Backyard', 'Garage']) {
     await expect(page.locator(`.app-nav-cam[data-camera="${camera}"] .app-nav-cam-count`)).toHaveText(
@@ -46,7 +46,7 @@ test('loads with the seeded clips and per-camera counts in the sidebar', async (
   await expect(page.locator('.clip-card')).toHaveCount(TOTAL_CLIPS)
 })
 
-test('clicking a camera filters the grid to just that camera, and "All Cameras" restores the rest', async ({
+test('clicking a camera filters the grid to just that camera, and "All Cameras" restores the rest @standalone', async ({
   page,
 }) => {
   await page.locator('.app-nav-cam[data-camera="Garage"]').click()
@@ -58,7 +58,7 @@ test('clicking a camera filters the grid to just that camera, and "All Cameras" 
   await expect(page.locator('.clip-card')).toHaveCount(TOTAL_CLIPS)
 })
 
-test('shows an error toast when the clip list fails to load', async ({ page }) => {
+test('shows an error toast when the clip list fails to load @standalone', async ({ page }) => {
   // A camera-filter click (not the initial page load, which beforeEach
   // already completed against the real backend) triggers a fresh,
   // non-silent loadClips() call -- unlike the 60s auto-refresh/"Refresh
@@ -110,7 +110,7 @@ test('search for a nonexistent camera shows the empty state', async ({ page }) =
   await expect(page.locator('.clip-card')).toHaveCount(0)
 })
 
-test('notified and recognized filters narrow the grid, and Refresh library confirms', async ({ page }) => {
+test('notified and recognized filters narrow the grid, and Refresh library confirms @standalone', async ({ page }) => {
   // Nothing seeded has notified=TRUE or a recorded face match, so both
   // filters narrow to zero here — still a real, distinct query-param and
   // empty-state code path from the starred/tag filters above, not a no-op.
@@ -128,7 +128,7 @@ test('notified and recognized filters narrow the grid, and Refresh library confi
   await expect(page.getByText('Library refreshed')).toBeVisible()
 })
 
-test('non-critical data (stats, cameras, tags, AI status, Google Drive status) failing to load degrades silently', async ({
+test('non-critical data (stats, cameras, tags, AI status, Google Drive status) failing to load degrades silently @standalone', async ({
   page,
 }) => {
   // loadAll()'s other five loaders are each independently wrapped in a
