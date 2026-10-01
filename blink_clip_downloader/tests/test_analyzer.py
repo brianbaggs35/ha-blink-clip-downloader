@@ -468,6 +468,23 @@ async def test_call_ollama_http_error_without_json_detail(
     assert "Ollama returned HTTP 404" in caplog.text
 
 
+async def test_call_ollama_http_error_with_empty_json_detail(
+    analyzer: ClipAnalyzer, caplog: pytest.LogCaptureFixture
+) -> None:
+    mock_resp = AsyncMock()
+    mock_resp.status = 500
+    mock_resp.json = AsyncMock(return_value={"error": ""})
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+    analyzer._session = _mock_session(post=MagicMock(return_value=mock_resp))
+
+    with caplog.at_level(logging.WARNING):
+        result = await analyzer.call_ollama([_FAKE_JPEG], "Analyze")
+
+    assert result == ""
+    assert "Ollama returned HTTP 500" in caplog.text
+
+
 async def test_call_ollama_invalid_json_response(
     analyzer: ClipAnalyzer, caplog: pytest.LogCaptureFixture
 ) -> None:
