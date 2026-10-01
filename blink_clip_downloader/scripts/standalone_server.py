@@ -121,8 +121,21 @@ def _configure_e2e_logging() -> None:
 # Every path keeps its place relative to /data, so two constants naming the
 # same file still agree. Must run before GDriveClient() is constructed in
 # _main(): its __init__ reads both of its files immediately.
-def _redirect_data_files(data_dir: Path) -> None:
+def _redirect_owner_data_paths(owner: object, data_dir: Path) -> None:
     data_root = PurePosixPath("/data")
+    for name, value in vars(owner).items():
+        if not isinstance(value, str | PurePath):
+            continue
+        path = PurePosixPath(value)
+        if not path.is_relative_to(data_root):
+            continue
+        redirected = data_dir / path.relative_to(data_root)
+        setattr(
+            owner, name, redirected if isinstance(value, PurePath) else str(redirected)
+        )
+
+
+def _redirect_data_files(data_dir: Path) -> None:
     modules = [blink_downloader] + [
         importlib.import_module(info.name)
         for info in pkgutil.walk_packages(
@@ -136,17 +149,7 @@ def _redirect_data_files(data_dir: Path) -> None:
             if isinstance(value, type) and value.__module__ == module.__name__
         ]
         for owner in owners:
-            for name, value in list(vars(owner).items()):
-                if not isinstance(value, str | PurePath):
-                    continue
-                if not PurePosixPath(value).is_relative_to(data_root):
-                    continue
-                redirected = data_dir / PurePosixPath(value).relative_to(data_root)
-                setattr(
-                    owner,
-                    name,
-                    redirected if isinstance(value, PurePath) else str(redirected),
-                )
+            _redirect_owner_data_paths(owner, data_dir)
 
 
 def _force_face_recognition_available() -> None:
@@ -266,7 +269,8 @@ class _FakeBlinkAuth:
         return self._result_seq
 
 
-_CAMERAS = ("Front Door", "Backyard", "Garage")
+_CAMERA_FRONT_DOOR = "Front Door"
+_CAMERAS = (_CAMERA_FRONT_DOOR, "Backyard", "Garage")
 # Real values the Library tab's source filter actually recognizes (see
 # LibraryPage.vue's SOURCE_OPTIONS) — not arbitrary strings, so the
 # source-filter e2e test asserts against real, meaningful filtering.
@@ -354,7 +358,7 @@ _ARCHIVE_PATH_MULTI = "/archives/2024-01-e2e.zip"
 _ARCHIVE_PATH_SOLO = "/archives/2024-02-e2e.zip"
 _ARCHIVE_PATH_BULK_DELETE = "/archives/2024-03-e2e.zip"
 _ARCHIVE_CLIPS = (
-    ("e2e-archive-front", "Front Door", _ARCHIVE_PATH_MULTI, 200),
+    ("e2e-archive-front", _CAMERA_FRONT_DOOR, _ARCHIVE_PATH_MULTI, 200),
     ("e2e-archive-back", "Backyard", _ARCHIVE_PATH_MULTI, 202),
     ("e2e-archive-solo", "Garage", _ARCHIVE_PATH_SOLO, 204),
     ("e2e-archive-bulk-1", "Backyard", _ARCHIVE_PATH_BULK_DELETE, 206),
@@ -469,6 +473,7 @@ def _fake_snapshot_jpeg() -> bytes:
 
 
 async def _camera_snapshot(camera: str) -> bytes | None:
+    await asyncio.sleep(0)
     if camera == _SECURITY_FEED_NO_SNAPSHOT_CAMERA:
         return None
     return _fake_snapshot_jpeg()
@@ -525,12 +530,14 @@ class _FakeSyncModule:
         ]
 
     async def arm_module(self, name: str, armed: bool) -> bool | None:
+        await asyncio.sleep(0)
         if name != "Home":
             return None
         self.armed = armed
         return True
 
     async def arm_camera(self, name: str, armed: bool) -> bool | None:
+        await asyncio.sleep(0)
         if name not in self.camera_armed:
             return None
         self.camera_armed[name] = armed
@@ -686,9 +693,12 @@ async def _seed(db: ClipDatabase, archive_source_dir: Path) -> None:
     # approve-toggle test) so those two tests' assertions never have to
     # account for this one's mutations.
     await db.add_face_enrollment("Casey E2E", [0.0, 0.0, 1.0, 0.0], approved=True)
-    await db.add_face_enrollment("Riley E2E", [0.0, 0.0, 0.0, 1.0], approved=False)
-    await db.add_face_enrollment("Riley E2E", [0.0, 0.0, 0.2, 0.98], approved=False)
-    await db.add_face_enrollment("Riley E2E", [-0.6, -0.8, 0.0, 0.0], approved=False)
+    for embedding in (
+        [0.0, 0.0, 0.0, 1.0],
+        [0.0, 0.0, 0.2, 0.98],
+        [-0.6, -0.8, 0.0, 0.0],
+    ):
+        await db.add_face_enrollment(_RILEY_E2E_NAME, embedding, approved=False)
 
     # Security events for the Security tab, attached to *existing*
     # distribution clips rather than new ones: security_events is its own
@@ -707,7 +717,7 @@ async def _seed(db: ClipDatabase, archive_source_dir: Path) -> None:
     # for. These three are not, and their cameras happen to be one of each.
     await db.save_security_events(
         "e2e-clip-003",
-        "Front Door",
+        _CAMERA_FRONT_DOOR,
         [
             SecurityEvent(
                 event_type=SecurityEventType.SUBJECT_PRESENT,
@@ -833,7 +843,7 @@ async def _seed(db: ClipDatabase, archive_source_dir: Path) -> None:
     # Battery history for the Status tab's battery strip/history modal
     # tests — Front Door ends up "ok", Backyard ends up "low" with one
     # prior recovered episode so the history modal has something to show.
-    await db.add_battery_reading("Front Door", "ok", 3, 165)
+    await db.add_battery_reading(_CAMERA_FRONT_DOOR, "ok", 3, 165)
     await db.add_battery_reading("Backyard", "ok", 3, 170)
     await db.add_battery_reading("Backyard", "low", 0, 108)
     await db.add_battery_reading("Backyard", "ok", 3, 172)
@@ -847,7 +857,7 @@ async def _seed(db: ClipDatabase, archive_source_dir: Path) -> None:
 #: needs to prove a second camera's assets live beside the first's.
 _SEEDED_ASSET = {
     "id": "e2emailbox01",
-    "camera": "Front Door",
+    "camera": _CAMERA_FRONT_DOOR,
     "name": "Mailbox",
     "asset_type": "mailbox",
     "description": "Black mailbox on a post",
@@ -887,7 +897,7 @@ def _asset_frame_jpeg() -> bytes:
 
 def _seed_assets() -> None:
     media_server.MediaServer._ASSET_SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True)
-    media_server.MediaServer._asset_snapshot_path("Front Door").write_bytes(
+    media_server.MediaServer._asset_snapshot_path(_CAMERA_FRONT_DOOR).write_bytes(
         _asset_frame_jpeg()
     )
     media_server.MediaServer._PROTECTED_ASSETS_FILE.write_text(
@@ -896,6 +906,7 @@ def _seed_assets() -> None:
 
 
 #: The one Home Assistant login the sign-in server accepts.
+_RILEY_E2E_NAME = "Riley E2E"
 _E2E_USERNAME = "e2e-user"
 _E2E_PASSWORD = "e2e-password"  # nosec B105 - a fixture for the e2e backend
 
@@ -904,6 +915,7 @@ async def _e2e_verify_credentials(username: str, password: str) -> bool:
     """Supervisor's /auth, standing in: nothing here runs under Supervisor.
     Everything else about signing in — the form, the cookie, the lockout,
     the token — is the real code in media_server/access.py."""
+    await asyncio.sleep(0)
     return username == _E2E_USERNAME and password == _E2E_PASSWORD
 
 
