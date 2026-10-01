@@ -415,6 +415,18 @@ describe('AiConnectionCard', () => {
     expect(wrapper.find('#ai-model-picker').exists()).toBe(true)
   })
 
+  it('shows the Ollama Cloud message when the account has no available vision models', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse({ enabled: true, models: [] }))),
+    )
+    const wrapper = mount(AiConnectionCard, { props: { status: baseStatus({ provider: 'ollama_cloud' }) } })
+    await wrapper.find('button').trigger('click')
+    await flushPromises()
+
+    expect(useToastStore().message).toBe('No vision models available to this Ollama Cloud account')
+  })
+
   it('treats a missing models field in the response as no models, rather than crashing', async () => {
     vi.stubGlobal(
       'fetch',
