@@ -67,7 +67,9 @@ class _ExpectedE2ENoiseFilter(logging.Filter):
 
     def filter(self, record: logging.LogRecord) -> bool:
         message = record.getMessage()
-        if record.name.startswith("blink_downloader.analyzer"):
+        if record.name.startswith(
+            ("blink_downloader.analyzer", "blink_downloader.ffmpeg_output")
+        ):
             return not (
                 message.startswith("ffmpeg exited ")
                 and " for /share/blink-clips/" in message
@@ -91,6 +93,7 @@ def _configure_e2e_logging() -> None:
     # here rather than just its parent package.
     for logger_name in (
         "blink_downloader.analyzer.base",
+        "blink_downloader.ffmpeg_output",
         "blink_downloader.vision.faces",
     ):
         logging.getLogger(logger_name).addFilter(noise_filter)
