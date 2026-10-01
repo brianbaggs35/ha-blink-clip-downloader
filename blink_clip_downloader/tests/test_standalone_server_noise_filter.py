@@ -8,7 +8,8 @@ from pathlib import Path
 def _load_standalone_server_module():
     path = Path(__file__).resolve().parents[1] / "scripts" / "standalone_server.py"
     spec = importlib.util.spec_from_file_location("standalone_server", path)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
