@@ -2,7 +2,7 @@
 
 Six providers are supported:
 - ``ollama``          – local/LAN Ollama server with a vision-capable model
-- ``ollama_cloud``    – Ollama Cloud API (api.ollama.com) with an API key
+- ``ollama_cloud``    – Ollama Cloud API (ollama.com) with an API key
 - ``moondream_cloud`` – Moondream Cloud API (api.moondream.ai)
 - ``moondream_local`` – Moondream 0.5B model running on-device (no cloud)
 - ``anthropic``       – Anthropic Claude API (claude.ai) with an API key

@@ -233,7 +233,7 @@ configuration:
   ollama_cloud_api_key:
     name: API-ключ Ollama Cloud
     description: >-
-      API-ключ с сайта api.ollama.com. Требуется, когда ai_provider
+      API-ключ с сайта ollama.com/settings/keys. Требуется, когда ai_provider
       установлен в «ollama_cloud».
   moondream_api_key:
     name: API-ключ Moondream

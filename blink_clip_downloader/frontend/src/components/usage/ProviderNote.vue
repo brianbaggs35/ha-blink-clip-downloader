@@ -16,8 +16,8 @@ defineProps<{ provider?: string; showEscalationNote: boolean }>()
       responses may show 0 prompt tokens.
     </p>
     <p v-else-if="provider === 'ollama_cloud'">
-      Ollama Cloud (api.ollama.com) is a hosted Ollama service. Token counts are extracted from the API response. API
-      usage may incur costs — check your Ollama Cloud account dashboard.
+      Ollama Cloud (ollama.com) is a hosted Ollama service. Token counts are extracted from the API response. API usage
+      may incur costs — check your Ollama Cloud account dashboard.
     </p>
     <p v-else-if="provider === 'moondream_cloud'">
       Moondream Cloud bills per API request. Each frame is analysed individually with reasoning mode enabled for better
