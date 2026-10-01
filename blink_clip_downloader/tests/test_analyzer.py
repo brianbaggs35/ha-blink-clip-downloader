@@ -384,7 +384,13 @@ async def test_extract_frames_ffmpeg_not_found(analyzer: ClipAnalyzer) -> None:
 async def test_call_ollama_success(analyzer: ClipAnalyzer) -> None:
     mock_resp = AsyncMock()
     mock_resp.status = 200
-    mock_resp.json = AsyncMock(return_value={"response": "Person at door"})
+    mock_resp.json = AsyncMock(
+        return_value={
+            "message": {"content": "Person at door"},
+            "prompt_eval_count": 120,
+            "eval_count": 30,
+        }
+    )
     mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
     mock_resp.__aexit__ = AsyncMock(return_value=False)
 
@@ -393,12 +399,20 @@ async def test_call_ollama_success(analyzer: ClipAnalyzer) -> None:
 
     result = await analyzer.call_ollama([_FAKE_JPEG], "Analyze")
     assert result == "Person at door"
+    assert analyzer._last_prompt_tokens == 120
+    assert analyzer._last_completion_tokens == 30
 
     call_kwargs = session.post.call_args
+    assert call_kwargs.args[0] == "http://localhost:11434/api/chat"
     payload = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json")
     assert payload["model"] == "llava:7b"
     assert payload["stream"] is False
-    assert len(payload["images"]) == 1
+    assert payload["format"] == "json"
+    assert payload["messages"][0]["role"] == "system"
+    user_message = payload["messages"][1]
+    assert user_message["role"] == "user"
+    assert user_message["content"] == "Analyze"
+    assert len(user_message["images"]) == 1
 
 
 async def test_call_ollama_timeout(analyzer: ClipAnalyzer) -> None:
@@ -419,16 +433,142 @@ async def test_call_ollama_connection_error(analyzer: ClipAnalyzer) -> None:
     assert result == ""
 
 
-async def test_call_ollama_http_error(analyzer: ClipAnalyzer) -> None:
+async def test_call_ollama_http_error(
+    analyzer: ClipAnalyzer, caplog: pytest.LogCaptureFixture
+) -> None:
     mock_resp = AsyncMock()
-    mock_resp.status = 500
+    mock_resp.status = 400
+    mock_resp.json = AsyncMock(return_value={"error": "model does not support images"})
     mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
     mock_resp.__aexit__ = AsyncMock(return_value=False)
 
     analyzer._session = _mock_session(post=MagicMock(return_value=mock_resp))
 
-    result = await analyzer.call_ollama([_FAKE_JPEG], "Analyze")
+    with caplog.at_level(logging.WARNING):
+        result = await analyzer.call_ollama([_FAKE_JPEG], "Analyze")
+
     assert result == ""
+    assert "Ollama returned HTTP 400: model does not support images" in caplog.text
+
+
+async def test_call_ollama_http_error_without_json_detail(
+    analyzer: ClipAnalyzer, caplog: pytest.LogCaptureFixture
+) -> None:
+    mock_resp = AsyncMock()
+    mock_resp.status = 404
+    mock_resp.json = AsyncMock(side_effect=json.JSONDecodeError("invalid JSON", "", 0))
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+    analyzer._session = _mock_session(post=MagicMock(return_value=mock_resp))
+
+    with caplog.at_level(logging.WARNING):
+        result = await analyzer.call_ollama([_FAKE_JPEG], "Analyze")
+
+    assert result == ""
+    assert "Ollama returned HTTP 404" in caplog.text
+
+
+async def test_call_ollama_invalid_json_response(
+    analyzer: ClipAnalyzer, caplog: pytest.LogCaptureFixture
+) -> None:
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(side_effect=json.JSONDecodeError("invalid JSON", "", 0))
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+    analyzer._session = _mock_session(post=MagicMock(return_value=mock_resp))
+
+    with caplog.at_level(logging.WARNING):
+        result = await analyzer.call_ollama([_FAKE_JPEG], "Analyze")
+
+    assert result == ""
+    assert "Ollama returned an invalid JSON response" in caplog.text
+
+
+async def test_call_ollama_invalid_chat_response(
+    analyzer: ClipAnalyzer, caplog: pytest.LogCaptureFixture
+) -> None:
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(return_value={"response": "Legacy response"})
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+    analyzer._session = _mock_session(post=MagicMock(return_value=mock_resp))
+
+    with caplog.at_level(logging.WARNING):
+        result = await analyzer.call_ollama([_FAKE_JPEG], "Analyze")
+
+    assert result == ""
+    assert "Ollama response did not contain message.content" in caplog.text
+
+
+async def test_call_ollama_invalid_token_counts_keep_response(
+    analyzer: ClipAnalyzer, caplog: pytest.LogCaptureFixture
+) -> None:
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(
+        return_value={
+            "message": {"content": "Person at door"},
+            "prompt_eval_count": "unknown",
+            "eval_count": 30,
+        }
+    )
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+    analyzer._session = _mock_session(post=MagicMock(return_value=mock_resp))
+
+    with caplog.at_level(logging.WARNING):
+        result = await analyzer.call_ollama([_FAKE_JPEG], "Analyze")
+
+    assert result == "Person at door"
+    assert analyzer._last_prompt_tokens == 0
+    assert analyzer._last_completion_tokens == 0
+    assert "Ollama response contained invalid token counts" in caplog.text
+
+
+async def test_call_ollama_non_object_response(
+    analyzer: ClipAnalyzer, caplog: pytest.LogCaptureFixture
+) -> None:
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(return_value=["unexpected"])
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+    analyzer._session = _mock_session(post=MagicMock(return_value=mock_resp))
+
+    with caplog.at_level(logging.WARNING):
+        result = await analyzer.call_ollama([_FAKE_JPEG], "Analyze")
+
+    assert result == ""
+    assert "Ollama returned an invalid chat response" in caplog.text
+
+
+async def test_fetch_ollama_models_invalid_response(analyzer: ClipAnalyzer) -> None:
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(return_value={"models": "unexpected"})
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+    analyzer._session = _mock_session(get=MagicMock(return_value=mock_resp))
+
+    assert await analyzer.fetch_models() == []
+
+
+async def test_fetch_ollama_models_http_error(
+    analyzer: ClipAnalyzer, caplog: pytest.LogCaptureFixture
+) -> None:
+    mock_resp = AsyncMock()
+    mock_resp.status = 503
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+    analyzer._session = _mock_session(get=MagicMock(return_value=mock_resp))
+
+    with caplog.at_level(logging.WARNING):
+        models = await analyzer.fetch_models()
+
+    assert models == []
+    assert "Ollama model listing returned HTTP 503" in caplog.text
 
 
 # ------------------------------------------------------------------
@@ -765,7 +905,7 @@ async def test_analyze_clip_full_pipeline(analyzer: ClipAnalyzer) -> None:
     )
     mock_resp = AsyncMock()
     mock_resp.status = 200
-    mock_resp.json = AsyncMock(return_value={"response": ollama_response})
+    mock_resp.json = AsyncMock(return_value={"message": {"content": ollama_response}})
     mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
     mock_resp.__aexit__ = AsyncMock(return_value=False)
 
@@ -946,7 +1086,7 @@ async def test_ollama_cloud_session_no_auth_header_when_no_key() -> None:
 async def test_ollama_cloud_call_model_success() -> None:
     mock_resp = AsyncMock()
     mock_resp.status = 200
-    mock_resp.json = AsyncMock(return_value={"response": "All clear"})
+    mock_resp.json = AsyncMock(return_value={"message": {"content": "All clear"}})
     mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
     mock_resp.__aexit__ = AsyncMock(return_value=False)
 
@@ -956,13 +1096,13 @@ async def test_ollama_cloud_call_model_success() -> None:
     assert result == "All clear"
     # Verify it posted to the cloud URL
     call_args = a._session.post.call_args
-    assert "api.ollama.com" in str(call_args)
+    assert call_args.args[0] == "https://ollama.com/api/chat"
 
 
 async def test_ollama_cloud_uses_cloud_base_url() -> None:
-    """OllamaCloudAnalyzer always targets api.ollama.com."""
+    """OllamaCloudAnalyzer always targets ollama.com."""
     a = OllamaCloudAnalyzer(api_key="k", model="llava:7b", prompt="p")
-    assert a._ollama_url == "https://api.ollama.com"
+    assert a._ollama_url == "https://ollama.com"
     await a.close()
 
 
@@ -971,6 +1111,8 @@ async def test_ollama_cloud_fetch_models() -> None:
         "models": [
             {"name": "llava:7b", "size": 4_000_000_000},
             {"name": "llama3:8b", "size": 5_000_000_000},
+            {"name": 42},
+            "malformed model",
         ]
     }
     mock_resp = AsyncMock()
@@ -1859,7 +2001,7 @@ async def test_call_ollama_extracts_token_counts(analyzer: ClipAnalyzer) -> None
     mock_resp.status = 200
     mock_resp.json = AsyncMock(
         return_value={
-            "response": "All clear",
+            "message": {"content": "All clear"},
             "prompt_eval_count": 128,
             "eval_count": 64,
         }
@@ -1877,7 +2019,7 @@ async def test_call_ollama_extracts_token_counts(analyzer: ClipAnalyzer) -> None
 async def test_call_ollama_missing_token_counts(analyzer: ClipAnalyzer) -> None:
     mock_resp = AsyncMock()
     mock_resp.status = 200
-    mock_resp.json = AsyncMock(return_value={"response": "All clear"})
+    mock_resp.json = AsyncMock(return_value={"message": {"content": "All clear"}})
     mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
     mock_resp.__aexit__ = AsyncMock(return_value=False)
 
@@ -1900,7 +2042,7 @@ async def test_analyze_clip_includes_token_counts(analyzer: ClipAnalyzer) -> Non
     mock_resp.status = 200
     mock_resp.json = AsyncMock(
         return_value={
-            "response": ollama_response,
+            "message": {"content": ollama_response},
             "prompt_eval_count": 200,
             "eval_count": 50,
         }
@@ -7327,7 +7469,7 @@ async def test_analyze_clip_uses_sequential_mode() -> None:
 
     mock_resp = AsyncMock()
     mock_resp.status = 200
-    mock_resp.json = AsyncMock(return_value={"response": good_resp})
+    mock_resp.json = AsyncMock(return_value={"message": {"content": good_resp}})
     mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
     mock_resp.__aexit__ = AsyncMock(return_value=False)
     analyzer._session = _mock_session(post=MagicMock(return_value=mock_resp))
@@ -7364,7 +7506,7 @@ async def test_analyze_clip_sequential_downselects_oversampled_pool() -> None:
     )
     mock_resp = AsyncMock()
     mock_resp.status = 200
-    mock_resp.json = AsyncMock(return_value={"response": good_resp})
+    mock_resp.json = AsyncMock(return_value={"message": {"content": good_resp}})
     mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
     mock_resp.__aexit__ = AsyncMock(return_value=False)
     analyzer._session = _mock_session(post=MagicMock(return_value=mock_resp))
@@ -7395,7 +7537,7 @@ async def test_analyze_clip_uniform_downselects_oversampled_pool() -> None:
     )
     mock_resp = AsyncMock()
     mock_resp.status = 200
-    mock_resp.json = AsyncMock(return_value={"response": good_resp})
+    mock_resp.json = AsyncMock(return_value={"message": {"content": good_resp}})
     mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
     mock_resp.__aexit__ = AsyncMock(return_value=False)
     analyzer._session = _mock_session(post=MagicMock(return_value=mock_resp))
@@ -7595,7 +7737,7 @@ async def test_analyze_clip_stores_anomaly_score() -> None:
     )
     mock_resp = AsyncMock()
     mock_resp.status = 200
-    mock_resp.json = AsyncMock(return_value={"response": resp_json})
+    mock_resp.json = AsyncMock(return_value={"message": {"content": resp_json}})
     mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
     mock_resp.__aexit__ = AsyncMock(return_value=False)
     analyzer._session = _mock_session(post=MagicMock(return_value=mock_resp))
@@ -10191,7 +10333,7 @@ async def test_analyze_clip_long_clip_sends_bonus_frames() -> None:
     )
     mock_resp = AsyncMock()
     mock_resp.status = 200
-    mock_resp.json = AsyncMock(return_value={"response": good_resp})
+    mock_resp.json = AsyncMock(return_value={"message": {"content": good_resp}})
     mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
     mock_resp.__aexit__ = AsyncMock(return_value=False)
     analyzer._session = _mock_session(post=MagicMock(return_value=mock_resp))
@@ -10226,7 +10368,7 @@ async def test_analyze_clip_uses_known_clip_duration_over_estimate() -> None:
     )
     mock_resp = AsyncMock()
     mock_resp.status = 200
-    mock_resp.json = AsyncMock(return_value={"response": good_resp})
+    mock_resp.json = AsyncMock(return_value={"message": {"content": good_resp}})
     mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
     mock_resp.__aexit__ = AsyncMock(return_value=False)
     analyzer._session = _mock_session(post=MagicMock(return_value=mock_resp))
@@ -10261,7 +10403,7 @@ async def test_analyze_clip_short_clip_keeps_configured_max_frames() -> None:
     )
     mock_resp = AsyncMock()
     mock_resp.status = 200
-    mock_resp.json = AsyncMock(return_value={"response": good_resp})
+    mock_resp.json = AsyncMock(return_value={"message": {"content": good_resp}})
     mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
     mock_resp.__aexit__ = AsyncMock(return_value=False)
     analyzer._session = _mock_session(post=MagicMock(return_value=mock_resp))
@@ -10347,7 +10489,7 @@ async def _run_analyze_clip_with_mock_db(
     )
     mock_resp = AsyncMock()
     mock_resp.status = 200
-    mock_resp.json = AsyncMock(return_value={"response": resp_json})
+    mock_resp.json = AsyncMock(return_value={"message": {"content": resp_json}})
     mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
     mock_resp.__aexit__ = AsyncMock(return_value=False)
     analyzer._session = _mock_session(post=MagicMock(return_value=mock_resp))
@@ -10429,7 +10571,7 @@ async def test_analyze_clip_computes_zone_motion_fraction_end_to_end() -> None:
     )
     mock_resp = AsyncMock()
     mock_resp.status = 200
-    mock_resp.json = AsyncMock(return_value={"response": resp_json})
+    mock_resp.json = AsyncMock(return_value={"message": {"content": resp_json}})
     mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
     mock_resp.__aexit__ = AsyncMock(return_value=False)
     analyzer._session = _mock_session(post=MagicMock(return_value=mock_resp))
@@ -11647,7 +11789,7 @@ async def _analyze_with_response(
 
     mock_resp = AsyncMock()
     mock_resp.status = 200
-    mock_resp.json = AsyncMock(return_value={"response": response_json})
+    mock_resp.json = AsyncMock(return_value={"message": {"content": response_json}})
     mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
     mock_resp.__aexit__ = AsyncMock(return_value=False)
     analyzer._session = _mock_session(post=MagicMock(return_value=mock_resp))

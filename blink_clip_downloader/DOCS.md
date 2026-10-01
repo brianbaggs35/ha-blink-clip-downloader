@@ -451,14 +451,15 @@ Only vision-capable models are shown in the model picker; text-only models are f
 
 #### Ollama Cloud — `ollama_cloud`
 
-Uses the [Ollama Cloud API](https://api.ollama.com) instead of a local server. Identical
-API surface to local Ollama, so model selection and token counting work the same way.
+Uses the [Ollama Cloud API](https://ollama.com) instead of a local server. It
+uses the same chat API format as local Ollama, so model selection and token
+counting work the same way.
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `ollama_url` | `""` | Leave empty to use the default Ollama Cloud endpoint |
 | `ollama_model` | `""` | Model name (same as local Ollama) |
-| `ollama_cloud_api_key` | `""` | API key from api.ollama.com |
+| `ollama_cloud_api_key` | `""` | API key from [ollama.com/settings/keys](https://ollama.com/settings/keys) |
 
 #### Moondream Cloud — `moondream_cloud`
 

@@ -1,5 +1,15 @@
 # Changelog
 
+## 6.0.9
+
+### Bug fixes
+
+- **Fixed local and Cloud Ollama clip analysis.** Both providers now use
+  Ollama's `/api/chat` request and response format. Ollama Cloud now targets
+  `https://ollama.com` instead of the retired `api.ollama.com` host. Failed
+  and malformed responses now produce clear, bounded warnings rather than
+  obscuring the provider's error or breaking analysis.
+
 ## 6.0.8
 
 ### Rich alerts: the key frame, a tap to the clip, and "Not a threat"

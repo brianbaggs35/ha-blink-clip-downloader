@@ -236,7 +236,7 @@ configuration:
   ollama_cloud_api_key:
     name: Ollama Cloud API-Schlüssel
     description: >-
-      API-Schlüssel von api.ollama.com. Erforderlich, wenn ai_provider
+      API-Schlüssel von ollama.com/settings/keys. Erforderlich, wenn ai_provider
       auf „ollama_cloud“ gesetzt ist.
   moondream_api_key:
     name: Moondream API-Schlüssel

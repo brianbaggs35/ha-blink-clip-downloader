@@ -205,7 +205,7 @@ configuration:
       what is available.
   ollama_cloud_api_key:
     name: Ollama Cloud API Key
-    description: API key from api.ollama.com. Required when ai_provider is "ollama_cloud".
+    description: API key from ollama.com/settings/keys. Required when ai_provider is "ollama_cloud".
   moondream_api_key:
     name: Moondream API Key
     description: API key from moondream.ai. Required when ai_provider is "moondream_cloud".
