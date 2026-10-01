@@ -242,10 +242,10 @@ test('covers AI configuration, feedback, email alerts, and model-picker success 
   await expect(page.getByText('Mock SMTP rejected the test message')).toBeVisible()
 
   await page.getByRole('button', { name: '⟳ Fetch Models' }).click()
-  await expect(page.getByText('Found 2 vision model(s)')).toBeVisible()
+  await expect(page.locator('#ai-model-picker')).toContainText('llava:latest')
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
   await page.getByRole('button', { name: '📋 Copy' }).click()
-  await expect(page.getByText('Copied "llava:latest"')).toBeVisible()
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe('llava:latest')
 
   await page.locator('.p-accordionheader', { hasText: 'Garage' }).click()
   await page.locator('#cam-prompt-Garage').fill('  Mocked garage prompt  ')
@@ -265,9 +265,9 @@ test('covers AI configuration, feedback, email alerts, and model-picker success 
   await page.reload()
   await page.locator('.app-nav-tab[data-tab="ai"]').click()
   await page.getByRole('button', { name: '⟳ Fetch Escalation Models' }).click()
-  await expect(page.getByText('Found 1 escalation model(s)')).toBeVisible()
+  await expect(page.locator('#ai-escalation-model-picker')).toContainText('llava:escalation')
   await page.getByRole('button', { name: '📋 Copy' }).last().click()
-  await expect(page.getByText('Copied "llava:escalation"')).toBeVisible()
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe('llava:escalation')
 
   await page.getByRole('button', { name: 'Configure Cameras' }).click()
   const restoreDialog = page.getByRole('dialog', { name: 'AI Analysis Configuration' })
