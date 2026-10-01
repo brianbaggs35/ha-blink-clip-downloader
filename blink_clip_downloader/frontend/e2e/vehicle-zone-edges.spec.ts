@@ -1,4 +1,4 @@
-import { test, expect } from './coverage-fixtures'
+import { appApiUrl, IS_HA_E2E, test, expect } from './coverage-fixtures'
 
 // Drawing edge cases in the Vehicles tab's zone picker. The protected-zone
 // outline is the single most consequential thing a user draws in this app
@@ -13,8 +13,8 @@ import { test, expect } from './coverage-fixtures'
 
 const CAMERA = 'Test Scratch'
 
-async function openVehicles(page: import('@playwright/test').Page) {
-  await page.goto('/')
+async function openVehicles(page: import('@playwright/test').Page, entryUrl = '/') {
+  await page.goto(entryUrl)
   await page.waitForSelector('.app-nav-tab.active[data-tab="library"]')
   await page.locator('.app-nav-tab[data-tab="vehicles"]').click()
   await page.waitForSelector('.app-nav-tab.active[data-tab="vehicles"]')
@@ -35,23 +35,38 @@ test.beforeEach(async ({ page }) => {
   await setCarCamera(page, true)
 })
 
-// vehicles.spec.ts runs straight after this file (workers: 1, alphabetical)
-// and starts from Test Scratch being an ordinary camera with no zone. This
-// file has to hand it back in that state, or its first test finds a zone
-// picker already on screen.
+// vehicles.spec.ts follows this file. HA skips its "mark a camera" test, so
+// HA needs the camera enabled; standalone runs that test and start with it off.
 test.afterAll(async ({ browser }) => {
-  const page = await browser.newPage()
+  const { baseURL, storageState } = test.info().project.use
+  if (!baseURL) throw new Error('Playwright baseURL is required to restore vehicle test data')
+
+  const context = await browser.newContext({ storageState })
   try {
-    const card = await openVehicles(page)
-    const clearZone = card.getByRole('button', { name: 'Clear zone' })
-    if (await clearZone.count()) {
-      await clearZone.click()
-      await page.getByRole('button', { name: 'Confirm' }).click()
-      await expect(page.getByText('Vehicle zone cleared')).toBeVisible()
+    const zoneUrl = new URL(appApiUrl(`/api/vehicle/zone/${encodeURIComponent(CAMERA)}`), baseURL).toString()
+    const zoneResponse = await context.request.delete(zoneUrl)
+    expect(zoneResponse.ok()).toBe(true)
+
+    if (!IS_HA_E2E) {
+      const configsUrl = new URL(appApiUrl('/api/ai/camera-configs'), baseURL).toString()
+      const configsResponse = await context.request.get(configsUrl)
+      expect(configsResponse.ok()).toBe(true)
+      const configs = (await configsResponse.json()) as {
+        camera: string
+        is_car_camera: boolean
+        car_zone: unknown
+        [key: string]: unknown
+      }[]
+      const testCamera = configs.find((config) => config.camera === CAMERA)
+      if (!testCamera) throw new Error(`Missing seeded camera configuration for ${CAMERA}`)
+      testCamera.is_car_camera = false
+      testCamera.car_zone = null
+
+      const restoreResponse = await context.request.put(configsUrl, { data: configs })
+      expect(restoreResponse.ok()).toBe(true)
     }
-    await setCarCamera(page, false)
   } finally {
-    await page.close()
+    await context.close()
   }
 })
 
