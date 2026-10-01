@@ -85,7 +85,7 @@ test("the photos dialog explains a photo that doesn't look like the rest", async
   await expect(dialog).toBeHidden()
 })
 
-test('the camera picker lists every camera, and finds faces in the clip picked', async ({ page }) => {
+test('the camera picker lists every camera, and finds faces in the clip picked @standalone', async ({ page }) => {
   await page.locator('#biometrics-camera-select').click()
   for (const camera of ['All cameras', 'Test Scratch', 'Front Door', 'Backyard', 'Garage']) {
     await expect(page.getByRole('option', { name: camera, exact: true })).toBeVisible()
@@ -109,7 +109,7 @@ test('the camera picker lists every camera, and finds faces in the clip picked',
   await expect(groups).toHaveCount(3)
 })
 
-test('enrolls a new person from faces found in a clip', async ({ page }) => {
+test('enrolls a new person from faces found in a clip @standalone', async ({ page }) => {
   await chooseCamera(page, 'Test Scratch')
   await page.locator('.clip-tile').click()
   const firstGroup = page.locator('.face-group').first()
@@ -131,7 +131,7 @@ test('enrolls a new person from faces found in a clip', async ({ page }) => {
   await expect.poll(() => avatar.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0)
 })
 
-test('recognizes someone already enrolled, and adds more photos to them in one step', async ({ page }) => {
+test('recognizes someone already enrolled, and adds more photos to them in one step @standalone', async ({ page }) => {
   await uploadPhoto(page)
   const recognized = page.locator('.face-group', { hasText: 'Already recognized as Morgan E2E' })
   await expect(recognized).toBeVisible()
@@ -148,7 +148,7 @@ test('recognizes someone already enrolled, and adds more photos to them in one s
   await expect(morgan.locator('.person-sources li')).toHaveText(['Test Scratch 1', 'Uploaded 1'])
 })
 
-test("adds photos to someone from their card, and keeps adding until they're done", async ({ page }) => {
+test("adds photos to someone from their card, and keeps adding until they're done @standalone", async ({ page }) => {
   const morgan = personCard(page, 'Morgan E2E')
   await morgan.getByRole('button', { name: 'Add photos' }).click()
   const adding = page.locator('.adding-for')
@@ -173,7 +173,7 @@ test("adds photos to someone from their card, and keeps adding until they're don
   await bar.getByRole('button', { name: 'Clear selection' }).click()
 })
 
-test('warns before filing a recognized face under someone else', async ({ page }) => {
+test('warns before filing a recognized face under someone else @standalone', async ({ page }) => {
   await uploadPhoto(page)
   await page.locator('.face-group', { hasText: 'Already recognized as Morgan E2E' }).locator('.face-tile').click()
   await page.locator('#biometrics-name').fill('Jordan E2E')
@@ -184,7 +184,7 @@ test('warns before filing a recognized face under someone else', async ({ page }
   await expect(bar).toBeHidden()
 })
 
-test('removes one photo of a person, keeping the rest', async ({ page }) => {
+test('removes one photo of a person, keeping the rest @standalone', async ({ page }) => {
   const morgan = personCard(page, 'Morgan E2E')
   await morgan.getByRole('button', { name: 'Photos', exact: true }).click()
   const dialog = page.locator('.person-photos-dialog')
@@ -263,7 +263,7 @@ test('a camera renamed or removed while selected falls back to all cameras', asy
   await expect(page.getByRole('option', { name: 'Test Scratch', exact: true })).toHaveCount(0)
 })
 
-test('a missed-match report opens a scan of that clip', async ({ page }) => {
+test('a missed-match report opens a scan of that clip @standalone', async ({ page }) => {
   await page.route('**/api/ai/faces/feedback', (route) =>
     route.fulfill({
       json: [

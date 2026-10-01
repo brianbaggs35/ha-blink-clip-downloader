@@ -52,7 +52,7 @@ test("the Vehicles zone picker's clip strip falls back per clip", async ({ page 
   await card.locator('input[role="switch"]').click()
 })
 
-test('the Biometrics clip list falls back per clip, and a clip can still be scanned', async ({ page }) => {
+test('the Biometrics clip list falls back per clip, and a clip can still be scanned @standalone', async ({ page }) => {
   await breakThumbnails(page)
   await page.goto('/')
   await gotoTab(page, 'biometrics')

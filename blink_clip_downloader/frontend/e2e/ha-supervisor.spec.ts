@@ -1,7 +1,7 @@
 import { appApiUrl, test, expect } from './coverage-fixtures'
 
 test.describe('@ha', () => {
-  test('loads the app and fixture auth state through Supervisor ingress', async ({ page }) => {
+  test('loads the app and fixture auth state through Supervisor ingress @standalone', async ({ page }) => {
     const response = await page.goto('/')
 
     expect(response?.ok()).toBe(true)

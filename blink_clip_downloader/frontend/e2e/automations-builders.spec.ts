@@ -208,7 +208,7 @@ test('an automation offers to create itself in Home Assistant', async ({ page })
   await expect(page.getByRole('button', { name: 'Create in Home Assistant' })).toBeVisible()
 })
 
-test('creating without Home Assistant behind it fails with an explanation', async ({ page }) => {
+test('creating without Home Assistant behind it fails with an explanation @standalone', async ({ page }) => {
   // The standalone server has no Supervisor token, so the endpoint answers
   // 503 — a real round trip, and the path a bare container would take.
   await openTab(page, 'Automations')

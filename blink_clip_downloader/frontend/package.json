@@ -15,7 +15,6 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
-    "test:e2e:ha": "playwright test",
     "test:e2e:coverage": "rm -rf .nyc_output coverage-e2e && VITE_COVERAGE=true npm run build && VITE_COVERAGE=true playwright test && node e2e/generate-coverage-report.mjs"
   },
   "dependencies": {

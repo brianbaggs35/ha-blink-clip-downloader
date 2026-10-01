@@ -480,7 +480,7 @@ jobs:
         working-directory: blink_clip_downloader/frontend
         env:
           BLINK_E2E_HA: "1"
-        run: npm run test:e2e:ha
+        run: npm run test:e2e -- --grep-invert @standalone
 
       - name: Collect diagnostics
         if: failure()

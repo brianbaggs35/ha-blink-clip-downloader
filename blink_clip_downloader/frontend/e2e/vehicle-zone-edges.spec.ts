@@ -114,7 +114,7 @@ test('switching between rectangle and freeform discards the draft rather than mi
   await expect(card.getByRole('button', { name: 'Save zone' })).toBeDisabled()
 })
 
-test('a reference frame that will not load says so instead of collapsing the canvas', async ({ page }) => {
+test('a reference frame that will not load says so instead of collapsing the canvas @standalone', async ({ page }) => {
   // Without this the image silently 404s, the drawing surface collapses to
   // the height of its alt text, and the zone simply cannot be drawn with
   // nothing on screen explaining why.

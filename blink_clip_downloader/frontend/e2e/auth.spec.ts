@@ -14,7 +14,7 @@ test.afterEach(async ({ page }) => {
   await page.request.post(appApiUrl(AUTH_ENDPOINT), { data: { code: '123456' } })
 })
 
-test('shows 2FA, rejects a wrong code, then accepts a valid code', async ({ page }) => {
+test('shows 2FA, rejects a wrong code, then accepts a valid code @standalone', async ({ page }) => {
   await page.goto('/')
 
   const modal = page.locator('.modal-bg.open', { hasText: 'Two-Factor Authentication' })
@@ -36,7 +36,7 @@ test('shows 2FA, rejects a wrong code, then accepts a valid code', async ({ page
   await expect(page.getByText('Signed in to Blink')).toBeVisible()
 })
 
-test('shows and dismisses an authentication error banner', async ({ page }) => {
+test('shows and dismisses an authentication error banner @standalone', async ({ page }) => {
   // The fake server reserves 999999 for a deterministic full-auth failure.
   await page.request.post(appApiUrl(AUTH_ENDPOINT), { data: { code: '999999' } })
   await page.goto('/')

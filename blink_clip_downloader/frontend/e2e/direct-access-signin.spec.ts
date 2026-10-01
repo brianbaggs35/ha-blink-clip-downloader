@@ -54,7 +54,10 @@ test('the direct port asks for a Home Assistant sign-in before showing anything'
   await expect(page).toHaveURL(/\/login\?next=/)
 })
 
-test('the Automations tab puts the access token into what Home Assistant will call', async ({ page, request }) => {
+test('the Automations tab puts the access token into what Home Assistant will call @standalone', async ({
+  page,
+  request,
+}) => {
   await signIn(page)
   await expect(page.locator('.app-nav')).toBeVisible()
   await page.locator('.app-nav-tab[data-tab="automations"]').click()

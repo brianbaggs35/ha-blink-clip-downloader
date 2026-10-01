@@ -125,7 +125,9 @@ test('sending a test Discord message with no webhook configured fails gracefully
   await expect(page.getByText('Test Discord message failed')).toBeVisible()
 })
 
-test('the mobile and Home Assistant channels also fail gracefully with nothing configured', async ({ page }) => {
+test('the mobile and Home Assistant channels also fail gracefully with nothing configured @standalone', async ({
+  page,
+}) => {
   await page.getByRole('button', { name: 'Send test notification', exact: true }).click()
   await expect(page.getByText('Test push notification failed')).toBeVisible()
 

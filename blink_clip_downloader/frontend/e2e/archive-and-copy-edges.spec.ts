@@ -10,7 +10,7 @@ test.beforeEach(async ({ page }) => {
   await page.waitForSelector('.app-nav-tab.active[data-tab="storage"]')
 })
 
-test('deleting an archive of one clip asks about "1 clip", not "1 clips"', async ({ page }) => {
+test('deleting an archive of one clip asks about "1 clip", not "1 clips" @standalone', async ({ page }) => {
   // storage.spec.ts declines this confirmation on a two-clip archive,
   // which only ever produces the plural. 2024-02-e2e.zip is the seeded
   // single-clip one. Declined, so nothing is removed.
@@ -27,7 +27,7 @@ test('deleting an archive of one clip asks about "1 clip", not "1 clips"', async
   await expect(page.locator('.archive-panel')).toHaveCount(3)
 })
 
-test('a camera filter left pointing at a camera that has gone resets itself', async ({ page }) => {
+test('a camera filter left pointing at a camera that has gone resets itself @standalone', async ({ page }) => {
   await page.getByRole('combobox', { name: 'Filter by camera' }).click()
   await page.getByRole('option', { name: 'Front Door' }).click()
   await expect(page.locator('.archive-panel')).toHaveCount(1)
