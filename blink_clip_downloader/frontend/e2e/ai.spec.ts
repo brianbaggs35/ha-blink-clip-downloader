@@ -1,5 +1,17 @@
 import { test, expect } from './coverage-fixtures'
 
+async function mockAiProvider(page: import('@playwright/test').Page, provider: string) {
+  await page.route('**/api/ai/status', async (route) => {
+    if (route.request().method() !== 'GET') {
+      await route.fallback()
+      return
+    }
+    const response = await route.fetch()
+    const status = (await response.json()) as Record<string, unknown>
+    await route.fulfill({ response, json: { ...status, provider } })
+  })
+}
+
 // AI and AI Usage are both gated server-side on `analyzer is not None`
 // (media_server/ai.py's _handle_ai_status/_handle_ai_usage) -- standalone_server.py
 // wires in a real ClipAnalyzer pointed at an unreachable port specifically
@@ -183,27 +195,113 @@ test('a failed Clear Stats says so instead of pretending the counters were reset
   await expect(page.getByText('Failed to clear usage stats')).toBeVisible()
 })
 
-test('Fetch Models finds none on the unreachable Ollama server, and Copy requires a selection first', async ({
-  page,
-}) => {
-  // AiConnectionCard's model picker is shown for the ollama provider
-  // (showModelPicker()) regardless of connectivity — fetchAiModels() below
-  // makes a real request to the same unreachable port ai_online:false
-  // already comes from. ClipAnalyzer.fetch_models()
-  // (analyzer/ollama_provider.py) catches
-  // the connection error itself and returns an empty list rather than
-  // raising, so this genuinely lands on the "found none" branch, not a
-  // request failure — same graceful-empty-result shape Test Analysis above
-  // already exercises for analyze_clip.
+test('Fetch Models handles an empty Ollama model list', async ({ page }) => {
+  let fetchCount = 0
+  await page.route('**/api/ai/models', async (route) => {
+    fetchCount += 1
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ enabled: true, models: [] }),
+    })
+  })
+
   await page.goto('/')
   await page.locator('.app-nav-tab[data-tab="ai"]').click()
   await page.waitForSelector('.app-nav-tab.active[data-tab="ai"]')
 
-  await page.getByRole('button', { name: '📋 Copy' }).click()
-  await expect(page.getByText('Fetch models and pick one first')).toBeVisible()
+  await page.getByRole('button', { name: '⟳ Fetch Models' }).click()
+  expect(fetchCount).toBe(1)
+  await page.locator('#ai-model-picker').click()
+  await expect(page.getByRole('option')).toHaveCount(1)
+  await expect(page.getByRole('option').first()).toContainText('Select a model')
+})
+
+test('Fetch Models lists installed local Ollama models with vision models first', async ({ page }) => {
+  await mockAiProvider(page, 'ollama')
+  let fetchCount = 0
+  const localModels = [
+    { name: 'qwen3-vl:4b', size: 3_295_636_135 },
+    { name: 'qwen3.5:4b', size: 3_389_987_735 },
+    { name: 'qwen2.5vl:3b', size: 3_200_621_688 },
+    { name: 'llama3.2-vision:latest', size: 7_816_587_186 },
+    { name: 'llava:7b', size: 4_733_363_377 },
+    { name: 'moondream:latest', size: 1_738_451_197 },
+    { name: 'deepcoder:14b', size: 8_988_113_141 },
+    { name: 'gpt-oss:20b', size: 13_793_412_444 },
+    { name: 'llama3.2:latest', size: 2_019_391_889 },
+    { name: 'qwen3:8b', size: 5_225_388_164 },
+    { name: 'nomic-embed-text:latest', size: 274_302_450 },
+    { name: 'qwen2.5-coder:1.5b-base', size: 986_060_385 },
+    { name: 'deepseek-v2:lite', size: 8_905_124_229 },
+    { name: 'deepseek-coder-v2:latest', size: 8_905_126_121 },
+    { name: 'qwen2.5-coder:14b', size: 8_988_124_298 },
+    { name: 'qwen2.5-coder:7b', size: 4_683_085_561 },
+  ]
+  await page.route('**/api/ai/models', async (route) => {
+    fetchCount += 1
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ enabled: true, models: localModels }),
+    })
+  })
+
+  await page.goto('/')
+  await page.locator('.app-nav-tab[data-tab="ai"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="ai"]')
+  await expect(page.getByText('Provider:')).toContainText('Ollama (Local/LAN)')
 
   await page.getByRole('button', { name: '⟳ Fetch Models' }).click()
-  await expect(page.getByText('No vision models found on this Ollama server')).toBeVisible()
+  await expect(page.locator('#ai-model-picker')).toContainText('qwen3-vl:4b')
+  expect(fetchCount).toBe(1)
+
+  await page.locator('#ai-model-picker').click()
+  const options = page.getByRole('option')
+  await expect(options).toHaveCount(localModels.length + 1)
+  await expect(options.nth(1)).toContainText('qwen3-vl:4b')
+  await expect(options.nth(1)).toContainText('⭐ Best')
+  await expect(options.nth(2)).toContainText('qwen3.5:4b')
+  await expect(options.nth(7)).toContainText('deepcoder:14b')
+  await expect(options.nth(16)).toContainText('qwen2.5-coder:7b')
+  const optionLabels = await options.allTextContents()
+  for (const { name } of localModels) {
+    expect(optionLabels.some((label) => label.includes(name))).toBe(true)
+  }
+})
+
+test('Fetch Models shows recommended Ollama Cloud vision models', async ({ page }) => {
+  await mockAiProvider(page, 'ollama_cloud')
+  let fetchCount = 0
+  await page.route('**/api/ai/models', async (route) => {
+    fetchCount += 1
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        enabled: true,
+        models: [
+          { name: 'gemma4:31b', recommended: true },
+          { name: 'glm-5.3-flash', recommended: true },
+        ],
+      }),
+    })
+  })
+
+  await page.goto('/')
+  await page.locator('.app-nav-tab[data-tab="ai"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="ai"]')
+  await expect(page.getByText('Provider:')).toContainText('Ollama Cloud')
+
+  await page.getByRole('button', { name: '⟳ Fetch Models' }).click()
+  await expect(page.getByText('Provider:')).toContainText('Ollama Cloud')
+  await expect(page.locator('#ai-model-picker')).toContainText('gemma4:31b')
+  expect(fetchCount).toBe(1)
+
+  await page.locator('#ai-model-picker').click()
+  const options = page.getByRole('option')
+  await expect(options).toHaveCount(3)
+  await expect(options.nth(1)).toContainText('gemma4:31b')
+  await expect(options.nth(1)).toContainText('⭐ Best')
+  await expect(options.nth(2)).toContainText('glm-5.3-flash')
+  await expect(options.nth(2)).toContainText('⭐ Best')
 })
 
 test('AI Usage tab shows the right explanatory note for each remaining provider', async ({ page }) => {
