@@ -447,7 +447,13 @@ Free and fully private — no data leaves your home.
 | `ollama_url` | `""` | URL of your Ollama server, e.g. `http://192.168.1.10:11434` |
 | `ollama_model` | `""` | Vision model to use (e.g. `llava:7b`, `llama3.2-vision:11b`). Use **Fetch Models** in the web UI to browse available models. |
 
-Only vision-capable models are shown in the model picker; text-only models are filtered out.
+The local model picker lists all installed models, with vision-capable models
+first. The Cloud picker lists available vision models only and marks the top
+two recommendations: [Gemma 4 31B](https://ollama.com/library/gemma4) and
+[GLM-5.3-Flash](https://ollama.com/library/glm-5.3-flash). These Cloud models
+are confirmed vision-capable by Ollama's model details API; the recommendations
+are informed by their published vision benchmarks, not guessed from model
+names.
 
 #### Ollama Cloud — `ollama_cloud`
 

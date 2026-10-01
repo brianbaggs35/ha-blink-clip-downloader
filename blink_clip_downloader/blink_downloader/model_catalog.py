@@ -73,6 +73,14 @@ _VISION_PRIORITY_PATTERNS: list[tuple[str, int]] = [
     ("minicpm", 45),
 ]
 
+# Recommended models are selected from Ollama's current Cloud catalog using
+# the providers' published vision benchmarks. Only models returned by
+# Ollama's Cloud API can receive a recommendation.
+_OLLAMA_CLOUD_RECOMMENDED_MODELS: tuple[str, ...] = (
+    "gemma4:31b",
+    "glm-5.3-flash",
+)
+
 
 def is_vision_model(model_name: str) -> bool:
     """Return True if an Ollama model name looks vision-capable."""

@@ -300,10 +300,8 @@ describe('AiConnectionCard', () => {
   })
 
   it('shows the model picker for ollama/openai/anthropic providers and fetches models', async () => {
-    // provider is 'ollama' here (not 'openai') so index-0-is-best still
-    // applies to these fake ids — openai's picker instead marks a specific
-    // known-good model as best regardless of position, see the dedicated
-    // "marks gpt-5.4-nano as best" test below.
+    // Local Ollama's sorted vision models put the best one first. OpenAI
+    // instead marks a specific known-good model regardless of position.
     vi.stubGlobal(
       'fetch',
       vi.fn(() =>
@@ -328,6 +326,36 @@ describe('AiConnectionCard', () => {
     // Unmount so this test's still-open teleported overlay (and its
     // 'model-a'/'model-b' option nodes) doesn't linger in document.body and
     // get matched by a later test's own overlay query.
+    wrapper.unmount()
+  })
+
+  it('marks the top two Ollama Cloud models as recommended', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          jsonResponse({
+            enabled: true,
+            models: [
+              { name: 'gemma4:31b', recommended: true },
+              { name: 'glm-5.3-flash', recommended: true },
+              { name: 'kimi-k3' },
+            ],
+          }),
+        ),
+      ),
+    )
+    const wrapper = mount(AiConnectionCard, {
+      props: { status: baseStatus({ provider: 'ollama_cloud' }) },
+    })
+    await wrapper.find('button').trigger('click')
+    await flushPromises()
+    await wrapper.find('#ai-model-picker .p-select-label').trigger('click')
+    await flushPromises()
+    const options = [...document.body.querySelectorAll('[role="option"]')]
+    expect(options.find((o) => o.textContent?.includes('gemma4:31b'))!.textContent).toContain('⭐ Best')
+    expect(options.find((o) => o.textContent?.includes('glm-5.3-flash'))!.textContent).toContain('⭐ Best')
+    expect(options.find((o) => o.textContent?.includes('kimi-k3'))!.textContent).not.toContain('⭐ Best')
     wrapper.unmount()
   })
 
