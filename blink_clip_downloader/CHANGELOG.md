@@ -4,6 +4,10 @@
 
 ### Bug fixes
 
+- Suppressed Transformers' warning about one empty low-frequency mel filter
+  when loading the default AudioSet AST model. This is also empty in the
+  model's Kaldi filter bank; its expected 128-bin input is unchanged.
+  Warnings from custom audio models and other warnings remain visible.
 - **Fixed local and Cloud Ollama clip analysis.** Both providers now use
   Ollama's `/api/chat` request and response format. Ollama Cloud now targets
   `https://ollama.com` instead of the retired `api.ollama.com` host. Failed
