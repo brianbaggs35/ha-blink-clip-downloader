@@ -3879,6 +3879,87 @@ async def test_refresh_camera_state_calls_blink_refresh(dl: BlinkDownloader) -> 
     fake_blink.refresh.assert_awaited_once_with()
 
 
+def test_stale_last_records_check_ignores_empty_history(dl: BlinkDownloader) -> None:
+    camera = MagicMock()
+    camera.name = "New Name"
+    camera.sync.last_records = {}
+    dl._blink = MagicMock(cameras=CaseInsensitiveDict({"New Name": camera}))
+
+    assert dl._has_stale_camera_last_records() is False
+
+
+async def test_refresh_camera_state_rebuilds_topology_for_stale_last_records(
+    dl: BlinkDownloader,
+) -> None:
+    sync = MagicMock()
+    sync.last_records = {"Old Name": [{"clip": "/old-clip"}]}
+    camera = MagicMock()
+    camera.name = "New Name"
+    camera.sync = sync
+    fake_blink = MagicMock()
+    fake_blink.sync = CaseInsensitiveDict({"Sync Module": sync})
+    fake_blink.cameras = CaseInsensitiveDict({"New Name": camera})
+    fake_blink.refresh = AsyncMock(return_value=True)
+
+    async def rebuild_topology() -> bool:
+        fake_blink.sync["Sync Module"] = sync
+        fake_blink.cameras["New Name"] = camera
+        sync.last_records = {"New Name": []}
+        return True
+
+    fake_blink.setup_post_verify = AsyncMock(side_effect=rebuild_topology)
+    dl._blink = fake_blink
+    dl._last_topology_refresh = time.monotonic()
+    dl._camera_refresh_skip_warned = True
+
+    assert await dl.refresh_camera_state() is True
+
+    fake_blink.setup_post_verify.assert_awaited_once_with()
+    fake_blink.refresh.assert_awaited_once_with()
+    assert dl._camera_refresh_skip_warned is False
+
+
+async def test_refresh_camera_state_skips_blink_refresh_until_topology_recovers(
+    dl: BlinkDownloader, caplog: pytest.LogCaptureFixture
+) -> None:
+    sync = MagicMock()
+    sync.last_records = {"Old Name": [{"clip": "/old-clip"}]}
+    camera = MagicMock()
+    camera.name = "New Name"
+    camera.sync = sync
+    fake_blink = MagicMock()
+    fake_blink.sync = CaseInsensitiveDict({"Sync Module": sync})
+    fake_blink.cameras = CaseInsensitiveDict({"New Name": camera})
+    fake_blink.refresh = AsyncMock(return_value=True)
+    fake_blink.setup_post_verify = AsyncMock(return_value=False)
+    dl._blink = fake_blink
+    dl._last_topology_refresh = time.monotonic()
+
+    with caplog.at_level("WARNING"):
+        assert await dl.refresh_camera_state() is False
+        assert await dl.refresh_camera_state() is False
+
+    assert fake_blink.setup_post_verify.await_count == 2
+    fake_blink.refresh.assert_not_awaited()
+    assert caplog.text.count("Skipping Blink camera-state refresh") == 1
+
+
+async def test_process_camera_renames_moves_outgoing_name_first(
+    dl: BlinkDownloader,
+) -> None:
+    callback = AsyncMock()
+    dl._on_camera_renamed = callback
+
+    await dl._process_camera_renames(
+        {("Inside House 2", "Inside Car"), ("Inside Car", "Driveway 2")}
+    )
+
+    assert [call.args for call in callback.await_args_list] == [
+        ("Inside Car", "Driveway 2"),
+        ("Inside House 2", "Inside Car"),
+    ]
+
+
 async def test_refresh_device_topology_replaces_removed_and_added_devices(
     dl: BlinkDownloader,
 ) -> None:
