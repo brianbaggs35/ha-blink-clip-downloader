@@ -1,13 +1,23 @@
 # Changelog
 
-## 6.0.9
+## 6.0.10
 
 ### Bug fixes
 
+- Reconcile Blink camera topology immediately when a renamed camera is missing
+  from its sync module's last-records map, avoiding blinkpy's repeated
+  `KeyError` traceback. Camera-state refresh is skipped with a single warning
+  until the topology is consistent, and overlapping rename migrations move
+  the camera leaving a name before another camera moves into it.
 - Suppressed Transformers' warning about one empty low-frequency mel filter
   when loading the default AudioSet AST model. This is also empty in the
   model's Kaldi filter bank; its expected 128-bin input is unchanged.
   Warnings from custom audio models and other warnings remain visible.
+
+## 6.0.9
+
+### Bug fixes
+
 - **Fixed local and Cloud Ollama clip analysis.** Both providers now use
   Ollama's `/api/chat` request and response format. Ollama Cloud now targets
   `https://ollama.com` instead of the retired `api.ollama.com` host. Failed
