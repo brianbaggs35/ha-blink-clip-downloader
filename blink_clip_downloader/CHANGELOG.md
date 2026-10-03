@@ -17,6 +17,7 @@
 ### Dependency Updates
 
 - Updated openai to 3.24.0
+- Updated anthropic to 1.11.0
 
 ## 6.0.9
 
