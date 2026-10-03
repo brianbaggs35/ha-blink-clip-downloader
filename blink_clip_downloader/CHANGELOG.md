@@ -25,6 +25,7 @@
 - Updated @vitest/coverage-v8 to 5.0.3
 - Updated vitest to 5.0.3
 - Updated eslint to 10.12.0
+- Updated globals to 17.13.0
 
 ## 6.0.9
 
