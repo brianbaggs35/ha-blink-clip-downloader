@@ -4,6 +4,11 @@
 
 ### Bug fixes
 
+- Disable Ollama model thinking during clip analysis so thinking-capable models
+  return their final JSON answer in `message.content` instead of leaving the
+  analysis response empty. Empty responses are now logged explicitly.
+- Fix the audio-model warning test flagged by SonarCloud by keeping its
+  warning-producing invocation singular within the warning assertion context.
 - Reconcile Blink camera topology immediately when a renamed camera is missing
   from its sync module's last-records map, avoiding blinkpy's repeated
   `KeyError` traceback. Camera-state refresh is skipped with a single warning

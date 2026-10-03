@@ -269,6 +269,7 @@ class ClipAnalyzer(BaseAnalyzer):
             ],
             "stream": False,
             "format": "json",
+            "think": False,
         }
 
         try:
@@ -294,6 +295,12 @@ class ClipAnalyzer(BaseAnalyzer):
                     message.get("content"), str
                 ):
                     _LOGGER.warning("Ollama response did not contain message.content")
+                    return ""
+                if not message["content"].strip():
+                    _LOGGER.warning(
+                        "Ollama returned an empty message.content despite thinking "
+                        "being disabled; check model compatibility and output constraints"
+                    )
                     return ""
                 try:
                     self._last_prompt_tokens = int(data.get("prompt_eval_count") or 0)
