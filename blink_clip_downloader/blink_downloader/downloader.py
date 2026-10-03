@@ -168,6 +168,7 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         self._topology_fallback_cameras: Mapping[str, BlinkCamera] | None = None
         self._pending_camera_renames: set[tuple[str, str]] = set()
         self._pending_camera_replacements: set[str] = set()
+        self._camera_refresh_skip_warned = False
         # Auth state exposed to the web UI.
         self.auth_state: str = "disconnected"
         self.auth_message: str = ""
@@ -566,7 +567,18 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         if self._blink is None:
             return False
         try:
-            await self._refresh_device_topology()
+            stale_last_records = self._has_stale_camera_last_records()
+            await self._refresh_device_topology(force=stale_last_records)
+            if self._has_stale_camera_last_records():
+                if not self._camera_refresh_skip_warned:
+                    _LOGGER.warning(
+                        "Skipping Blink camera-state refresh because a camera is "
+                        "missing from its sync module's last-records map; "
+                        "topology refresh will be retried"
+                    )
+                    self._camera_refresh_skip_warned = True
+                return False
+            self._camera_refresh_skip_warned = False
             return bool(await self._blink.refresh())
         except Exception as exc:
             _LOGGER.warning("Could not refresh camera state from Blink: %s", exc)
@@ -576,6 +588,24 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                 # every cycle, until the add-on is restarted.
                 raise
             return False
+
+    def _has_stale_camera_last_records(self) -> bool:
+        """Detect renamed cameras that Blink's last-records map has not caught up with."""
+        if self._blink is None or not isinstance(self._blink.cameras, Mapping):
+            return False
+        for camera in self._blink.cameras.values():
+            camera_name = getattr(camera, "name", None)
+            sync = getattr(camera, "sync", None)
+            last_records = getattr(sync, "last_records", None)
+            if (
+                not isinstance(camera_name, str)
+                or not isinstance(last_records, Mapping)
+                or not last_records
+            ):
+                continue
+            if camera_name.lower() not in {str(name).lower() for name in last_records}:
+                return True
+        return False
 
     async def _refresh_device_topology(self, *, force: bool = False) -> bool:
         async with self._topology_lock:
@@ -689,7 +719,19 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         return renames, replacements, current_identities
 
     async def _process_camera_renames(self, renames: set[tuple[str, str]]) -> None:
-        for old_name, new_name in renames:
+        pending = set(renames)
+        ordered: list[tuple[str, str]] = []
+        while pending:
+            old_names = {old_name.lower() for old_name, _ in pending}
+            ready = sorted(
+                (rename for rename in pending if rename[1].lower() not in old_names),
+                key=lambda rename: (rename[0].lower(), rename[1].lower()),
+            )
+            next_rename = (ready or sorted(pending))[0]
+            ordered.append(next_rename)
+            pending.remove(next_rename)
+
+        for old_name, new_name in ordered:
             _LOGGER.info("Blink camera renamed from %r to %r", old_name, new_name)
             if self._on_camera_renamed is None:
                 continue

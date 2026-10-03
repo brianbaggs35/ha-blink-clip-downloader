@@ -1,5 +1,41 @@
 # Changelog
 
+## 6.0.10
+
+### Bug fixes
+
+- Disable Ollama model thinking during clip analysis so thinking-capable models
+  return their final JSON answer in `message.content` instead of leaving the
+  analysis response empty. Empty responses are now logged explicitly.
+- Fix the audio-model warning test flagged by SonarCloud by keeping its
+  warning-producing invocation singular within the warning assertion context.
+- Reconcile Blink camera topology immediately when a renamed camera is missing
+  from its sync module's last-records map, avoiding blinkpy's repeated
+  `KeyError` traceback. Camera-state refresh is skipped with a single warning
+  until the topology is consistent, and overlapping rename migrations move
+  the camera leaving a name before another camera moves into it.
+- Suppressed Transformers' warning about one empty low-frequency mel filter
+  when loading the default AudioSet AST model. This is also empty in the
+  model's Kaldi filter bank; its expected 128-bin input is unchanged.
+  Warnings from custom audio models and other warnings remain visible.
+
+### Dependency Updates
+
+- Updated openai to 3.24.0
+- Updated anthropic to 1.11.0
+- Updated ultralytics to 8.4.171
+- Updated transformers to 5.18.0
+- Updated primevue to 5.0.2
+- Updated @types/node to 26.6.4
+- Updated @vitest/coverage-v8 to 5.0.3
+- Updated vitest to 5.0.3
+- Updated eslint to 10.12.0
+- Updated globals to 17.13.0
+- Updated vite to 8.3.2
+- Updated vue-tsc to 3.3.12
+- Updated e2e eslint to 10.12.0
+- Updated e2e globals to 17.13.0
+
 ## 6.0.9
 
 ### Bug fixes

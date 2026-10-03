@@ -22,6 +22,7 @@ import subprocess
 import sys
 import threading
 import time
+import warnings
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -423,6 +424,64 @@ async def test_the_model_is_only_loaded_on_the_first_clip(
     assert await tagger.ensure_ready() is True
     assert await tagger.ensure_ready() is True
     module.pipeline.assert_called_once()
+
+
+async def test_default_ast_load_suppresses_only_its_known_mel_filter_warning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "blink_downloader.vision.runtime.torch_cpu_compatible", lambda: True
+    )
+    module = MagicMock()
+
+    def build(**_kw):
+        warnings.warn_explicit(
+            "At least one mel filter has all zero values. The value for "
+            "`num_mel_filters` (128) may be set too high.",
+            UserWarning,
+            filename="transformers/audio_utils.py",
+            lineno=821,
+            module="transformers.audio_utils",
+        )
+        warnings.warn("unrelated model warning", UserWarning)
+        return lambda _inp, **_call: []
+
+    module.pipeline.side_effect = build
+    monkeypatch.setitem(sys.modules, "transformers", module)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        assert await AudioTagger().ensure_ready() is True
+
+    assert [str(warning.message) for warning in caught] == ["unrelated model warning"]
+
+
+async def test_custom_model_keeps_mel_filter_warnings_visible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "blink_downloader.vision.runtime.torch_cpu_compatible", lambda: True
+    )
+    module = MagicMock()
+
+    def build(**_kw):
+        warnings.warn_explicit(
+            "At least one mel filter has all zero values.",
+            UserWarning,
+            filename="transformers/audio_utils.py",
+            lineno=821,
+            module="transformers.audio_utils",
+        )
+        return lambda _inp, **_call: []
+
+    module.pipeline.side_effect = build
+    monkeypatch.setitem(sys.modules, "transformers", module)
+
+    tagger = AudioTagger("custom/audio-model")
+    with pytest.warns(UserWarning, match="At least one mel filter has all zero values"):
+        ready = await tagger.ensure_ready()
+
+    assert ready is True
 
 
 def test_load_sync_refuses_an_incompatible_cpu(monkeypatch: pytest.MonkeyPatch) -> None:

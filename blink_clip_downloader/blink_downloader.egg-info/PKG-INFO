@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: blink-downloader
-Version: 6.0.9
+Version: 6.0.10
 Summary: Home Assistant add-on: Blink Clip Downloader
 Author-email: Brian Baggs <brianbaggs@hotmail.com>
 Requires-Python: >=3.13
@@ -12,8 +12,8 @@ Requires-Dist: python-slugify>=9.1.2
 Requires-Dist: python-dateutil>=2.9.0.post0
 Requires-Dist: aiosmtplib>=5.1.3
 Requires-Dist: Pillow>=12.3.0
-Requires-Dist: anthropic>=1.9.0
-Requires-Dist: openai>=3.20.0
+Requires-Dist: anthropic>=1.11.0
+Requires-Dist: openai>=3.24.0
 Requires-Dist: numpy>=2.5.3
 Requires-Dist: PyYAML>=6.0.3
 Provides-Extra: test
@@ -22,7 +22,7 @@ Requires-Dist: pytest-asyncio>=1.4.0; extra == "test"
 Requires-Dist: pytest-cov>=7.1.0; extra == "test"
 Requires-Dist: aioresponses>=0.7.9; extra == "test"
 Provides-Extra: vision
-Requires-Dist: ultralytics<9,>=8.4.165; extra == "vision"
+Requires-Dist: ultralytics<9,>=8.4.171; extra == "vision"
 Requires-Dist: opencv-python-headless<6,>=5.0.0.93; extra == "vision"
-Requires-Dist: transformers<6,>=5.17.0; extra == "vision"
+Requires-Dist: transformers<6,>=5.18.0; extra == "vision"
 Requires-Dist: facenet-pytorch<3,>=2.6.0; extra == "vision"

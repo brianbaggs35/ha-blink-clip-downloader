@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import warnings
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -365,12 +366,23 @@ class AudioTagger:
             from transformers import pipeline  # type: ignore[import-not-found]
 
             _LOGGER.info("Loading audio-classification model '%s'", self._model_id)
-            self._pipe = pipeline(
-                task="audio-classification",
-                model=self._model_id,
-                device="cpu",
-                token=self._hf_token or None,
-            )
+            with warnings.catch_warnings():
+                if self._model_id == self.DEFAULT_MODEL_ID:
+                    # AST's checkpoint expects 128 Kaldi mel bins. Its
+                    # 512-point FFT leaves one low-frequency bin empty in
+                    # both Transformers' fallback and Kaldi's filter bank.
+                    warnings.filterwarnings(
+                        "ignore",
+                        message=r"^At least one mel filter has all zero values\.",
+                        category=UserWarning,
+                        module=r"transformers\.audio_utils$",
+                    )
+                self._pipe = pipeline(
+                    task="audio-classification",
+                    model=self._model_id,
+                    device="cpu",
+                    token=self._hf_token or None,
+                )
             _LOGGER.info("Audio-classification model ready")
 
     async def ensure_ready(self) -> bool:
