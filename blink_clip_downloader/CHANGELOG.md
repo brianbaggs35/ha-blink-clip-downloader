@@ -14,6 +14,10 @@
   model's Kaldi filter bank; its expected 128-bin input is unchanged.
   Warnings from custom audio models and other warnings remain visible.
 
+### Dependency Updates
+
+- Updated openai to 3.24.0
+
 ## 6.0.9
 
 ### Bug fixes
