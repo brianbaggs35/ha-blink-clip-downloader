@@ -24,6 +24,7 @@
 - Updated @types/node to 26.6.4
 - Updated @vitest/coverage-v8 to 5.0.3
 - Updated vitest to 5.0.3
+- Updated eslint to 10.12.0
 
 ## 6.0.9
 
