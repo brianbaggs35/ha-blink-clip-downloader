@@ -19,6 +19,7 @@
 - Updated openai to 3.24.0
 - Updated anthropic to 1.11.0
 - Updated ultralytics to 8.4.171
+- Updated transformers to 5.18.0
 
 ## 6.0.9
 
