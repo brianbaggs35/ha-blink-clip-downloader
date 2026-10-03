@@ -477,8 +477,11 @@ async def test_custom_model_keeps_mel_filter_warnings_visible(
     module.pipeline.side_effect = build
     monkeypatch.setitem(sys.modules, "transformers", module)
 
+    tagger = AudioTagger("custom/audio-model")
     with pytest.warns(UserWarning, match="At least one mel filter has all zero values"):
-        assert await AudioTagger("custom/audio-model").ensure_ready() is True
+        ready = await tagger.ensure_ready()
+
+    assert ready is True
 
 
 def test_load_sync_refuses_an_incompatible_cpu(monkeypatch: pytest.MonkeyPatch) -> None:
