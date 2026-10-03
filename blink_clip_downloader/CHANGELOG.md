@@ -21,6 +21,7 @@
 - Updated ultralytics to 8.4.171
 - Updated transformers to 5.18.0
 - Updated primevue to 5.0.2
+- Updated @types/node to 26.6.4
 
 ## 6.0.9
 
