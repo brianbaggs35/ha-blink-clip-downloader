@@ -28,6 +28,7 @@
 - Updated globals to 17.13.0
 - Updated vite to 8.3.2
 - Updated vue-tsc to 3.3.12
+- Updated e2e eslint to 10.12.0
 
 ## 6.0.9
 
