@@ -22,6 +22,8 @@
 - Updated transformers to 5.18.0
 - Updated primevue to 5.0.2
 - Updated @types/node to 26.6.4
+- Updated @vitest/coverage-v8 to 5.0.3
+- Updated vitest to 5.0.3
 
 ## 6.0.9
 
