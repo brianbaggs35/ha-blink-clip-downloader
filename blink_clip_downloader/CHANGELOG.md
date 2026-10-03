@@ -26,6 +26,7 @@
 - Updated vitest to 5.0.3
 - Updated eslint to 10.12.0
 - Updated globals to 17.13.0
+- Updated vite to 8.3.2
 
 ## 6.0.9
 
