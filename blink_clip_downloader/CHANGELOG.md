@@ -20,6 +20,7 @@
 - Updated anthropic to 1.11.0
 - Updated ultralytics to 8.4.171
 - Updated transformers to 5.18.0
+- Updated primevue to 5.0.2
 
 ## 6.0.9
 
