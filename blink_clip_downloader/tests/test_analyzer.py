@@ -427,6 +427,7 @@ async def test_call_ollama_success(analyzer: ClipAnalyzer) -> None:
     assert payload["model"] == "llava:7b"
     assert payload["stream"] is False
     assert payload["format"] == "json"
+    assert payload["think"] is False
     assert payload["messages"][0]["role"] == "system"
     user_message = payload["messages"][1]
     assert user_message["role"] == "user"
@@ -536,6 +537,30 @@ async def test_call_ollama_invalid_chat_response(
 
     assert result == ""
     assert "Ollama response did not contain message.content" in caplog.text
+
+
+async def test_call_ollama_empty_content_is_reported(
+    analyzer: ClipAnalyzer, caplog: pytest.LogCaptureFixture
+) -> None:
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(
+        return_value={
+            "message": {"content": "", "thinking": "Reasoning without an answer"},
+        }
+    )
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+    analyzer._session = _mock_session(post=MagicMock(return_value=mock_resp))
+
+    with caplog.at_level(logging.WARNING):
+        result = await analyzer.call_ollama([_FAKE_JPEG], "Analyze")
+
+    assert result == ""
+    assert (
+        "Ollama returned an empty message.content despite thinking being disabled"
+        in caplog.text
+    )
 
 
 async def test_call_ollama_invalid_token_counts_keep_response(
