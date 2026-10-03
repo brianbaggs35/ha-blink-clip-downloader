@@ -22,7 +22,7 @@
     "@primeuix/themes": "^3.0.1",
     "pinia": "^4.0.3",
     "primeicons": "^8.0.2",
-    "primevue": "^5.0.1",
+    "primevue": "^5.0.2",
     "video.js": "^8.24.1",
     "vue": "^3.5.43"
   },
