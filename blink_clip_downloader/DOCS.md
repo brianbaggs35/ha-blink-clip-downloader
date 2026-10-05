@@ -27,7 +27,9 @@ After starting, the clip library is accessible two ways:
   ingress; no extra port or sign-in needed).
 - **Direct URL** — `http://<ha-ip>:8099` (requires the `8099/tcp` port mapping to
   be forwarded). Asks for your Home Assistant username and password — see
-  [Direct access sign-in](#direct-access-sign-in).
+  [Direct access sign-in](#direct-access-sign-in). Port 8099 is plain HTTP; to
+  sign in over an encrypted connection too, see
+  [HTTPS on the direct port](#https-on-the-direct-port).
 
 ### Direct access sign-in
 
@@ -67,6 +69,50 @@ To keep the old open behavior — for example, a wall tablet that cannot type a
 password — turn off **Direct Access Sign-In** (`direct_access_login`) in the
 add-on's Configuration tab. Only do that if you trust every device that can
 reach the port.
+
+### HTTPS on the direct port
+
+Port 8099 speaks plain HTTP, so on it the sign-in password crosses your network
+unencrypted — and typing `https://<ha-ip>:8099` into a browser shows an SSL
+error, because nothing on that port speaks TLS. It has to stay plain HTTP: the
+sidebar panel (ingress) reaches the add-on on that same port, over HTTP.
+
+To get an encrypted sign-in, turn on **HTTPS for Direct Access** (`ssl`) in the
+add-on's Configuration tab and restart the add-on. It serves the same web UI a
+second time over HTTPS on port **8100** (`8100/tcp`, published by default; you
+can change which host port it maps to under the add-on's **Network** section).
+
+- **It needs a certificate.** The add-on reads the pair Home Assistant keeps in
+  its `/ssl` folder — `fullchain.pem` and `privkey.pem`, which is what the
+  Let's Encrypt and DuckDNS add-ons write there — so if your Home Assistant
+  already has HTTPS, there is nothing else to set up. For a different pair in
+  that folder, set `certfile` and `keyfile` (file names inside `/ssl`).
+  Restart the add-on after the certificate is renewed.
+- **Signing in moves to HTTPS.** With it on, opening `http://<ha-ip>:8099`
+  while signed out sends you to `https://<ha-ip>:8100` to sign in, and a
+  password posted to the plain port is ignored. Everything that already gets
+  in without signing in is untouched: the sidebar panel, a browser that is
+  already signed in, and Home Assistant's own calls with the access token
+  (which keep using `http://` and port 8099).
+- **A bad certificate never takes the web UI down.** If the files are missing
+  or do not match, the add-on log says so (look for `HTTPS is turned on (ssl)
+  but cannot start`), the web UI keeps working on plain HTTP, and nobody is
+  redirected anywhere.
+- **Without a certificate**, you can make a self-signed one and put it in
+  `/ssl` (for example with the Samba or SSH add-on) — browsers will warn that
+  it is not trusted until you accept it, but the connection is still
+  encrypted:
+
+  ```bash
+  openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
+    -days 825 -keyout /ssl/blink-clips.key -out /ssl/blink-clips.crt \
+    -subj "/CN=homeassistant.local" \
+    -addext "subjectAltName=DNS:homeassistant.local,IP:<ha-ip>"
+  ```
+
+  and set `certfile: blink-clips.crt` and `keyfile: blink-clips.key`.
+- **Behind a reverse proxy that already does HTTPS**, leave this off: the
+  proxy reaches the add-on over plain HTTP, and would be sent to port 8100.
 
 ---
 
@@ -326,6 +372,9 @@ above zero.
 | `enable_media_server` | `true` | Start the built-in web UI |
 | `media_server_port` | `8099` | TCP port for the web UI (also the ingress port) |
 | `direct_access_login` | `true` | Ask for a Home Assistant username and password on the direct port. The sidebar panel never asks. See [Direct access sign-in](#direct-access-sign-in). |
+| `ssl` | `false` | Also serve the web UI over HTTPS on port 8100 and move direct-port sign-in there. Needs a certificate in `/ssl`. See [HTTPS on the direct port](#https-on-the-direct-port). |
+| `certfile` | `fullchain.pem` | Certificate (chain) file name inside `/ssl`. Only used with `ssl` on. |
+| `keyfile` | `privkey.pem` | Private key file name inside `/ssl`. Only used with `ssl` on. |
 
 ### Event-Driven Instant Download
 
@@ -1731,7 +1780,22 @@ detection per camera — the same arm/disarm state as the Blink app itself.
   the two switches independent.
 - Like the rest of this add-on, arm state reflects the last poll of the
   Blink API — an extremely recent change made from the Blink app itself
-  may take a few seconds to appear here.
+  may take a few seconds to appear here. What you arm or disarm *here* shows
+  straight away and stays until the next poll has asked Blink, so a switch
+  does not jump back to its old position while you wait for that poll.
+- A switch only says **armed** or **disarmed** once Blink has accepted the
+  command. If Blink could not be reached, you get an error toast and the
+  tab reloads what the add-on knows instead.
+- Renaming a camera or sync module in the Blink app does not stop its
+  switch working in a tab that has not refreshed yet: the tab arms by
+  Blink's own id for it, not by the name. Two sync modules can each have a
+  camera with the same name too — the switch you flip is the one that
+  changes. (Home Assistant scripts that call the add-on by name still arm
+  by that name, so keep camera names unique if you use them.)
+- A Home Assistant script that calls the arm endpoint has to send
+  `"armed": true` or `"armed": false`. A body without it, or with anything
+  else, is refused with a 400 rather than guessed at — it used to count as
+  *disarm*.
 
 ---
 
@@ -2150,7 +2214,19 @@ Downloaded clips are saved under the `share` folder, accessible via:
 **Web UI shows blank / API errors via HA sidebar**
 - The add-on uses HA ingress, which automatically proxies the panel URL. No manual
   port forwarding is needed for the sidebar panel.
-- If using direct access (`http://<ha-ip>:8099`), ensure port `8099/tcp` is exposed.
+- If using direct access (`http://<ha-ip>:8099`), ensure port `8099/tcp` is exposed
+  (and `8100/tcp` for HTTPS).
+
+**The browser shows an SSL error (`ERR_SSL_PROTOCOL_ERROR`) on `https://<ha-ip>:8099`**
+- Port 8099 is plain HTTP — use `http://<ha-ip>:8099`, or turn on `ssl` and use
+  `https://<ha-ip>:8100`. See [HTTPS on the direct port](#https-on-the-direct-port).
+
+**`https://<ha-ip>:8100` will not connect, or the log says `HTTPS is turned on (ssl) but cannot start`**
+- The log line says which file is the problem. Both `certfile` and `keyfile`
+  are names inside `/ssl`, and the key has to belong to that certificate.
+- Port 8100 has to be published (Network section of the add-on), and nothing
+  else on the host can be using it — the log says `HTTPS could not start on
+  port 8100` if it is taken.
 
 **Port 8099 keeps showing a sign-in page, or Home Assistant's cameras/scripts get "Sign in"**
 - Sign in with a Home Assistant user's username and password (not your Blink

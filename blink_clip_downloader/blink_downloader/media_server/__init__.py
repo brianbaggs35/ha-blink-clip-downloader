@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import ssl
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -66,6 +67,7 @@ from .status import StatusRoutesMixin
 from .storage import StorageRoutesMixin
 from .support import _security_middleware
 from .sync_module import SyncModuleRoutesMixin
+from .tls import HTTPS_PORT
 from .usage import UsageRoutesMixin
 from .vehicles import VehicleRoutesMixin
 
@@ -148,14 +150,21 @@ class MediaServer(
         get_camera_snapshot: Callable[[str], Awaitable[bytes | None]] | None = None,
         update_auto_analysis_cameras: Callable[[set[str]], None] | None = None,
         get_sync_module_snapshot: Callable[[], list[dict[str, Any]]] | None = None,
-        arm_sync_module: Callable[[str, bool], Awaitable[bool | None]] | None = None,
-        arm_camera: Callable[[str, bool], Awaitable[bool | None]] | None = None,
+        arm_sync_module: Callable[..., Awaitable[bool | None]] | None = None,
+        arm_camera: Callable[..., Awaitable[bool | None]] | None = None,
         direct_access_login: bool = False,
         supervisor_token: str = "",
         clip_storage_dir: Path = Path("/share/blink-clips"),
+        ssl_context: ssl.SSLContext | None = None,
+        https_port: int = HTTPS_PORT,
     ) -> None:
         self._db = db
         self._port = port
+        # With a context, start() also serves over TLS on https_port; see
+        # tls.py for why that is a second listener and not the first one.
+        self._ssl_context = ssl_context
+        self._https_listen_port = https_port
+        self._https_port: int | None = None
         self._clip_storage_dir = clip_storage_dir
         self._trigger_download = trigger_download
         self._two_fa_callback = two_fa_callback
@@ -244,11 +253,48 @@ class MediaServer(
         site = web.TCPSite(self._runner, "0.0.0.0", self._port)  # nosec B104
         await site.start()
         _LOGGER.info("Media server listening on port %d", self._port)
+        await self._start_https()
+
+    async def _start_https(self) -> None:
+        """Serve the same app over TLS as well, when there is a certificate.
+
+        A failure here (the port is taken, say) is logged and nothing more:
+        the plain listener is already up and ingress depends on it, so HTTPS
+        not starting must never cost the add-on its web UI.
+        """
+        if self._ssl_context is None or self._runner is None:
+            return
+        already = len(self._runner.addresses)
+        site = web.TCPSite(
+            self._runner,
+            "0.0.0.0",  # nosec B104 - same reasoning as above
+            self._https_listen_port,
+            ssl_context=self._ssl_context,
+        )
+        try:
+            await site.start()
+        except OSError as exc:
+            problem = exc
+        else:
+            self._https_port = self._runner.addresses[already][1]
+            _LOGGER.info(
+                "Media server listening with HTTPS on port %d", self._https_port
+            )
+            return
+        # Outside the handler on purpose: a taken port is a fact to report,
+        # not a failure to print a traceback for.
+        _LOGGER.error(
+            "HTTPS could not start on port %d (%s); the web UI stays on "
+            "plain HTTP only",
+            self._https_listen_port,
+            problem,
+        )
 
     async def stop(self) -> None:
         if self._runner:
             await self._runner.cleanup()
             self._runner = None
+        self._https_port = None
 
     # ------------------------------------------------------------------
     # App factory

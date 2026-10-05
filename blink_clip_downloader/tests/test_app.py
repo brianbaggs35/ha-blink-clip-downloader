@@ -3198,3 +3198,47 @@ async def test_run_says_nothing_with_sign_in_off(app, tmp_path):
 
     await _run_once_with_media_server(app, tracker_path)
     app._notifier.announce.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# HTTPS for the direct port
+# ---------------------------------------------------------------------------
+
+
+def _ssl_config(app, **changes):
+    import dataclasses
+
+    return dataclasses.replace(app._config, **{"enable_media_server": True, **changes})
+
+
+def test_no_certificate_is_loaded_with_https_off(app):
+    with patch("blink_downloader.app.load_ssl_context") as load:
+        assert app._load_ssl_context(_ssl_config(app, ssl=False)) is None
+    load.assert_not_called()
+
+
+def test_no_certificate_is_loaded_with_the_web_ui_off(app):
+    with patch("blink_downloader.app.load_ssl_context") as load:
+        config = _ssl_config(app, ssl=True, enable_media_server=False)
+        assert app._load_ssl_context(config) is None
+    load.assert_not_called()
+
+
+def test_the_configured_certificate_is_loaded(app):
+    config = _ssl_config(app, ssl=True, certfile="a.crt", keyfile="a.key")
+    with patch("blink_downloader.app.load_ssl_context") as load:
+        assert app._load_ssl_context(config) is load.return_value
+    load.assert_called_once_with("a.crt", "a.key")
+
+
+def test_a_bad_certificate_is_an_error_not_a_crash(app, caplog):
+    from blink_downloader.media_server.tls import TlsConfigError
+
+    config = _ssl_config(app, ssl=True)
+    with patch(
+        "blink_downloader.app.load_ssl_context",
+        side_effect=TlsConfigError("/ssl/fullchain.pem does not exist"),
+    ):
+        assert app._load_ssl_context(config) is None
+    assert "/ssl/fullchain.pem does not exist" in caplog.text
+    assert "stays on plain HTTP" in caplog.text

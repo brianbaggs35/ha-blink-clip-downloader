@@ -105,6 +105,21 @@ configuration:
       从 Home Assistant 侧边栏打开时从不要求登录。Home Assistant 自身调用此端口的摄像头和脚本改用访问令牌，
       “自动化”标签页会把它加入生成的 YAML。只有在信任所有能访问此端口的设备时才关闭此项，
       否则网络上的任何设备都能更改设置、撤防摄像头或查看片段。
+  ssl:
+    name: 直接访问的 HTTPS
+    description: >-
+      同时在 8100 端口通过 HTTPS 提供 Web 界面，这样在直接访问端口登录时，
+      您的 Home Assistant 密码就不会以明文在网络上传输。需要 Home Assistant 的 /ssl 文件夹中有证书；
+      Let's Encrypt 或 DuckDNS 已放在那里的证书即可使用。8099 端口仍为侧边栏提供普通 HTTP，
+      并把需要登录的访问者重定向到 HTTPS。证书续期后请重启此加载项。
+  certfile:
+    name: HTTPS 证书文件
+    description: >-
+      Home Assistant 的 /ssl 文件夹中的证书（链）文件。仅在启用直接访问的 HTTPS 时使用。
+  keyfile:
+    name: HTTPS 私钥文件
+    description: >-
+      Home Assistant 的 /ssl 文件夹中的私钥文件。仅在启用直接访问的 HTTPS 时使用。
   watch_ha_events:
     name: 监控 HA 动作事件
     description: >-

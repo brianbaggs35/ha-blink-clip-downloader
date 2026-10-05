@@ -92,7 +92,14 @@ class _FakeBlinkAuth:
         return self._result_seq
 
 
+def _camera_id(camera: str) -> str:
+    """A stable id for a fixture camera, as Blink would give one."""
+    return f"e2e-{camera.lower().replace(' ', '-')}"
+
+
 class _FakeSyncModule:
+    NETWORK_ID = 10
+
     def __init__(self) -> None:
         self.armed = True
         self.camera_armed: dict[str, bool] = dict.fromkeys(CAMERAS, True)
@@ -101,7 +108,7 @@ class _FakeSyncModule:
         return [
             {
                 "name": "Home",
-                "network_id": 10,
+                "network_id": self.NETWORK_ID,
                 "serial": "E2E-SYNC-0001",
                 "version": "2.13.30",
                 "status": "online",
@@ -112,6 +119,7 @@ class _FakeSyncModule:
                 "cameras": [
                     {
                         "name": camera,
+                        "id": _camera_id(camera),
                         "armed": self.camera_armed[camera],
                         "online": camera != SECURITY_FEED_NO_SNAPSHOT_CAMERA,
                         "battery_state": "low" if camera == "Backyard" else "ok",
@@ -124,13 +132,32 @@ class _FakeSyncModule:
             }
         ]
 
-    async def arm_module(self, name: str, armed: bool) -> bool | None:  # NOSONAR
-        if name != "Home":
+    def _is_this_module(self, name: str, network_id: str | None) -> bool:
+        if network_id is not None:
+            return network_id == str(self.NETWORK_ID)
+        return name == "Home"
+
+    async def arm_module(  # NOSONAR
+        self, name: str, armed: bool, network_id: str | None = None
+    ) -> bool | None:
+        if not self._is_this_module(name, network_id):
             return None
         self.armed = armed
         return True
 
-    async def arm_camera(self, name: str, armed: bool) -> bool | None:  # NOSONAR
+    async def arm_camera(  # NOSONAR
+        self,
+        name: str,
+        armed: bool,
+        camera_id: str | None = None,
+        network_id: str | None = None,
+    ) -> bool | None:
+        if network_id is not None and network_id != str(self.NETWORK_ID):
+            return None
+        if camera_id is not None:
+            name = next(
+                (c for c in self.camera_armed if _camera_id(c) == camera_id), ""
+            )
         if name not in self.camera_armed:
             return None
         self.camera_armed[name] = armed

@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import signal
+import ssl
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -45,6 +46,7 @@ from .library_scanner import import_existing_clips
 from .live_view import LiveViewManager
 from .manifest import ClipManifest
 from .media_server import MediaServer
+from .media_server.tls import TlsConfigError, load_ssl_context
 from .notification_channels import NotificationDispatcher
 from .notifier import HANotifier
 from .protected_assets import read_assets
@@ -298,6 +300,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             ),
             direct_access_login=config.direct_access_login,
             supervisor_token=config.supervisor_token,
+            ssl_context=self._load_ssl_context(config),
         )
         if self._e2e_fixtures is not None:
             self._e2e_fixtures.enable_face_recognition(self._media_server)
@@ -491,6 +494,30 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             pmt = str(item.get("prompt", ""))
             if cam and pmt and cam not in camera_prompts:
                 camera_prompts[cam] = pmt
+
+    @staticmethod
+    def _load_ssl_context(config: AppConfig) -> ssl.SSLContext | None:
+        """The certificate for the HTTPS listener, or None for plain HTTP.
+
+        A certificate that is missing or wrong is an ERROR in the log and
+        not an exception: ingress needs the plain listener, and a typo in
+        a file name must not take the whole web UI down with it.
+        """
+        if not (config.ssl and config.enable_media_server):
+            return None
+        try:
+            return load_ssl_context(config.certfile, config.keyfile)
+        except TlsConfigError as exc:
+            problem = exc
+        # Outside the handler on purpose: a wrong file name is a mistake to
+        # report plainly, not a failure to print a traceback for.
+        _LOGGER.error(
+            "HTTPS is turned on (ssl) but cannot start: %s. The web UI "
+            "stays on plain HTTP; fix certfile/keyfile and restart the "
+            "add-on.",
+            problem,
+        )
+        return None
 
     def _set_auto_analysis_disabled_cameras(self, cameras: set[str]) -> None:
         """Apply automatic-analysis camera preferences without a restart."""

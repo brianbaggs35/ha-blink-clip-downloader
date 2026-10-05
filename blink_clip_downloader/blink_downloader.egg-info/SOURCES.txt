@@ -78,6 +78,7 @@ blink_downloader/media_server/status.py
 blink_downloader/media_server/storage.py
 blink_downloader/media_server/support.py
 blink_downloader/media_server/sync_module.py
+blink_downloader/media_server/tls.py
 blink_downloader/media_server/usage.py
 blink_downloader/media_server/vehicles.py
 blink_downloader/security/__init__.py
@@ -216,6 +217,7 @@ tests/test_media_server.py
 tests/test_media_server_access.py
 tests/test_media_server_assets.py
 tests/test_media_server_routes.py
+tests/test_media_server_tls.py
 tests/test_module_names.py
 tests/test_notification_channels.py
 tests/test_notifier.py

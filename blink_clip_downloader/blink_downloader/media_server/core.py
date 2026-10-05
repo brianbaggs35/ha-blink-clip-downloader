@@ -65,14 +65,17 @@ class _MediaServerBase:
     _get_camera_snapshot: Callable[[str], Awaitable[bytes | None]] | None
     _update_auto_analysis_cameras: Callable[[set[str]], None] | None
     _get_sync_module_snapshot: Callable[[], list[dict[str, Any]]] | None
-    _arm_sync_module: Callable[[str, bool], Awaitable[bool | None]] | None
-    _arm_camera: Callable[[str, bool], Awaitable[bool | None]] | None
+    _arm_sync_module: Callable[..., Awaitable[bool | None]] | None
+    _arm_camera: Callable[..., Awaitable[bool | None]] | None
 
     # Runtime state.
     _access: AccessControl
     _face_embedder: FaceEmbedder
     _face_candidates: FaceCandidateStore
     _runner: web.AppRunner | None
+    # The port the TLS listener is really serving on, or None when HTTPS is
+    # off or could not start. access.py sends sign-in there when it is set.
+    _https_port: int | None
     _camera_configs_lock: asyncio.Lock
     _moondream_install_task: asyncio.Task | None
     _gdrive_connect_task: asyncio.Task | None

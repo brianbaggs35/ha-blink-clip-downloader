@@ -497,7 +497,14 @@ async def _camera_snapshot(camera: str) -> bytes | None:
 # same as the real add-on backed by a real blinkpy sync module would.
 # Reuses _CAMERAS (rather than inventing new names) so the tab's data
 # reads as part of the same fake account as every other tab.
+def _camera_id(camera: str) -> str:
+    """A stable id for a fixture camera, as Blink would give one."""
+    return f"e2e-{camera.lower().replace(' ', '-')}"
+
+
 class _FakeSyncModule:
+    NETWORK_ID = 10
+
     def __init__(self) -> None:
         self.armed = True
         self.camera_armed: dict[str, bool] = dict.fromkeys(_CAMERAS, True)
@@ -506,7 +513,7 @@ class _FakeSyncModule:
         return [
             {
                 "name": "Home",
-                "network_id": 10,
+                "network_id": self.NETWORK_ID,
                 "serial": "E2E-SYNC-0001",
                 "version": "2.13.30",
                 "status": "online",
@@ -517,6 +524,7 @@ class _FakeSyncModule:
                 "cameras": [
                     {
                         "name": camera,
+                        "id": _camera_id(camera),
                         "armed": self.camera_armed[camera],
                         "online": camera != _SECURITY_FEED_NO_SNAPSHOT_CAMERA,
                         "battery_state": "low" if camera == "Backyard" else "ok",
@@ -529,15 +537,33 @@ class _FakeSyncModule:
             }
         ]
 
-    async def arm_module(self, name: str, armed: bool) -> bool | None:
+    # The tab sends the ids it was shown along with the name (see
+    # media_server/sync_module.py): they win over the name, as with the real
+    # downloader, so a rename since the page loaded cannot misdirect an arm.
+    async def arm_module(
+        self, name: str, armed: bool, network_id: str | None = None
+    ) -> bool | None:
         await asyncio.sleep(0)
-        if name != "Home":
+        if network_id is not None:
+            if network_id != str(self.NETWORK_ID):
+                return None
+        elif name != "Home":
             return None
         self.armed = armed
         return True
 
-    async def arm_camera(self, name: str, armed: bool) -> bool | None:
+    async def arm_camera(
+        self,
+        name: str,
+        armed: bool,
+        camera_id: str | None = None,
+        network_id: str | None = None,
+    ) -> bool | None:
         await asyncio.sleep(0)
+        if network_id is not None and network_id != str(self.NETWORK_ID):
+            return None
+        if camera_id is not None:
+            name = next((c for c in _CAMERAS if _camera_id(c) == camera_id), "")
         if name not in self.camera_armed:
             return None
         self.camera_armed[name] = armed

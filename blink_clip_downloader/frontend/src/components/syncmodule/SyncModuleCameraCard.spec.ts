@@ -6,6 +6,7 @@ import type { SyncModuleCamera } from '../../api/types'
 function makeCamera(overrides: Partial<SyncModuleCamera> = {}): SyncModuleCamera {
   return {
     name: 'Front Door',
+    id: 'cam-front',
     armed: true,
     online: true,
     battery_state: 'ok',
