@@ -937,3 +937,32 @@ def test_direct_access_login_defaults_on_and_can_be_turned_off():
         {"username": "u", "password": "p", "direct_access_login": False}
     )
     assert off.direct_access_login is False
+
+
+def test_https_is_off_by_default_and_reads_the_certificate_names():
+    """Off, because it needs a certificate; and an options.json written
+    before the options existed still has to parse."""
+    config = _parse_config({"username": "u", "password": "p"})
+    assert config.ssl is False
+    assert (config.certfile, config.keyfile) == ("fullchain.pem", "privkey.pem")
+
+    on = _parse_config(
+        {
+            "username": "u",
+            "password": "p",
+            "ssl": True,
+            "certfile": "my.crt",
+            "keyfile": "my.key",
+        }
+    )
+    assert on.ssl is True
+    assert (on.certfile, on.keyfile) == ("my.crt", "my.key")
+
+
+def test_a_blank_certificate_name_falls_back_to_the_default():
+    """Clearing the field in the Configuration tab must not leave the
+    listener looking for a file called ''."""
+    config = _parse_config(
+        {"username": "u", "password": "p", "certfile": "", "keyfile": None}
+    )
+    assert (config.certfile, config.keyfile) == ("fullchain.pem", "privkey.pem")

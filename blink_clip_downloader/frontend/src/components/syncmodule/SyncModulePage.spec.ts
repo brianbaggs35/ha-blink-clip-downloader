@@ -33,6 +33,7 @@ function makeModule(overrides: Partial<SyncModuleInfo> = {}): SyncModuleInfo {
     cameras: [
       {
         name: 'Front Door',
+        id: 'cam-front',
         armed: true,
         online: true,
         battery_state: 'ok',
@@ -42,6 +43,7 @@ function makeModule(overrides: Partial<SyncModuleInfo> = {}): SyncModuleInfo {
       },
       {
         name: 'Backyard',
+        id: 'cam-back',
         armed: true,
         online: true,
         battery_state: 'low',
@@ -645,6 +647,7 @@ describe('SyncModulePage', () => {
                 cameras: [
                   {
                     name: 'Side Door',
+                    id: 'cam-side',
                     armed: true,
                     online: true,
                     battery_state: 'ok',
@@ -830,6 +833,219 @@ describe('SyncModulePage', () => {
     await flushPromises()
 
     expect(armCallCount).toBe(1)
+  })
+
+  describe('arming by identity', () => {
+    const PORCH = {
+      name: 'Porch',
+      armed: true,
+      online: true,
+      battery_state: 'ok',
+      battery_level: 3,
+      wifi_strength: -55,
+      type: 'catalina',
+    }
+
+    it('sends the camera and network ids it was shown, so a rename since loading cannot misdirect the arm', async () => {
+      let body: Record<string, unknown> | undefined
+      vi.stubGlobal(
+        'fetch',
+        routedFetch((url, init) => {
+          if (url === '/api/sync-modules/cameras/Front%20Door/arm' && init?.method === 'POST') {
+            body = JSON.parse(init.body as string)
+            return Promise.resolve(jsonResponse({ armed: false }))
+          }
+          if (url === '/api/sync-modules') return Promise.resolve(jsonResponse([makeModule()]))
+          return undefined
+        }),
+      )
+      const wrapper = mountPage()
+      await flushPromises()
+
+      wrapper.findAllComponents(SyncModuleCameraCard)[0]!.vm.$emit('update:armed', false)
+      await flushPromises()
+
+      expect(body).toEqual({ armed: false, camera_id: 'cam-front', network_id: 12345 })
+    })
+
+    async function mountDisarmedHome() {
+      const bodies: Record<string, unknown>[] = []
+      vi.stubGlobal(
+        'fetch',
+        routedFetch((url, init) => {
+          if (url === '/api/sync-modules/Home/arm' && init?.method === 'POST') {
+            bodies.push(JSON.parse(init.body as string))
+            return Promise.resolve(jsonResponse({ armed: true }))
+          }
+          if (url === '/api/sync-modules') return Promise.resolve(jsonResponse([makeModule({ armed: false })]))
+          return undefined
+        }),
+      )
+      const wrapper = mountPage()
+      await flushPromises()
+      return { wrapper, bodies }
+    }
+
+    it("sends the sync module's network id for its own toggle", async () => {
+      const { wrapper, bodies } = await mountDisarmedHome()
+
+      wrapper.findComponent(SyncModuleCard).vm.$emit('toggle-module', true)
+      await flushPromises()
+
+      expect(bodies).toEqual([{ armed: true, network_id: 12345 }])
+    })
+
+    it("sends each sync module's network id for the hero button", async () => {
+      const { wrapper, bodies } = await mountDisarmedHome()
+
+      await wrapper.find('.system-hero-btn').trigger('click')
+      await flushPromises()
+
+      expect(bodies).toEqual([{ armed: true, network_id: 12345 }])
+    })
+
+    it('arms the camera that was clicked when two sync modules each have one of the same name', async () => {
+      let body: Record<string, unknown> | undefined
+      let resolveArm: (() => void) | undefined
+      vi.stubGlobal(
+        'fetch',
+        routedFetch((url, init) => {
+          if (url === '/api/sync-modules/cameras/Porch/arm' && init?.method === 'POST') {
+            body = JSON.parse(init.body as string)
+            return new Promise((resolve) => {
+              resolveArm = () => resolve(jsonResponse({ armed: false }))
+            })
+          }
+          if (url === '/api/sync-modules')
+            return Promise.resolve(
+              jsonResponse([
+                makeModule({ name: 'Home', network_id: 1, cameras: [{ ...PORCH, id: 'home-porch' }] }),
+                makeModule({ name: 'Garage', network_id: 2, cameras: [{ ...PORCH, id: 'garage-porch' }] }),
+              ]),
+            )
+          return undefined
+        }),
+      )
+      const wrapper = mountPage()
+      await flushPromises()
+
+      const [homePorch, garagePorch] = wrapper.findAllComponents(SyncModuleCameraCard)
+      garagePorch!.vm.$emit('update:armed', false)
+      await flushPromises()
+
+      // Only the clicked one shows as updating, and only it is armed.
+      expect(body).toEqual({ armed: false, camera_id: 'garage-porch', network_id: 2 })
+      expect(wrapper.findAllComponents(SyncModuleCameraCard)[0]!.props('pending')).toBe(false)
+      expect(wrapper.findAllComponents(SyncModuleCameraCard)[1]!.props('pending')).toBe(true)
+
+      resolveArm?.()
+      await flushPromises()
+      expect(homePorch!.props('camera').armed).toBe(true)
+      expect(wrapper.findAllComponents(SyncModuleCameraCard)[1]!.props('camera').armed).toBe(false)
+    })
+
+    it('is not stopped from toggling the other same-named camera while the first is in flight', async () => {
+      let posts = 0
+      vi.stubGlobal(
+        'fetch',
+        routedFetch((url, init) => {
+          if (url === '/api/sync-modules/cameras/Porch/arm' && init?.method === 'POST') {
+            posts++
+            return new Promise(() => {})
+          }
+          if (url === '/api/sync-modules')
+            return Promise.resolve(
+              jsonResponse([
+                makeModule({ name: 'Home', network_id: 1, cameras: [{ ...PORCH, id: 'home-porch' }] }),
+                makeModule({ name: 'Garage', network_id: 2, cameras: [{ ...PORCH, id: 'garage-porch' }] }),
+              ]),
+            )
+          return undefined
+        }),
+      )
+      const wrapper = mountPage()
+      await flushPromises()
+
+      const [homePorch, garagePorch] = wrapper.findAllComponents(SyncModuleCameraCard)
+      homePorch!.vm.$emit('update:armed', false)
+      garagePorch!.vm.$emit('update:armed', false)
+      await flushPromises()
+
+      expect(posts).toBe(2)
+    })
+
+    it('shows what the server has now after a camera toggle fails, instead of leaving a stale name on screen', async () => {
+      let reads = 0
+      vi.stubGlobal(
+        'fetch',
+        routedFetch((url, init) => {
+          if (url === '/api/sync-modules/cameras/Front%20Door/arm' && init?.method === 'POST')
+            return Promise.resolve(jsonResponse({}, false))
+          if (url === '/api/sync-modules') {
+            reads++
+            return Promise.resolve(jsonResponse([makeModule()]))
+          }
+          return undefined
+        }),
+      )
+      const wrapper = mountPage()
+      await flushPromises()
+      expect(reads).toBe(1)
+
+      wrapper.findAllComponents(SyncModuleCameraCard)[0]!.vm.$emit('update:armed', false)
+      await flushPromises()
+
+      expect(useToastStore().message).toBe('Failed to disarm Front Door')
+      expect(reads).toBe(2)
+    })
+
+    it('shows what the server has now after a sync module toggle fails', async () => {
+      let reads = 0
+      vi.stubGlobal(
+        'fetch',
+        routedFetch((url, init) => {
+          if (url === '/api/sync-modules/Home/arm' && init?.method === 'POST')
+            return Promise.resolve(jsonResponse({}, false))
+          if (url === '/api/sync-modules') {
+            reads++
+            return Promise.resolve(jsonResponse([makeModule({ armed: false })]))
+          }
+          return undefined
+        }),
+      )
+      const wrapper = mountPage()
+      await flushPromises()
+      expect(reads).toBe(1)
+
+      wrapper.findComponent(SyncModuleCard).vm.$emit('toggle-module', true)
+      await flushPromises()
+
+      expect(useToastStore().message).toBe('Failed to arm Home')
+      expect(reads).toBe(2)
+    })
+
+    it('does not re-fetch after a toggle that worked: the server already reports it', async () => {
+      let reads = 0
+      vi.stubGlobal(
+        'fetch',
+        routedFetch((url, init) => {
+          if (url === '/api/sync-modules/cameras/Front%20Door/arm' && init?.method === 'POST')
+            return Promise.resolve(jsonResponse({ armed: false }))
+          if (url === '/api/sync-modules') {
+            reads++
+            return Promise.resolve(jsonResponse([makeModule()]))
+          }
+          return undefined
+        }),
+      )
+      const wrapper = mountPage()
+      await flushPromises()
+
+      wrapper.findAllComponents(SyncModuleCameraCard)[0]!.vm.$emit('update:armed', false)
+      await flushPromises()
+
+      expect(reads).toBe(1)
+    })
   })
 
   it('silently reloads on a shared refresh tick without showing the full-page loading state', async () => {

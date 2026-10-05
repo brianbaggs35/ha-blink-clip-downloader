@@ -137,6 +137,26 @@ configuration:
       erzeugte YAML ein. Nur ausschalten, wenn du jedem Gerät vertraust, das
       den Port erreicht – sonst könnte jedes Gerät im Netzwerk Einstellungen
       ändern, Kameras deaktivieren oder Clips ansehen.
+  ssl:
+    name: HTTPS für den Direktzugriff
+    description: >-
+      Stellt die Weboberfläche zusätzlich per HTTPS auf Port 8100 bereit,
+      damit die Anmeldung am Direktzugriffs-Port dein Home-Assistant-Passwort
+      nicht unverschlüsselt durchs Netzwerk schickt. Benötigt ein Zertifikat
+      im Ordner /ssl von Home Assistant; das von Let's Encrypt oder DuckDNS
+      dort abgelegte funktioniert. Port 8099 bleibt für die Seitenleiste
+      einfaches HTTP und leitet jeden, der sich anmelden muss, auf HTTPS um.
+      Nach der Erneuerung des Zertifikats das Add-on neu starten.
+  certfile:
+    name: HTTPS-Zertifikatsdatei
+    description: >-
+      Die Zertifikatsdatei (Kette) im Ordner /ssl von Home Assistant. Wird
+      nur verwendet, wenn HTTPS für den Direktzugriff aktiviert ist.
+  keyfile:
+    name: HTTPS-Schlüsseldatei
+    description: >-
+      Die Datei mit dem privaten Schlüssel im Ordner /ssl von Home Assistant.
+      Wird nur verwendet, wenn HTTPS für den Direktzugriff aktiviert ist.
   watch_ha_events:
     name: HA-Bewegungsereignisse überwachen
     description: >-

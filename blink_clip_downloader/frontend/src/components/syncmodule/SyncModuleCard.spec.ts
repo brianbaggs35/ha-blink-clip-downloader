@@ -4,6 +4,7 @@ import SyncModuleCard from './SyncModuleCard.vue'
 import SyncModuleCameraCard from './SyncModuleCameraCard.vue'
 import ClipCard from '../library/ClipCard.vue'
 import type { ClipListItem, SyncModuleInfo } from '../../api/types'
+import { cameraKey } from './cameraKey'
 
 const CLIP: ClipListItem = {
   id: 'c1',
@@ -40,6 +41,7 @@ function makeModule(overrides: Partial<SyncModuleInfo> = {}): SyncModuleInfo {
     cameras: [
       {
         name: 'Front Door',
+        id: 'cam-front',
         armed: true,
         online: true,
         battery_state: 'ok',
@@ -105,6 +107,7 @@ describe('SyncModuleCard', () => {
         cameras: [
           {
             name: 'Front Door',
+            id: 'cam-front',
             armed: true,
             online: true,
             battery_state: 'ok',
@@ -114,6 +117,7 @@ describe('SyncModuleCard', () => {
           },
           {
             name: 'Backyard',
+            id: 'cam-back',
             armed: false,
             online: true,
             battery_state: 'low',
@@ -134,10 +138,11 @@ describe('SyncModuleCard', () => {
     expect(wrapper.emitted('toggle-module')).toEqual([[false]])
   })
 
-  it('emits toggle-camera with the camera name and new value when a camera card toggles', async () => {
-    const wrapper = mountCard(makeModule())
+  it('emits toggle-camera with the whole camera (so its id goes along) and the new value', async () => {
+    const module = makeModule()
+    const wrapper = mountCard(module)
     wrapper.findComponent(SyncModuleCameraCard).vm.$emit('update:armed', false)
-    expect(wrapper.emitted('toggle-camera')).toEqual([['Front Door', false]])
+    expect(wrapper.emitted('toggle-camera')).toEqual([[module.cameras[0], false]])
   })
 
   it('disables the module toggle and shows an "Updating…" spinner instead of the armed badge while pending', () => {
@@ -155,6 +160,7 @@ describe('SyncModuleCard', () => {
         cameras: [
           {
             name: 'Front Door',
+            id: 'cam-front',
             armed: true,
             online: true,
             battery_state: 'ok',
@@ -164,6 +170,7 @@ describe('SyncModuleCard', () => {
           },
           {
             name: 'Backyard',
+            id: 'cam-back',
             armed: true,
             online: true,
             battery_state: 'ok',
@@ -174,11 +181,16 @@ describe('SyncModuleCard', () => {
         ],
       }),
       false,
-      new Set(['Backyard']),
+      new Set([cameraKey('Home', 'Backyard')]),
     )
     const cards = wrapper.findAllComponents(SyncModuleCameraCard)
     expect(cards[0]!.props('pending')).toBe(false)
     expect(cards[1]!.props('pending')).toBe(true)
+  })
+
+  it("does not show a camera as pending for a same-named camera's toggle on another sync module", () => {
+    const wrapper = mountCard(makeModule(), false, new Set([cameraKey('Garage', 'Front Door')]))
+    expect(wrapper.findAllComponents(SyncModuleCameraCard)[0]!.props('pending')).toBe(false)
   })
 
   describe('local storage clips panel', () => {

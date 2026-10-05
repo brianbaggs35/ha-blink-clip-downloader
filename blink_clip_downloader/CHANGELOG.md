@@ -1,5 +1,81 @@
 # Changelog
 
+## 6.1.0
+
+### HTTPS for the direct-access port
+
+Signing in on port 8099 sent your Home Assistant password across the network
+unencrypted, and `https://<ha-ip>:8099` gave an SSL error because nothing on
+that port speaks TLS. It cannot: the Home Assistant sidebar panel (ingress)
+reaches the add-on on that same port over plain HTTP.
+
+- **New `ssl` option, off by default.** Turn it on and the add-on serves the
+  same web UI a second time over HTTPS on port **8100** (published as
+  `8100/tcp`; the host port can be changed under the add-on's Network
+  section). It uses the certificate Home Assistant keeps in `/ssl`
+  (`fullchain.pem` and `privkey.pem` by default, which is what the Let's
+  Encrypt and DuckDNS add-ons write there), so a Home Assistant that already
+  has HTTPS has nothing else to set up. `certfile` and `keyfile` name a
+  different pair in that folder. The add-on now maps `/ssl` read-only for
+  this. Restart it after the certificate is renewed.
+- **Signing in moves to HTTPS.** With HTTPS running, a signed-out visit to
+  `http://<ha-ip>:8099` is sent to `https://<ha-ip>:8100` to sign in, and a
+  password posted to the plain port is not read at all. The sidebar panel, a
+  browser that is already signed in, and Home Assistant's own calls with the
+  access token are untouched and keep working over plain HTTP. The session
+  cookie is marked `Secure` when it is set over HTTPS.
+- **A certificate problem never takes the web UI down.** If the files are
+  missing, outside `/ssl`, or do not belong together, the log says which and
+  why, the web UI stays on plain HTTP, and nobody is redirected anywhere.
+  Likewise if port 8100 is already in use on the host.
+- No certificate is generated for you. DOCS.md shows how to make a
+  self-signed one for a Home Assistant without HTTPS; browsers warn about
+  it until you accept it, but the connection is encrypted.
+
+### Sync Module: fixes to arming and disarming
+
+Found by renaming cameras and then arming and disarming them one at a time
+in the Sync Module tab, and checked against real blinkpy objects rather than
+mocks.
+
+- **A switch no longer jumps back after you flip it.** blinkpy only re-reads
+  armed state in its own refresh, which runs once per poll cycle (five
+  minutes by default), but the tab re-reads the add-on every 30 seconds — so
+  a camera or sync module that had been armed or disarmed successfully
+  showed its old state again within half a minute and kept it for minutes.
+  What Blink accepted is now shown straight away and held until a refresh
+  that started after the command has asked Blink for its real state (or ten
+  minutes pass), so a command that was accepted but never took effect is
+  corrected rather than remembered. Minis and doorbells, which are their own
+  sync module and their only camera, update both.
+- **A request that never reached Blink is no longer reported as armed.**
+  blinkpy does not raise when a request fails on the wire; it logs the error
+  and returns nothing, and that used to read as success, so the tab (and a
+  Home Assistant script) was told the system was armed or disarmed when Blink
+  had not been asked. It now answers 502 and the tab shows the failure.
+- **A camera is armed by its id, not only its name.** The tab sends the camera
+  and sync-module ids it was shown, which do not change when a camera is
+  renamed, so a tab still showing the old name arms the right camera instead
+  of failing with "not found" (and a renamed Mini or doorbell, whose sync
+  module is named after it, the same). Home Assistant scripts that call by
+  name are unchanged.
+- **The switch you flip is the one that changes.** blinkpy keeps one flat
+  name-to-camera map across every sync module, so with two cameras of the
+  same name on different sync modules, flipping one armed the other — and
+  both showed as updating. Ids and a per-module key fix both.
+- **The tab no longer goes blank while Blink's devices are re-read.** A
+  rename forces that re-read, and it runs every five minutes regardless;
+  while it was in flight the Sync Module tab listed nothing and arming a sync
+  module returned "not found". Sync modules now fall back to the previous
+  list the way cameras already did.
+- **A failed switch reloads the tab,** so a name or module that has since
+  changed is replaced by what the add-on has now instead of failing the same
+  way on the next click.
+- **The arm endpoints now insist on `"armed": true` or `"armed": false`.** A
+  body with no `armed`, or a misspelled one, used to mean *disarm*, and the
+  string `"false"` meant *arm*. Anything else is a 400. The YAML the
+  Automations tab generates already sends real booleans.
+
 ## 6.0.10
 
 ### Bug fixes

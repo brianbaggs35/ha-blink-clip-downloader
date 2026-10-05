@@ -119,6 +119,26 @@ configuration:
       the YAML it generates. Only turn this off if you trust every device
       that can reach the port, because anything on your network could then
       change settings, disarm cameras or read clips.
+  ssl:
+    name: HTTPS for Direct Access
+    description: >-
+      Also serve the web UI over HTTPS on port 8100, so signing in on the
+      direct-access port does not send your Home Assistant password across
+      the network in clear. Needs a certificate in Home Assistant's /ssl
+      folder; the one Let's Encrypt or DuckDNS already put there works.
+      Port 8099 stays plain HTTP for the sidebar panel and sends anyone who
+      needs to sign in over to HTTPS. Restart the add-on after the
+      certificate is renewed.
+  certfile:
+    name: HTTPS Certificate File
+    description: >-
+      The certificate (chain) file inside Home Assistant's /ssl folder.
+      Only used when HTTPS for Direct Access is on.
+  keyfile:
+    name: HTTPS Private Key File
+    description: >-
+      The private key file inside Home Assistant's /ssl folder. Only used
+      when HTTPS for Direct Access is on.
   watch_ha_events:
     name: Watch HA Motion Events
     description: >-

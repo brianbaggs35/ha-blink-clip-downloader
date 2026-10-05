@@ -301,6 +301,25 @@ architecture.
       because a server with the gate **off** answers a login the same way,
       and the suite would then pass "behind sign-in" without ever being
       behind it.
+    - **HTTPS (`ssl`, 6.1.0) is a second listener, never the first.** The
+      direct port and Supervisor's ingress share container port 8099, and
+      ingress speaks plain HTTP to it, so that port cannot become TLS (a
+      browser trying `https://host:8099` gets an SSL error, which is exactly
+      what the option exists to move people off). `tls.py` loads the pair
+      Home Assistant keeps in `/ssl` (`certfile`/`keyfile`, names relative
+      to it, refused if they resolve outside it) and
+      `MediaServer._start_https()` serves the same app on 8100 with it. It
+      is **optional by design at every step**: no certificate is generated,
+      a bad one or a taken port is an ERROR log and plain HTTP carries on,
+      and `_https_port` stays `None` — which is what `access.py` checks
+      before sending anyone there, so a failed HTTPS never redirects to a
+      dead port. While it is up, only a request that is *signed out* moves:
+      ingress, sessions and the access token (Home Assistant's own calls,
+      plain `http://`) are untouched, and a password posted to the plain
+      port is not read. The redirect is built by appending to the origin,
+      not `URL.join` — join re-encodes the query and treats `//host` as a
+      different host. No HSTS header: it is per host, not per port, and would
+      rewrite Home Assistant's own `http://` address.
     - **Each mixin registers its own routes** via `_register_<area>_routes`,
       called by `_build_app`. Adding an endpoint is one file, not a handler
       here and a route line far away. `tests/test_media_server_routes.py`
@@ -348,6 +367,28 @@ architecture.
     (`cameras`/`columns`/`refresh_seconds`) persist to
     `/data/security_feed_settings.json`, same convention as
     `vehicle_settings.json`.
+  - Sync Module tab arming has no dedicated module either: `BlinkDownloader`'s
+    `get_sync_module_snapshot`/`set_sync_module_armed`/`set_camera_armed`
+    plus `media_server/sync_module.py`. Rules that were each a real bug:
+    blinkpy **returns `None` rather than raising** when a request fails on
+    the wire, so `_set_armed` treats `None` as failure (502), not success;
+    blinkpy only re-reads armed state in its own refresh (once a poll
+    cycle), so what Blink accepted is remembered in `_armed_overrides` and
+    shown until a refresh that *started after it* completes (`_armed_state`)
+    — not written into blinkpy's objects, because a sync-less Mini's
+    `network_info` is a computed property and its camera's `arm` is read
+    from its sync module's; a camera is armed by the ids the tab was shown
+    (`camera_id`/`network_id` in the body; names are not unique across sync
+    modules and change on rename, and blinkpy's `blink.cameras` is one flat
+    name map), falling back to the name only when no id is sent (Home
+    Assistant's YAML sends none); `_sync_modules()` falls back to the
+    pre-rebuild map during a topology rebuild the way cameras always did;
+    and `armed` must be a real JSON boolean (`bool(body.get("armed"))` made
+    a missing key mean *disarm*). "Arm Entire System" deliberately does
+    **not** re-arm a camera that was disarmed on its own (DOCS.md says so,
+    mirroring the Blink app). Test it against real `BlinkSyncModule`/
+    `BlinkCamera`/`BlinkOwl` objects with only `blinkpy.api.http_post`
+    faked — a `MagicMock` camera cannot show any of the above.
   - `ha_entities.py` — the extra Home Assistant entities the add-on
     publishes beyond `sensor.blink_downloader_status`: the two storage
     percentage sensors (`sensor.blink_local_storage`,

@@ -11,6 +11,11 @@ from typing import Any
 
 _LOGGER = logging.getLogger(__name__)
 
+#: The names Home Assistant's own certificate has in /ssl, which is also
+#: where the Let's Encrypt and DuckDNS add-ons write theirs.
+DEFAULT_CERTFILE = "fullchain.pem"
+DEFAULT_KEYFILE = "privkey.pem"
+
 OPTIONS_FILE = Path("/data/options.json")
 _VALID_LOG_LEVELS = frozenset({"debug", "info", "warning", "error"})
 _VALID_AI_PROVIDERS = frozenset(
@@ -87,6 +92,12 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     # Require a Home Assistant sign-in on the direct port (ingress is never
     # asked). See media_server/access.py.
     direct_access_login: bool = True
+    # Also serve the web UI over HTTPS on its own port, with the certificate
+    # Home Assistant keeps in /ssl (file names, relative to it). Off by
+    # default: it needs a certificate. See media_server/tls.py.
+    ssl: bool = False
+    certfile: str = DEFAULT_CERTFILE
+    keyfile: str = DEFAULT_KEYFILE
 
     # --- Instant download on HA motion events ---
     watch_ha_events: bool = True
@@ -629,6 +640,9 @@ def _parse_media_server_kwargs(data: dict) -> dict[str, Any]:
             1024, min(65535, int(data.get("media_server_port", 8099)))
         ),
         "direct_access_login": bool(data.get("direct_access_login", True)),
+        "ssl": bool(data.get("ssl", False)),
+        "certfile": str(data.get("certfile") or DEFAULT_CERTFILE),
+        "keyfile": str(data.get("keyfile") or DEFAULT_KEYFILE),
         "watch_ha_events": bool(data.get("watch_ha_events", True)),
         "fast_poll_duration": max(
             10, min(3600, int(data.get("fast_poll_duration", 120)))

@@ -19,6 +19,9 @@ from blinkpy.auth import (
     TokenRefreshFailed,
     UnauthorizedError,
 )
+from blinkpy.blinkpy import Blink
+from blinkpy.camera import BlinkCamera, BlinkCameraMini
+from blinkpy.sync_module import BlinkOwl, BlinkSyncModule
 from requests.structures import CaseInsensitiveDict
 
 from blink_downloader.downloader import (
@@ -3548,6 +3551,7 @@ def _make_fake_sync_module(**overrides: object) -> MagicMock:
 
 def _make_fake_sync_camera(**overrides: object) -> MagicMock:
     camera = MagicMock()
+    camera.camera_id = "11"
     camera.arm = True
     camera.online = True
     camera.battery_state = "ok"
@@ -3599,6 +3603,7 @@ def test_get_sync_module_snapshot_returns_info_and_cameras(
             "cameras": [
                 {
                     "name": "Front Door",
+                    "id": "11",
                     "armed": True,
                     "online": True,
                     "battery_state": "ok",
@@ -3655,6 +3660,7 @@ def test_get_sync_module_snapshot_keeps_wired_camera_with_no_battery(
     assert cameras == [
         {
             "name": "Wired Mini",
+            "id": "11",
             "armed": True,
             "online": True,
             "battery_state": None,
@@ -3763,6 +3769,334 @@ async def test_set_camera_armed_returns_false_on_blinkpy_error(
     dl._blink = fake_blink
 
     assert await dl.set_camera_armed("Front Door", True) is False
+
+
+# ---------------------------------------------------------------------------
+# Arming against real blinkpy objects. The tests above use MagicMocks, which
+# cannot say what blinkpy really does after an arm (nothing: it keeps the old
+# state until its next refresh) or when a request fails (it returns None).
+# Only the HTTP layer is faked here.
+# ---------------------------------------------------------------------------
+
+
+def _real_blink(modules: dict[str, list[tuple[str, str, bool]]]) -> Blink:
+    """A real Blink with real sync modules and cameras.
+
+    *modules* maps a sync module name to its ``(camera name, camera id,
+    motion enabled)`` cameras. Network ids are 100, 101, ... in order.
+    """
+    blink = Blink(session=MagicMock())
+    blink.urls = MagicMock(base_url="https://rest.example")
+    blink.auth = MagicMock()
+    blink.auth.account_id = 1
+    for index, (sync_name, cameras) in enumerate(modules.items()):
+        network = str(100 + index)
+        sync = BlinkSyncModule(blink, sync_name, network, [])
+        sync.network_info = {"network": {"armed": True, "sync_module_error": False}}
+        for camera_name, camera_id, enabled in cameras:
+            camera = BlinkCamera(sync)
+            camera.extract_config_info(
+                {
+                    "name": camera_name,
+                    "id": camera_id,
+                    "network_id": network,
+                    "enabled": enabled,
+                    "type": "catalina",
+                }
+            )
+            sync.cameras[camera_name] = camera
+        blink.sync[sync_name] = sync
+    blink.cameras = blink.merge_cameras()
+    return blink
+
+
+def _real_mini_blink() -> Blink:
+    """A Blink holding one sync-less Mini: its own sync module and camera."""
+    blink = Blink(session=MagicMock())
+    blink.urls = MagicMock(base_url="https://rest.example")
+    blink.auth = MagicMock()
+    blink.auth.account_id = 1
+    owl = BlinkOwl(blink, "Mini", "300", {"id": 7, "serial": "S1", "enabled": True})
+    camera = BlinkCameraMini(owl)
+    camera.extract_config_info(
+        {"name": "Mini", "id": 7, "network_id": "300", "enabled": True, "type": "mini"}
+    )
+    owl.cameras["Mini"] = camera
+    blink.sync["Mini"] = owl
+    blink.cameras = blink.merge_cameras()
+    return blink
+
+
+@pytest.fixture
+def blink_accepts():
+    """Blink answers every command the way it does when it accepts one."""
+    posted = AsyncMock(return_value={"id": 9, "network_id": 100})
+    with (
+        patch("blinkpy.api.http_post", posted),
+        patch("blinkpy.api.wait_for_command", AsyncMock(return_value=True)),
+        patch("blinkpy.helpers.util.sleep", AsyncMock()),
+    ):
+        yield posted
+
+
+def _camera_row(snapshot: list[dict], module: str, camera: str) -> dict:
+    sync = next(s for s in snapshot if s["name"] == module)
+    return next(c for c in sync["cameras"] if c["name"] == camera)
+
+
+async def test_arm_reports_failure_when_blink_gets_no_request(
+    dl: BlinkDownloader, caplog: pytest.LogCaptureFixture
+) -> None:
+    """blinkpy returns None, it does not raise, when a request fails on the
+    wire (Auth.query logs the error and falls through). That used to read as
+    success, so the tab said armed for a command Blink never received."""
+    dl._blink = _real_blink({"Home": [("Front", "11", True)]})
+    with (
+        patch("blinkpy.api.http_post", AsyncMock(return_value=None)),
+        patch("blinkpy.helpers.util.sleep", AsyncMock()),
+        caplog.at_level(logging.WARNING),
+    ):
+        assert await dl.set_camera_armed("Front", False) is False
+        assert await dl.set_sync_module_armed("Home", False) is False
+
+    assert "Blink gave no answer" in caplog.text
+    snapshot = dl.get_sync_module_snapshot()
+    # ...and a failed arm must not be remembered as if it had worked.
+    assert snapshot[0]["armed"] is True
+    assert _camera_row(snapshot, "Home", "Front")["armed"] is True
+
+
+async def test_snapshot_shows_an_accepted_camera_arm_straight_away(
+    dl: BlinkDownloader, blink_accepts: AsyncMock
+) -> None:
+    """blinkpy keeps the old motion_enabled until its next refresh, which
+    is a poll cycle away, so the tab's own 30 s poll put the toggle back."""
+    dl._blink = _real_blink({"Home": [("Front", "11", True), ("Back", "12", True)]})
+
+    assert await dl.set_camera_armed("Front", False) is True
+
+    snapshot = dl.get_sync_module_snapshot()
+    assert _camera_row(snapshot, "Home", "Front")["armed"] is False
+    assert _camera_row(snapshot, "Home", "Back")["armed"] is True
+    assert snapshot[0]["armed"] is True
+
+
+async def test_snapshot_shows_an_accepted_module_arm_straight_away(
+    dl: BlinkDownloader, blink_accepts: AsyncMock
+) -> None:
+    dl._blink = _real_blink({"Home": [("Front", "11", True)]})
+
+    assert await dl.set_sync_module_armed("Home", False) is True
+
+    snapshot = dl.get_sync_module_snapshot()
+    assert snapshot[0]["armed"] is False
+    # A disarmed module does not change any camera's own switch.
+    assert _camera_row(snapshot, "Home", "Front")["armed"] is True
+    assert await dl.set_sync_module_armed("Home", True) is True
+    assert dl.get_sync_module_snapshot()[0]["armed"] is True
+
+
+async def test_arm_override_ends_when_a_later_refresh_completes(
+    dl: BlinkDownloader, blink_accepts: AsyncMock
+) -> None:
+    blink = _real_blink({"Home": [("Front", "11", True)]})
+    dl._blink = blink
+    blink.refresh = AsyncMock(return_value=True)
+    await dl.set_camera_armed("Front", False)
+    assert _camera_row(dl.get_sync_module_snapshot(), "Home", "Front")["armed"] is False
+
+    # Blink says the camera is armed after all: that refresh started after
+    # the command, so it is what the tab shows now.
+    assert await dl.refresh_camera_state() is True
+
+    assert _camera_row(dl.get_sync_module_snapshot(), "Home", "Front")["armed"] is True
+    assert dl._armed_overrides == {}
+
+
+async def test_arm_override_survives_a_refresh_that_did_not_run(
+    dl: BlinkDownloader, blink_accepts: AsyncMock
+) -> None:
+    """blinkpy's refresh returns False when throttled, having read nothing."""
+    blink = _real_blink({"Home": [("Front", "11", True)]})
+    dl._blink = blink
+    blink.refresh = AsyncMock(return_value=False)
+    await dl.set_camera_armed("Front", False)
+
+    assert await dl.refresh_camera_state() is False
+
+    assert _camera_row(dl.get_sync_module_snapshot(), "Home", "Front")["armed"] is False
+
+
+async def test_arm_override_does_not_outlive_its_ttl(
+    dl: BlinkDownloader, blink_accepts: AsyncMock
+) -> None:
+    """If no refresh ever completes, a command Blink accepted but never
+    carried out is not remembered forever."""
+    dl._blink = _real_blink({"Home": [("Front", "11", True)]})
+    await dl.set_camera_armed("Front", False)
+    key = ("100", "11")
+    armed, _ = dl._armed_overrides[key]
+    dl._armed_overrides[key] = (armed, time.monotonic() - 10_000)
+
+    assert _camera_row(dl.get_sync_module_snapshot(), "Home", "Front")["armed"] is True
+    assert key not in dl._armed_overrides
+
+
+async def test_arming_a_mini_shows_on_its_module_and_its_camera(
+    dl: BlinkDownloader, blink_accepts: AsyncMock
+) -> None:
+    """A Mini is its own sync module and its only camera, with one flag at
+    Blink: blinkpy reads the camera's state from the module's."""
+    dl._blink = _real_mini_blink()
+
+    assert await dl.set_camera_armed("Mini", False) is True
+    snapshot = dl.get_sync_module_snapshot()
+    assert snapshot[0]["armed"] is False
+    assert _camera_row(snapshot, "Mini", "Mini")["armed"] is False
+
+    assert await dl.set_sync_module_armed("Mini", True) is True
+    snapshot = dl.get_sync_module_snapshot()
+    assert snapshot[0]["armed"] is True
+    assert _camera_row(snapshot, "Mini", "Mini")["armed"] is True
+
+
+async def test_camera_arm_by_id_picks_the_camera_on_screen_not_a_namesake(
+    dl: BlinkDownloader, blink_accepts: AsyncMock
+) -> None:
+    """blinkpy merges every sync module's cameras into one name -> camera
+    map, so with two cameras called "Porch" a by-name arm reaches whichever
+    was merged last, not the one the user clicked."""
+    dl._blink = _real_blink(
+        {"Home": [("Porch", "11", True)], "Garage": [("Porch", "22", True)]}
+    )
+
+    assert (
+        await dl.set_camera_armed("Porch", False, camera_id="11", network_id="100")
+        is True
+    )
+
+    url = blink_accepts.await_args_list[-1].args[1]
+    assert "/network/100/camera/11/" in url
+    snapshot = dl.get_sync_module_snapshot()
+    assert _camera_row(snapshot, "Home", "Porch")["armed"] is False
+    assert _camera_row(snapshot, "Garage", "Porch")["armed"] is True
+
+
+async def test_camera_arm_by_name_only_is_unchanged(
+    dl: BlinkDownloader, blink_accepts: AsyncMock
+) -> None:
+    """Home Assistant's own calls carry a name and nothing else."""
+    dl._blink = _real_blink({"Home": [("Front", "11", True)]})
+
+    assert await dl.set_camera_armed("Front", False) is True
+
+    assert "/network/100/camera/11/" in blink_accepts.await_args_list[-1].args[1]
+
+
+async def test_camera_arm_by_id_survives_a_rename(
+    dl: BlinkDownloader, blink_accepts: AsyncMock
+) -> None:
+    """The tab still shows "Front" after the topology was rebuilt with the
+    camera's new name; its id still finds it, where the name is a 404."""
+    blink = _real_blink({"Home": [("Front", "11", True)]})
+    dl._blink = blink
+    sync = blink.sync["Home"]
+    camera = sync.cameras.pop("Front")
+    camera.name = "Porch"
+    sync.cameras["Porch"] = camera
+    blink.cameras = blink.merge_cameras()
+
+    assert await dl.set_camera_armed("Front", False) is None
+    assert await dl.set_camera_armed("Front", False, camera_id="11") is True
+
+
+async def test_camera_arm_by_id_never_falls_back_to_the_name(
+    dl: BlinkDownloader, blink_accepts: AsyncMock
+) -> None:
+    """The tab named a particular camera. If it is gone, arming some other
+    camera that happens to share the name is the wrong answer."""
+    dl._blink = _real_blink({"Home": [("Front", "11", True)]})
+
+    assert await dl.set_camera_armed("Front", False, camera_id="999") is None
+    assert (
+        await dl.set_camera_armed("Front", False, camera_id="11", network_id="555")
+        is None
+    )
+    blink_accepts.assert_not_awaited()
+
+
+async def test_camera_arm_by_network_and_name_stays_inside_that_module(
+    dl: BlinkDownloader, blink_accepts: AsyncMock
+) -> None:
+    dl._blink = _real_blink(
+        {"Home": [("Porch", "11", True)], "Garage": [("Porch", "22", True)]}
+    )
+
+    assert await dl.set_camera_armed("Porch", False, network_id="101") is True
+    assert "/network/101/camera/22/" in blink_accepts.await_args_list[-1].args[1]
+    assert await dl.set_camera_armed("Gate", False, network_id="101") is None
+
+
+async def test_module_arm_by_network_id_survives_a_rename(
+    dl: BlinkDownloader, blink_accepts: AsyncMock
+) -> None:
+    dl._blink = _real_blink({"Home": [("Front", "11", True)]})
+
+    assert await dl.set_sync_module_armed("Old Name", False) is None
+    assert await dl.set_sync_module_armed("Old Name", False, network_id="100") is True
+    assert await dl.set_sync_module_armed("Home", False, network_id="999") is None
+    assert dl.get_sync_module_snapshot()[0]["armed"] is False
+
+
+async def test_snapshot_gives_each_camera_its_id(dl: BlinkDownloader) -> None:
+    dl._blink = _real_blink({"Home": [("Front", "11", True)]})
+
+    assert _camera_row(dl.get_sync_module_snapshot(), "Home", "Front")["id"] == "11"
+
+
+async def test_sync_modules_stay_visible_while_the_topology_is_rebuilt(
+    dl: BlinkDownloader, blink_accepts: AsyncMock
+) -> None:
+    """Mid-rebuild, blinkpy's own maps are empty containers being refilled.
+    Cameras already fell back to the previous map; the Sync Module tab went
+    blank and arming a module 404ed for as long as the rebuild took."""
+    blink = _real_blink({"Home": [("Front", "11", True)]})
+    dl._blink = blink
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_setup_post_verify() -> bool:
+        started.set()
+        await release.wait()
+        return True
+
+    blink.setup_post_verify = slow_setup_post_verify
+    rebuild = asyncio.create_task(dl._refresh_device_topology(force=True))
+    await started.wait()
+    try:
+        assert blink.sync == {}
+        snapshot = dl.get_sync_module_snapshot()
+        assert [m["name"] for m in snapshot] == ["Home"]
+        assert await dl.set_sync_module_armed("Home", False) is True
+        assert await dl.set_camera_armed("Front", False) is True
+    finally:
+        release.set()
+        await rebuild
+
+    # Once it has landed the fallback is gone again.
+    assert dl._topology_fallback_sync is None
+    assert dl.get_sync_module_snapshot() == []
+
+
+async def test_failed_rebuild_restores_sync_modules(dl: BlinkDownloader) -> None:
+    blink = _real_blink({"Home": [("Front", "11", True)]})
+    dl._blink = blink
+    blink.setup_post_verify = AsyncMock(return_value=False)
+
+    assert await dl._refresh_device_topology(force=True) is False
+
+    assert dl._topology_fallback_sync is None
+    assert [m["name"] for m in dl.get_sync_module_snapshot()] == ["Home"]
 
 
 # ---------------------------------------------------------------------------

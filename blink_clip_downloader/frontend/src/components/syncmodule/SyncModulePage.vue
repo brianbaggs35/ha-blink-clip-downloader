@@ -4,12 +4,13 @@ import Button from 'primevue/button'
 import Message from 'primevue/message'
 import { listClips } from '../../api/clips'
 import { armCamera, armSyncModule, getSyncModules } from '../../api/syncModule'
-import type { ClipListItem, SyncModuleInfo } from '../../api/types'
+import type { ClipListItem, SyncModuleCamera, SyncModuleInfo } from '../../api/types'
 import { useConfirm } from '../../composables/useConfirm'
 import { useClipViewerStore } from '../../stores/clipViewer'
 import { useRefreshStore } from '../../stores/refresh'
 import { useToastStore } from '../../stores/toast'
 import LoadingIndicator from '../layout/LoadingIndicator.vue'
+import { cameraKey } from './cameraKey'
 import SyncModuleCard from './SyncModuleCard.vue'
 
 // Armed state can change from the Blink app itself, another HA session, or
@@ -205,7 +206,7 @@ async function toggleSystemArmed() {
     const results = await Promise.all(
       syncModules.value.map(async (m) => {
         try {
-          await armSyncModule(m.name, target)
+          await armSyncModule(m.name, target, m.network_id)
           return { name: m.name, ok: true }
         } catch {
           return { name: m.name, ok: false }
@@ -248,11 +249,15 @@ async function onModuleToggle(name: string, armed: boolean) {
   }
   pendingModules.value = new Set(pendingModules.value).add(name)
   try {
-    await armSyncModule(name, armed)
+    await armSyncModule(name, armed, module.network_id)
     module.armed = armed
     toast.show(`${name} ${armed ? 'armed' : 'disarmed'}`)
   } catch {
     toast.show(`Failed to ${armed ? 'arm' : 'disarm'} ${name}`, true)
+    // A failure can mean the tab is showing something that is no longer
+    // true (a name that changed, a module that went away): show what the
+    // server has now rather than leave the next click to fail the same way.
+    void silentReload()
   } finally {
     const next = new Set(pendingModules.value)
     next.delete(name)
@@ -260,22 +265,29 @@ async function onModuleToggle(name: string, armed: boolean) {
   }
 }
 
-async function onCameraToggle(cameraName: string, armed: boolean) {
+// *module* is passed along with the camera because a name alone does not
+// say which one: two sync modules can each hold a camera of the same name,
+// and the toggle that was clicked must be the one that is armed. The ids go
+// to the server too (see api/syncModule.ts), so a camera renamed since this
+// list loaded is still the one that is armed.
+async function onCameraToggle(module: SyncModuleInfo, camera: SyncModuleCamera, armed: boolean) {
   // Same double-click guard as toggleSystemArmed/onModuleToggle.
-  if (pendingCameras.value.has(cameraName)) return
-  pendingCameras.value = new Set(pendingCameras.value).add(cameraName)
+  const key = cameraKey(module.name, camera.name)
+  if (pendingCameras.value.has(key)) return
+  pendingCameras.value = new Set(pendingCameras.value).add(key)
   try {
-    await armCamera(cameraName, armed)
-    for (const module of syncModules.value) {
-      const cam = module.cameras.find((c) => c.name === cameraName)
-      if (cam) cam.armed = armed
-    }
-    toast.show(`${cameraName} ${armed ? 'armed' : 'disarmed'}`)
+    await armCamera(camera.name, armed, { cameraId: camera.id, networkId: module.network_id })
+    // Looked up again rather than using *camera* itself: a background
+    // reload while the request was in flight replaced these objects.
+    const current = syncModules.value.find((m) => m.name === module.name)?.cameras.find((c) => c.name === camera.name)
+    if (current) current.armed = armed
+    toast.show(`${camera.name} ${armed ? 'armed' : 'disarmed'}`)
   } catch {
-    toast.show(`Failed to ${armed ? 'arm' : 'disarm'} ${cameraName}`, true)
+    toast.show(`Failed to ${armed ? 'arm' : 'disarm'} ${camera.name}`, true)
+    void silentReload()
   } finally {
     const next = new Set(pendingCameras.value)
-    next.delete(cameraName)
+    next.delete(key)
     pendingCameras.value = next
   }
 }
@@ -353,7 +365,7 @@ watch(
           :pending-cameras="pendingCameras"
           :local-storage-clips="clipsForModule(mod)"
           @toggle-module="(armed) => onModuleToggle(mod.name, armed)"
-          @toggle-camera="onCameraToggle"
+          @toggle-camera="(camera, armed) => onCameraToggle(mod, camera, armed)"
           @clip-click="onClipClick"
         />
       </div>
