@@ -9369,6 +9369,106 @@ async def test_sync_module_camera_arm_happy_path(db: ClipDatabase) -> None:
 
 
 @pytest.mark.parametrize(
+    "path", ["/api/sync-modules/Home/arm", "/api/sync-modules/cameras/Front Door/arm"]
+)
+@pytest.mark.parametrize(
+    "body",
+    [
+        {},
+        {"arm": True},
+        {"armed": None},
+        {"armed": "false"},
+        {"armed": "true"},
+        {"armed": 0},
+        {"armed": 1},
+        {"armed": []},
+    ],
+)
+async def test_sync_module_arm_requires_a_real_boolean(
+    db: ClipDatabase, path: str, body: dict
+) -> None:
+    """The body used to go through bool(): a missing or misspelled "armed"
+    disarmed the system, and the string "false" armed it."""
+    arm = AsyncMock(return_value=True)
+    server = MediaServer(db=db, port=0, arm_sync_module=arm, arm_camera=arm)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post(path, json=body)
+        assert resp.status == 400
+        assert "true or false" in await resp.text()
+        arm.assert_not_awaited()
+    finally:
+        await tc.close()
+
+
+async def test_sync_module_arm_passes_the_network_id_on(db: ClipDatabase) -> None:
+    arm_sync_module = AsyncMock(return_value=True)
+    server = MediaServer(db=db, port=0, arm_sync_module=arm_sync_module)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post(
+            "/api/sync-modules/Home/arm", json={"armed": False, "network_id": 12345}
+        )
+        assert resp.status == 200
+        arm_sync_module.assert_awaited_once_with("Home", False, network_id="12345")
+    finally:
+        await tc.close()
+
+
+async def test_sync_module_camera_arm_passes_the_ids_on(db: ClipDatabase) -> None:
+    arm_camera = AsyncMock(return_value=True)
+    server = MediaServer(db=db, port=0, arm_camera=arm_camera)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post(
+            "/api/sync-modules/cameras/Front Door/arm",
+            json={"armed": True, "camera_id": "777", "network_id": "12345"},
+        )
+        assert resp.status == 200
+        arm_camera.assert_awaited_once_with(
+            "Front Door", True, camera_id="777", network_id="12345"
+        )
+    finally:
+        await tc.close()
+
+
+async def test_sync_module_camera_arm_ignores_empty_ids(db: ClipDatabase) -> None:
+    """A tab that was handed no id (null) sends none, and gets the by-name
+    behavior Home Assistant's own calls rely on."""
+    arm_camera = AsyncMock(return_value=True)
+    server = MediaServer(db=db, port=0, arm_camera=arm_camera)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post(
+            "/api/sync-modules/cameras/Front Door/arm",
+            json={"armed": True, "camera_id": None, "network_id": ""},
+        )
+        assert resp.status == 200
+        arm_camera.assert_awaited_once_with("Front Door", True)
+    finally:
+        await tc.close()
+
+
+@pytest.mark.parametrize("bad", [True, ["11"], {"id": 11}, 1.5])
+async def test_sync_module_camera_arm_rejects_a_malformed_id(
+    db: ClipDatabase, bad: object
+) -> None:
+    arm_camera = AsyncMock(return_value=True)
+    server = MediaServer(db=db, port=0, arm_camera=arm_camera)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post(
+            "/api/sync-modules/cameras/Front Door/arm",
+            json={"armed": True, "camera_id": bad},
+        )
+        assert resp.status == 400
+        assert "camera_id" in await resp.text()
+        arm_camera.assert_not_awaited()
+    finally:
+        await tc.close()
+
+
+@pytest.mark.parametrize(
     "filename",
     [
         "..%2Fsecret.txt",

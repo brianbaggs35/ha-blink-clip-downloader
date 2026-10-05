@@ -58,6 +58,27 @@ async def test_fake_sync_module_updates_module_and_camera_arming() -> None:
     assert await sync.arm_camera("Unknown", True) is None
 
 
+async def test_fake_sync_module_arms_by_the_ids_the_snapshot_gave() -> None:
+    sync = E2EFixtures().sync_module
+    snapshot = sync.snapshot()[0]
+    network_id = str(snapshot["network_id"])
+    camera = snapshot["cameras"][0]
+
+    # The ids win over a name that no longer matches anything.
+    assert await sync.arm_module("Old name", False, network_id=network_id) is True
+    assert sync.snapshot()[0]["armed"] is False
+    assert await sync.arm_module("Home", True, network_id="999") is None
+    assert (
+        await sync.arm_camera(
+            "Old name", False, camera_id=camera["id"], network_id=network_id
+        )
+        is True
+    )
+    assert sync.snapshot()[0]["cameras"][0]["armed"] is False
+    assert await sync.arm_camera("Front Door", True, camera_id="nope") is None
+    assert await sync.arm_camera("Front Door", True, network_id="999") is None
+
+
 async def test_fixture_camera_and_snapshot_coverage() -> None:
     fixtures = E2EFixtures()
     assert fixtures.list_camera_names() == [*CAMERAS, SCRATCH_CAMERA]

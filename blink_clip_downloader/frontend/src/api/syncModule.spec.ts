@@ -42,6 +42,38 @@ describe('syncModule api', () => {
     )
   })
 
+  it('armSyncModule() sends the network id it was shown when it has one', async () => {
+    await armSyncModule('Home', false, 12345)
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/sync-modules/Home/arm',
+      expect.objectContaining({ body: JSON.stringify({ armed: false, network_id: 12345 }) }),
+    )
+  })
+
+  it('armSyncModule() leaves the network id out when it is null', async () => {
+    await armSyncModule('Home', true, null)
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/sync-modules/Home/arm',
+      expect.objectContaining({ body: JSON.stringify({ armed: true }) }),
+    )
+  })
+
+  it('armCamera() sends the camera and network ids it was shown', async () => {
+    await armCamera('Front Door', true, { cameraId: '777', networkId: '12345' })
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/sync-modules/cameras/Front%20Door/arm',
+      expect.objectContaining({ body: JSON.stringify({ armed: true, camera_id: '777', network_id: '12345' }) }),
+    )
+  })
+
+  it('armCamera() leaves out an id that is null, but keeps one that is 0', async () => {
+    await armCamera('Front Door', true, { cameraId: null, networkId: 0 })
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/sync-modules/cameras/Front%20Door/arm',
+      expect.objectContaining({ body: JSON.stringify({ armed: true, network_id: 0 }) }),
+    )
+  })
+
   it('armCamera()', async () => {
     await armCamera('Front Door', false)
     expect(fetch).toHaveBeenCalledWith('/api/sync-modules/cameras/Front%20Door/arm', {

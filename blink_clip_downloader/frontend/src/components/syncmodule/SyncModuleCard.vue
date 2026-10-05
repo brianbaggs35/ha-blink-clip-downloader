@@ -5,7 +5,8 @@ import ProgressSpinner from 'primevue/progressspinner'
 import Tag from 'primevue/tag'
 import ToggleSwitch from 'primevue/toggleswitch'
 import ClipCard from '../library/ClipCard.vue'
-import type { ClipListItem, SyncModuleInfo } from '../../api/types'
+import type { ClipListItem, SyncModuleCamera, SyncModuleInfo } from '../../api/types'
+import { cameraKey } from './cameraKey'
 import SyncModuleCameraCard from './SyncModuleCameraCard.vue'
 
 defineProps<{
@@ -16,7 +17,7 @@ defineProps<{
 }>()
 const emit = defineEmits<{
   'toggle-module': [armed: boolean]
-  'toggle-camera': [camera: string, armed: boolean]
+  'toggle-camera': [camera: SyncModuleCamera, armed: boolean]
   'clip-click': [clip: ClipListItem]
 }>()
 </script>
@@ -63,8 +64,8 @@ const emit = defineEmits<{
           v-for="cam in module.cameras"
           :key="cam.name"
           :camera="cam"
-          :pending="pendingCameras.has(cam.name)"
-          @update:armed="(armed) => emit('toggle-camera', cam.name, armed)"
+          :pending="pendingCameras.has(cameraKey(module.name, cam.name))"
+          @update:armed="(armed) => emit('toggle-camera', cam, armed)"
         />
       </div>
 

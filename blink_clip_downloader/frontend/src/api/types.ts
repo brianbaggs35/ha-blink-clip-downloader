@@ -805,6 +805,9 @@ export interface LiveViewCamerasResponse {
 
 export interface SyncModuleCamera {
   name: string
+  /** Blink's id for this camera — unlike the name, it survives a rename, so
+   * arming sends it back (null only if Blink has not reported one yet). */
+  id: string | null
   /** Per-camera arm state (blinkpy's motion_enabled) — whether this camera
    * records on motion while the system is armed. */
   armed: boolean

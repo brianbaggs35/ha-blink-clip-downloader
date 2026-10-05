@@ -132,6 +132,26 @@ configuration:
       Desactívalo solo si confías en todos los dispositivos que pueden llegar
       al puerto, porque cualquiera en tu red podría cambiar ajustes,
       desarmar cámaras o ver clips.
+  ssl:
+    name: HTTPS para el acceso directo
+    description: >-
+      Sirve también la interfaz web por HTTPS en el puerto 8100, para que
+      iniciar sesión en el puerto de acceso directo no envíe tu contraseña de
+      Home Assistant en claro por la red. Necesita un certificado en la
+      carpeta /ssl de Home Assistant; sirve el que Let's Encrypt o DuckDNS ya
+      dejaron allí. El puerto 8099 sigue siendo HTTP simple para la barra
+      lateral y redirige a HTTPS a quien tenga que iniciar sesión. Reinicia el
+      complemento después de renovar el certificado.
+  certfile:
+    name: Archivo del certificado HTTPS
+    description: >-
+      El archivo del certificado (cadena) dentro de la carpeta /ssl de Home
+      Assistant. Solo se usa si HTTPS para el acceso directo está activado.
+  keyfile:
+    name: Archivo de la clave privada HTTPS
+    description: >-
+      El archivo de la clave privada dentro de la carpeta /ssl de Home
+      Assistant. Solo se usa si HTTPS para el acceso directo está activado.
   watch_ha_events:
     name: Vigilar eventos de movimiento de HA
     description: >-

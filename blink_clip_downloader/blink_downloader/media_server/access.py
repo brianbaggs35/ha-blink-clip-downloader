@@ -14,6 +14,12 @@ before 6.0.8. With it on:
   :data:`~.access_control.TOKEN_ROUTES`;
 * anything else gets the login page (a page load) or a 401 (an API call).
 
+When the add-on is also serving HTTPS (``ssl`` on, see :mod:`.tls`), signing
+in moves there: a plain-HTTP request that is not signed in is redirected to
+the HTTPS login page, and a password posted to the plain one is not read.
+Everything that already passes the gate — ingress, a session, the token —
+is left alone, since Home Assistant's own calls are plain HTTP.
+
 The state and rules live in :mod:`.access_control`; this module is the
 aiohttp side of them.
 """
@@ -26,6 +32,7 @@ from collections.abc import Awaitable, Callable
 from urllib.parse import quote
 
 from aiohttp import web
+from yarl import URL
 
 from .access_control import (
     INGRESS_PROXY_IP,
@@ -87,6 +94,15 @@ def _redirect(location: str) -> web.Response:
     """A 303 returned rather than raised, so the security middleware still
     adds its headers to it."""
     return web.Response(status=303, headers={"Location": location})
+
+
+def _login_location(request: web.Request, target: str) -> str:
+    """The login page that leads on to *target*, keeping a dashboard
+    iframe's ``kiosk`` flag."""
+    location = f"{_LOGIN_PATH}?next=" + quote(target, safe="")
+    if request.query.get("kiosk") == "1":
+        location += "&kiosk=1"
+    return location
 
 
 def _bearer_token(request: web.Request) -> str:
@@ -191,13 +207,34 @@ class AccessRoutesMixin(_MediaServerBase):
     def _sign_in_required(self, request: web.Request) -> web.StreamResponse:
         """The login page for a page load, a 401 for anything else."""
         if request.method in ("GET", "HEAD") and not request.path.startswith("/api/"):
-            location = f"{_LOGIN_PATH}?next=" + quote(request.path_qs, safe="")
-            if request.query.get("kiosk") == "1":
-                location += "&kiosk=1"
-            return _redirect(location)
+            login = _login_location(request, request.path_qs)
+            return _redirect(self._on_https(request, login) or login)
         return web.json_response(
             {"error": _SIGN_IN_REQUIRED, "login_required": True}, status=401
         )
+
+    def _on_https(self, request: web.Request, location: str) -> str | None:
+        """*location* on the HTTPS listener, or None when it should not move.
+
+        It should not move when HTTPS is not running, or when the request
+        already came over it, or when the Host header gives nothing to
+        build an address from. The host is the one the browser used, so
+        ``http://ha.local:8099`` goes to ``https://ha.local:8100``.
+        """
+        host = request.url.host
+        if self._https_port is None or request.secure or not host:
+            return None
+        if not location.startswith("/") or location.startswith("//"):
+            return None
+        try:
+            origin = URL.build(scheme="https", host=host, port=self._https_port)
+        except ValueError:
+            # A Host the browser could never have sent. Serve the page where
+            # it is, as if HTTPS were off, rather than fail the request.
+            return None
+        # Appended as it is, not joined: joining would re-encode the query,
+        # and treat a "//host" location as a different host.
+        return f"{str(origin).rstrip('/')}{location}"
 
     # ------------------------------------------------------------------
     # Login page
@@ -208,6 +245,9 @@ class AccessRoutesMixin(_MediaServerBase):
     ) -> web.StreamResponse:
         if request[ACCESS_VIA] in ("open", "ingress", "session"):
             return _redirect(_safe_next(request.query.get("next", "/")))
+        secure_page = self._on_https(request, request.raw_path)
+        if secure_page:
+            return _redirect(secure_page)
         return self._login_page(request, request.query.get("next", "/"))
 
     async def _handle_login_submit(self, request: web.Request) -> web.StreamResponse:
@@ -216,9 +256,14 @@ class AccessRoutesMixin(_MediaServerBase):
         if _is_cross_site(request):
             return web.json_response({"error": _CROSS_SITE_WRITE}, status=403)
         form = await request.post()
+        target = _safe_next(str(form.get("next", "/")))
+        secure_page = self._on_https(request, _login_location(request, target))
+        if secure_page:
+            # Already sent in clear by the time it got here, but it is not
+            # checked, remembered or counted: sign in again over HTTPS.
+            return _redirect(secure_page)
         username = str(form.get("username", "")).strip()
         password = str(form.get("password", ""))
-        target = _safe_next(str(form.get("next", "/")))
         address = request.remote or ""
 
         wait = self._access.locked_out(address)

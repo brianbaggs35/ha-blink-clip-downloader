@@ -1,6 +1,6 @@
 ---
 name: Blink Clip Downloader
-version: "v6.0.10"
+version: "v6.1.0"
 slug: blink_clip_downloader
 image: "ghcr.io/brianbaggs35/blink_clip_downloader"
 description: >-
@@ -30,12 +30,19 @@ map:
   # Home Assistant URL, and /media/local/... is one it fetches signed in.
   - type: media
     read_only: false
+  # Home Assistant's own certificate, for the optional HTTPS listener (see
+  # the ssl option below).
+  - type: ssl
+    read_only: true
 
-# Direct-access port (optional alternative to ingress).
+# Direct-access port (optional alternative to ingress). 8100 only answers
+# when the ssl option is on.
 ports:
   8099/tcp: 8099
+  8100/tcp: 8100
 ports_description:
   8099/tcp: Clip library web UI (direct access)
+  8100/tcp: Clip library web UI over HTTPS (direct access, needs ssl)
 
 options:
   # --- Credentials ---
@@ -126,6 +133,18 @@ options:
   # generates. Turn off only if every device that can reach the port is
   # trusted: with it off, anything on your network can change settings.
   direct_access_login: true
+  # Also serve the web UI over HTTPS on port 8100, so signing in on the
+  # direct port does not send your Home Assistant password across the
+  # network in clear. Needs a certificate in Home Assistant's /ssl folder
+  # (certfile and keyfile below name the two files): the one Let's Encrypt
+  # or DuckDNS already put there works. Port 8099 keeps serving plain HTTP
+  # for the sidebar panel, and sends anyone signing in over to HTTPS.
+  # Restart the add-on after renewing the certificate.
+  ssl: false
+  # Certificate chain, relative to /ssl.
+  certfile: "fullchain.pem"
+  # Private key for that certificate, relative to /ssl.
+  keyfile: "privkey.pem"
 
   # --- Event-driven instant download ---
   # Listen for HA motion events to trigger an immediate download without
@@ -608,6 +627,9 @@ schema:
   enable_media_server: "bool"
   media_server_port: "int(1024,65535)"
   direct_access_login: "bool"
+  ssl: "bool"
+  certfile: "str"
+  keyfile: "str"
   watch_ha_events: "bool"
   fast_poll_duration: "int(10,3600)"
   fast_poll_interval: "int(5,60)"

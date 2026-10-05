@@ -26,6 +26,7 @@ from blinkpy.auth import (
 )
 from blinkpy.blinkpy import Blink
 from blinkpy.camera import BlinkCamera
+from blinkpy.sync_module import BlinkLotus, BlinkOwl
 
 from .config import AppConfig
 from .database import ClipDatabase
@@ -73,6 +74,11 @@ _PROBE_TIMEOUT = 15
 # less frequent than the normal per-camera refresh while still detecting
 # account-side renames without requiring an add-on restart.
 _TOPOLOGY_REFRESH_INTERVAL = 300
+
+# How long an arm/disarm Blink accepted is shown in the Sync Module snapshot
+# if blinkpy has still not refreshed since (see _armed_overrides). Only a
+# ceiling: a completed refresh ends it much sooner.
+_ARMED_OVERRIDE_TTL = 600.0
 
 
 async def probe_clip_duration(video_path: Path) -> int:
@@ -166,6 +172,11 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         self._last_topology_refresh = time.monotonic()
         self._topology_lock = asyncio.Lock()
         self._topology_fallback_cameras: Mapping[str, BlinkCamera] | None = None
+        self._topology_fallback_sync: Mapping[str, Any] | None = None
+        # What Blink last accepted for each sync module / camera, until
+        # blinkpy's own reading catches up -- see _armed_state().
+        self._armed_overrides: dict[tuple[str, str | None], tuple[bool, float]] = {}
+        self._last_refresh_started = 0.0
         self._pending_camera_renames: set[tuple[str, str]] = set()
         self._pending_camera_replacements: set[str] = set()
         self._camera_refresh_skip_warned = False
@@ -426,7 +437,23 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
             )
         return snapshot
 
-    def _get_sync_module(self, name: str) -> Any | None:
+    def _sync_modules(self) -> Mapping[str, Any]:
+        """The sync modules to read right now.
+
+        While a topology rebuild is in flight blinkpy's own map is an empty
+        container the rebuild is refilling, so -- as list_camera_names()/
+        get_camera already do for cameras -- read the previous map until the
+        rebuild lands or rolls back. Without this the Sync Module tab went
+        blank (and arming a module 404ed) for the length of every rebuild,
+        which a rename forces and which otherwise runs every five minutes.
+        """
+        if self._blink is None:
+            return {}
+        if self._topology_fallback_sync is not None:
+            return self._topology_fallback_sync
+        return self._blink.sync
+
+    def _get_sync_module(self, name: str, network_id: str | None = None) -> Any | None:
         """Return the live blinkpy sync-module object for *name*, or None.
 
         Mirrors get_camera's None-on-either-cause contract: nothing has
@@ -437,15 +464,113 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         instances (sync-less Minis/newer doorbells) in the same dict — both
         subclass BlinkSyncModule and share its arm/async_arm/attributes
         interface, so callers don't need to tell them apart.
+
+        *network_id*, when given, is matched instead of the name: it is what
+        the Sync Module tab saw, and unlike a name it does not change when
+        the module is renamed (a Mini or doorbell is its own sync module,
+        so renaming that camera renames its module too).
         """
-        if self._blink is None:
-            return None
-        return self._blink.sync.get(name)
+        modules = self._sync_modules()
+        if network_id is None:
+            return modules.get(name)
+        for sync in modules.values():
+            if str(sync.network_id) == network_id:
+                return sync
+        return None
+
+    def _find_sync_camera(
+        self, name: str, camera_id: str | None, network_id: str | None
+    ) -> Any | None:
+        """The camera an arm request means, or None.
+
+        With no identifiers this is the by-name lookup everything else uses.
+        That is ambiguous: blinkpy keeps one flat name -> camera map across
+        every sync module, so when two modules each hold a camera of the same
+        name the one merged last wins, and arming the camera on screen armed
+        the other. *camera_id* (and the *network_id* of its sync module)
+        name exactly one camera, and they also survive a rename, which is
+        what lets a tab still showing the old name arm the right camera.
+        Once an identifier is given it is final: nothing matching means
+        None, never "some camera with that name".
+        """
+        if camera_id is None and network_id is None:
+            return self.get_camera(name)
+        for sync in self._sync_modules().values():
+            if network_id is not None and str(sync.network_id) != network_id:
+                continue
+            camera = self._camera_in(sync, name, camera_id)
+            if camera is not None:
+                return camera
+        return None
+
+    @staticmethod
+    def _camera_in(sync: Any, name: str, camera_id: str | None) -> Any | None:
+        """The camera of *sync* with *camera_id*, else the one named *name*."""
+        if camera_id is None:
+            return sync.cameras.get(name)
+        return next(
+            (c for c in sync.cameras.values() if str(c.camera_id) == camera_id), None
+        )
+
+    @staticmethod
+    def _module_key(sync: Any) -> tuple[str, str | None]:
+        return (str(sync.network_id), None)
+
+    @staticmethod
+    def _camera_key(sync: Any, camera: Any) -> tuple[str, str | None]:
+        return (str(sync.network_id), str(camera.camera_id))
+
+    def _armed_state(self, key: tuple[str, str | None], reading: Any) -> Any:
+        """What the Sync Module tab shows for *key*: the arm/disarm Blink
+        just accepted, until blinkpy has refreshed since, else *reading*.
+
+        blinkpy only re-reads armed state in its own refresh, which this
+        add-on runs once per poll cycle (five minutes by default). Until
+        then every read of the snapshot returned the state from before the
+        click, so a toggle that had worked jumped back within the tab's own
+        30-second poll and stayed wrong for minutes. The override ends when
+        a refresh that *started* after it has completed (that one read
+        Blink's answer to the command), or after _ARMED_OVERRIDE_TTL --
+        so a command that was accepted but never took effect is corrected
+        by the next refresh, not remembered.
+        """
+        override = self._armed_overrides.get(key)
+        if override is None:
+            return reading
+        armed, at = override
+        if (
+            self._last_refresh_started >= at
+            or time.monotonic() - at > _ARMED_OVERRIDE_TTL
+        ):
+            del self._armed_overrides[key]
+            return reading
+        return armed
+
+    def _remember_armed(self, sync: Any, camera: Any | None, armed: bool) -> None:
+        """Record an arm/disarm Blink accepted (see _armed_state).
+
+        A sync-less device (Mini, newer doorbell) is its own sync module
+        *and* its only camera, with a single armed flag at Blink: blinkpy
+        derives the Mini camera's state from its module's, so arming either
+        has to show on both.
+        """
+        sync_less = isinstance(sync, BlinkOwl | BlinkLotus)
+        keys: list[tuple[str, str | None]] = []
+        if camera is None or sync_less:
+            keys.append(self._module_key(sync))
+        if camera is not None:
+            keys.append(self._camera_key(sync, camera))
+        if sync_less:
+            keys.extend(self._camera_key(sync, cam) for cam in sync.cameras.values())
+        now = time.monotonic()
+        for key in keys:
+            self._armed_overrides[key] = (armed, now)
 
     def get_sync_module_snapshot(self) -> list[dict[str, Any]]:
         """Return every sync module on the account, with its own info/armed
         state and each of its cameras' armed/online/battery state, as of the
-        last refresh_camera_state() call.
+        last refresh_camera_state() call (plus any arm/disarm Blink has
+        accepted since — see _armed_state).
 
         Like get_battery_snapshot, this is a pure read of state blinkpy
         already refreshes every poll cycle (Blink.refresh() calls
@@ -460,13 +585,18 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         if self._blink is None:
             return []
         snapshot: list[dict[str, Any]] = []
-        for name, sync in self._blink.sync.items():
+        for name, sync in self._sync_modules().items():
             cameras: list[dict[str, Any]] = []
             for camera_name, camera in sync.cameras.items():
                 cameras.append(
                     {
                         "name": camera_name,
-                        "armed": camera.arm,
+                        # Stable across a rename, unlike the name: what the
+                        # tab sends back so an arm still finds this camera.
+                        "id": camera.camera_id,
+                        "armed": self._armed_state(
+                            self._camera_key(sync, camera), camera.arm
+                        ),
                         "online": camera.online,
                         "battery_state": (
                             str(camera.battery_state).strip().lower()
@@ -486,7 +616,7 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                     "version": sync.version,
                     "status": sync.status,
                     "online": sync.online,
-                    "armed": sync.arm,
+                    "armed": self._armed_state(self._module_key(sync), sync.arm),
                     "region_id": sync.region_id,
                     "local_storage": sync.local_storage,
                     "cameras": cameras,
@@ -494,34 +624,52 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
             )
         return snapshot
 
-    async def set_sync_module_armed(self, name: str, armed: bool) -> bool | None:
-        """Arm or disarm the whole sync module named *name*.
+    async def set_sync_module_armed(
+        self, name: str, armed: bool, *, network_id: str | None = None
+    ) -> bool | None:
+        """Arm or disarm the whole sync module named *name* (or, when given,
+        whose network id is *network_id* — see _get_sync_module).
 
-        Returns None (never raises) when *name* doesn't match any sync
-        module on the account — this can legitimately happen if the module
-        was renamed/removed between the web UI loading its snapshot and the
-        user clicking arm/disarm, same class of race
-        list_camera_names()/get_camera already guard against elsewhere.
-        Returns False if blinkpy's own arm/disarm API call itself fails
-        (e.g. a transient Blink outage); media_server/'s handler maps
-        None to 404 and False to a 502-style "try again" response, since
-        those are genuinely different situations for a caller to react to.
+        Returns None (never raises) when nothing matches — this can
+        legitimately happen if the module was renamed/removed between the
+        web UI loading its snapshot and the user clicking arm/disarm, same
+        class of race list_camera_names()/get_camera already guard against
+        elsewhere. Returns False if Blink did not accept the request
+        (see _set_armed; e.g. a transient Blink outage);
+        media_server/'s handler maps None to 404 and False to a 502-style
+        "try again" response, since those are genuinely different
+        situations for a caller to react to.
         """
-        sync = self._get_sync_module(name)
+        sync = self._get_sync_module(name, network_id)
         if sync is None:
             return None
-        return await self._set_armed(sync, "sync module", name, armed)
+        if not await self._set_armed(sync, "sync module", name, armed):
+            return False
+        self._remember_armed(sync, None, armed)
+        return True
 
-    async def set_camera_armed(self, name: str, armed: bool) -> bool | None:
+    async def set_camera_armed(
+        self,
+        name: str,
+        armed: bool,
+        *,
+        camera_id: str | None = None,
+        network_id: str | None = None,
+    ) -> bool | None:
         """Arm or disarm motion detection for the single camera named
-        *name* (Blink's per-camera equivalent of set_sync_module_armed).
+        *name* (Blink's per-camera equivalent of set_sync_module_armed) —
+        or, when given, the one with *camera_id* / in the sync module with
+        *network_id* (see _find_sync_camera).
 
         Same None-vs-False contract as set_sync_module_armed.
         """
-        camera = self.get_camera(name)
+        camera = self._find_sync_camera(name, camera_id, network_id)
         if camera is None:
             return None
-        return await self._set_armed(camera, "camera", name, armed)
+        if not await self._set_armed(camera, "camera", name, armed):
+            return False
+        self._remember_armed(camera.sync, camera, armed)
+        return True
 
     async def _set_armed(self, obj: Any, noun: str, name: str, armed: bool) -> bool:
         """Shared arm/disarm-and-log body for set_sync_module_armed and
@@ -530,12 +678,16 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         *obj* is the already-resolved sync module or camera — both share
         blinkpy's arm/async_arm interface (see _get_sync_module's
         docstring), so one implementation covers either caller. Returns
-        False (never raises) if blinkpy's own arm/disarm call itself
-        fails; the two docstrings above cover the None-vs-False contract
-        this feeds into.
+        False (never raises) when the request did not go through: either
+        blinkpy raised, or it returned None. blinkpy does not raise for a
+        request that failed on the wire -- it logs the error and hands back
+        None -- so treating "no exception" as success told the tab (and a
+        Home Assistant automation) the system was armed when Blink had
+        never been asked. The two docstrings above cover the None-vs-False
+        contract this feeds into.
         """
         try:
-            await obj.async_arm(armed)
+            response = await obj.async_arm(armed)
         except Exception as exc:  # noqa: BLE001
             _LOGGER.warning(
                 "Could not %s %s %r: %s",
@@ -543,6 +695,14 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                 noun,
                 name,
                 exc,
+            )
+            return False
+        if response is None:
+            _LOGGER.warning(
+                "Could not %s %s %r: Blink gave no answer to the request",
+                "arm" if armed else "disarm",
+                noun,
+                name,
             )
             return False
         return True
@@ -579,7 +739,13 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                     self._camera_refresh_skip_warned = True
                 return False
             self._camera_refresh_skip_warned = False
-            return bool(await self._blink.refresh())
+            started = time.monotonic()
+            refreshed = bool(await self._blink.refresh())
+            if refreshed:
+                # What _armed_state needs to know: Blink was asked for its
+                # state after this moment, and answered.
+                self._last_refresh_started = started
+            return refreshed
         except Exception as exc:
             _LOGGER.warning("Could not refresh camera state from Blink: %s", exc)
             if isinstance(exc, AUTH_FATAL_EXCEPTIONS):
@@ -621,6 +787,7 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         blink.sync = old_sync
         blink.cameras = old_cameras
         self._topology_fallback_cameras = None
+        self._topology_fallback_sync = None
         blink.available = old_available
 
     def _retain_unavailable_sync_cameras(self, blink: Any, old_sync: Any) -> None:
@@ -809,6 +976,7 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         old_sync_names = tuple(str(name) for name in old_sync)
         old_camera_names = tuple(str(name) for name in old_cameras)
         self._topology_fallback_cameras = old_cameras
+        self._topology_fallback_sync = old_sync
 
         if not await self._rebuild_topology(
             blink, setup_post_verify, old_sync, old_cameras, old_available, now
@@ -816,6 +984,7 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
             return False
 
         self._topology_fallback_cameras = None
+        self._topology_fallback_sync = None
         self._last_topology_refresh = time.monotonic()
         new_sync_names = tuple(str(name) for name in blink.sync)
         new_camera_names = tuple(str(name) for name in blink.cameras)

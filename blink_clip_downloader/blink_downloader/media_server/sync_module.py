@@ -2,12 +2,19 @@
 
 Both the whole system and one camera at a time, through narrow callables
 the downloader supplies, so this module never touches blinkpy directly.
+
+The route says *which* by name, since that is what Home Assistant's
+generated YAML has. The tab also sends the ids it was shown
+(``network_id``, ``camera_id`` in the body): a name changes when the camera
+is renamed and two sync modules can hold cameras with the same name, an id
+does neither.
 """
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
+from typing import Any
 
 from aiohttp import web
 
@@ -56,20 +63,29 @@ class SyncModuleRoutesMixin(_MediaServerBase):
         request: web.Request,
         match_key: str,
         label: str,
-        arm_fn: Callable[[str, bool], Awaitable[bool | None]] | None,
+        arm_fn: Callable[..., Awaitable[bool | None]] | None,
+        identifiers: tuple[str, ...],
     ) -> web.Response:
         """Shared body for _handle_sync_module_arm/_handle_sync_module_camera_arm.
 
         *match_key* is the route's match_info key ("name" for a sync
         module, "camera" for a camera); *label* is the noun used in the
-        404 message.
+        404 message; *identifiers* are the optional body fields that name
+        the target by something other than its name, passed on to *arm_fn*
+        as keyword arguments when present.
         """
         name = request.match_info[match_key]
         body = await _json_object(request)
-        armed = bool(body.get("armed"))
+        armed = body.get("armed")
+        # Not bool(...): a body without "armed", or with a typo in it, used
+        # to mean disarm, and the string "false" meant arm.
+        if not isinstance(armed, bool):
+            raise web.HTTPBadRequest(text='"armed" must be true or false')
+        hints = {key: _identifier(body, key) for key in identifiers}
+        hints = {key: value for key, value in hints.items() if value is not None}
         if arm_fn is None:
             raise web.HTTPServiceUnavailable(text=_SYNC_MODULES_NOT_AVAILABLE)
-        result = await arm_fn(name, armed)
+        result = await arm_fn(name, armed, **hints)
         if result is None:
             raise web.HTTPNotFound(text=f'{label} "{name}" not found')
         if not result:
@@ -80,12 +96,30 @@ class SyncModuleRoutesMixin(_MediaServerBase):
 
     async def _handle_sync_module_arm(self, request: web.Request) -> web.Response:
         return await self._handle_arm_request(
-            request, "name", "Sync module", self._arm_sync_module
+            request, "name", "Sync module", self._arm_sync_module, ("network_id",)
         )
 
     async def _handle_sync_module_camera_arm(
         self, request: web.Request
     ) -> web.Response:
         return await self._handle_arm_request(
-            request, "camera", "Camera", self._arm_camera
+            request,
+            "camera",
+            "Camera",
+            self._arm_camera,
+            ("camera_id", "network_id"),
         )
+
+
+def _identifier(body: dict[str, Any], key: str) -> str | None:
+    """An optional id from the request body, as the string blinkpy compares.
+
+    Absent or empty means "not given". Anything that is not a string or a
+    number is a malformed request rather than an id nothing matches.
+    """
+    value = body.get(key)
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool) or not isinstance(value, str | int):
+        raise web.HTTPBadRequest(text=f'"{key}" must be a string or a number')
+    return str(value)
