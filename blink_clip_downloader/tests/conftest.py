@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import io
 import json
@@ -10,10 +11,12 @@ import pkgutil
 import sys
 import tempfile
 import types
-from collections.abc import AsyncGenerator, Iterator
+from collections.abc import AsyncGenerator, Callable, Generator, Iterator
+from contextlib import AbstractContextManager, contextmanager
 from functools import cache
 from pathlib import Path, PurePath, PurePosixPath
 from typing import Any
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -258,6 +261,49 @@ def options_file(tmp_path: Path) -> Path:
     f = tmp_path / "options.json"
     f.write_text(json.dumps(opts))
     return f
+
+
+@pytest.fixture
+def hold_back_task() -> Iterator[Callable[[str], AbstractContextManager[list[Any]]]]:
+    """Catch one named background coroutine instead of starting it.
+
+    ``with hold_back_task("_run_install") as held:`` makes a handler's
+    ``asyncio.create_task(_run_install())`` hand the coroutine to ``held``
+    rather than schedule it, so a test can await it itself, once, with the
+    things it touches faked. Every *other* ``create_task`` still runs for
+    real, and that is the point of naming the coroutine: aiohttp 3.14 on
+    Python 3.14 starts a connection's and a request's handler through the
+    public ``asyncio.create_task`` (with ``eager_start=True``), so a patch
+    that replaces it wholesale swallows the server's own handler and the
+    request never answers. It passed on 3.13 for exactly that reason and
+    hung for aiohttp's five-minute client timeout on 3.14.
+
+    Leaving the block without having caught exactly one coroutine fails the
+    test — a renamed function would otherwise let the real task start, and
+    for the moondream install that is a real ``pip3 install``. A coroutine
+    nobody awaited is closed at teardown so it cannot warn about itself.
+    """
+    every: list[Any] = []
+
+    @contextmanager
+    def hold(name: str) -> Generator[list[Any]]:
+        real_create_task = asyncio.create_task
+        held: list[Any] = []
+
+        def create_task(coro: Any, *args: Any, **kwargs: Any) -> Any:
+            if getattr(coro, "__name__", None) != name:
+                return real_create_task(coro, *args, **kwargs)
+            held.append(coro)
+            every.append(coro)
+            return MagicMock(spec=asyncio.Task)
+
+        with patch("asyncio.create_task", create_task):
+            yield held
+        assert len(held) == 1, f"expected one {name!r} task to be created: {held}"
+
+    yield hold
+    for coro in every:
+        coro.close()
 
 
 @pytest.fixture

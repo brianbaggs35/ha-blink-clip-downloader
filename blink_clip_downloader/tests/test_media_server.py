@@ -7,7 +7,7 @@ import contextlib
 import json
 import logging
 import sys
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -50,6 +50,10 @@ from blink_downloader.security import (
 )
 from blink_downloader.vision import FaceEmbedder
 from blink_downloader.vision.faces import DetectedFace
+
+# The conftest ``hold_back_task`` fixture: ``hold(name)`` catches the one
+# background coroutine called ``name`` and lets every other task run.
+HoldBackTask = Callable[[str], contextlib.AbstractContextManager[list[Any]]]
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -1911,10 +1915,8 @@ async def test_moondream_install_status_returns_json(client: TestClient) -> None
 
 
 async def test_moondream_install_returns_installing_or_already_installed(
-    client: TestClient,
+    client: TestClient, hold_back_task: HoldBackTask
 ) -> None:
-    from unittest.mock import patch
-
     from blink_downloader.media_server import ai as ms
 
     # Reset state
@@ -1929,7 +1931,7 @@ async def test_moondream_install_returns_installing_or_already_installed(
             "blink_downloader.media_server.ai._is_moondream_installed",
             return_value=False,
         ),
-        patch("asyncio.create_task", side_effect=lambda coro: coro.close()),
+        hold_back_task("_run_install"),
     ):
         resp = await client.post("/api/ai/moondream/install")
 
@@ -1940,6 +1942,7 @@ async def test_moondream_install_returns_installing_or_already_installed(
 
 async def test_moondream_install_logs_a_packages_dir_it_cannot_create(
     client: TestClient,
+    hold_back_task: HoldBackTask,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
@@ -1965,7 +1968,7 @@ async def test_moondream_install_logs_a_packages_dir_it_cannot_create(
             "blink_downloader.media_server.ai._MOONDREAM_PACKAGES_DIR",
             not_a_dir / "moondream_packages",
         ),
-        patch("asyncio.create_task", side_effect=lambda coro: coro.close()),
+        hold_back_task("_run_install"),
         caplog.at_level("WARNING"),
     ):
         resp = await client.post("/api/ai/moondream/install")
@@ -4063,7 +4066,10 @@ async def test_moondream_install_unsupported_arch(client: TestClient) -> None:
 
 
 async def test_moondream_run_install_success(
-    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    client: TestClient,
+    hold_back_task: HoldBackTask,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Exercises the background _run_install() coroutine's success branch."""
     from blink_downloader.media_server import ai as ms
@@ -4074,11 +4080,6 @@ async def test_moondream_run_install_success(
     # teardown regardless of what got inserted into the copy.
     monkeypatch.setattr(sys, "path", list(sys.path))
     fake_pkg_dir = tmp_path / "moondream_packages"
-    captured: list = []
-
-    def _capture(coro):
-        captured.append(coro)
-        return MagicMock()
 
     mock_proc = MagicMock()
     mock_proc.returncode = 0
@@ -4091,7 +4092,7 @@ async def test_moondream_run_install_success(
             "blink_downloader.media_server.ai._is_moondream_installed",
             return_value=False,
         ),
-        patch("asyncio.create_task", side_effect=_capture),
+        hold_back_task("_run_install") as captured,
     ):
         resp = await client.post("/api/ai/moondream/install")
     assert resp.status == 200
@@ -4110,7 +4111,10 @@ async def test_moondream_run_install_success(
 
 
 async def test_moondream_run_install_success_leaves_existing_sys_path_alone(
-    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    client: TestClient,
+    hold_back_task: HoldBackTask,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Installing over an install that this process already imported from
     (a re-install, or a second click) must not stack another copy of the
@@ -4129,7 +4133,6 @@ async def test_moondream_run_install_success_leaves_existing_sys_path_alone(
     # this test set up rather than at the ambient interpreter's.
     fake_sys_path = [str(fake_pkg_dir), *sys.path]
     monkeypatch.setattr(sys, "path", fake_sys_path)
-    captured: list = []
 
     mock_proc = MagicMock()
     mock_proc.returncode = 0
@@ -4140,10 +4143,7 @@ async def test_moondream_run_install_success_leaves_existing_sys_path_alone(
             "blink_downloader.media_server.ai._is_moondream_installed",
             return_value=False,
         ),
-        patch(
-            "asyncio.create_task",
-            side_effect=lambda coro, **_k: captured.append(coro) or MagicMock(),
-        ),
+        hold_back_task("_run_install") as captured,
     ):
         resp = await client.post("/api/ai/moondream/install")
     assert resp.status == 200
@@ -4158,16 +4158,11 @@ async def test_moondream_run_install_success_leaves_existing_sys_path_alone(
 
 
 async def test_moondream_run_install_failure_nonzero_returncode(
-    client: TestClient,
+    client: TestClient, hold_back_task: HoldBackTask
 ) -> None:
     from blink_downloader.media_server import ai as ms
 
     ms._moondream_install_state = {"status": "idle", "log": ""}
-    captured: list = []
-
-    def _capture(coro):
-        captured.append(coro)
-        return MagicMock()
 
     mock_proc = MagicMock()
     mock_proc.returncode = 1
@@ -4178,7 +4173,7 @@ async def test_moondream_run_install_failure_nonzero_returncode(
             "blink_downloader.media_server.ai._is_moondream_installed",
             return_value=False,
         ),
-        patch("asyncio.create_task", side_effect=_capture),
+        hold_back_task("_run_install") as captured,
     ):
         resp = await client.post("/api/ai/moondream/install")
     assert resp.status == 200
@@ -4190,22 +4185,19 @@ async def test_moondream_run_install_failure_nonzero_returncode(
     ms._moondream_install_state = {"status": "idle", "log": ""}
 
 
-async def test_moondream_run_install_timeout(client: TestClient) -> None:
+async def test_moondream_run_install_timeout(
+    client: TestClient, hold_back_task: HoldBackTask
+) -> None:
     from blink_downloader.media_server import ai as ms
 
     ms._moondream_install_state = {"status": "idle", "log": ""}
-    captured: list = []
-
-    def _capture(coro):
-        captured.append(coro)
-        return MagicMock()
 
     with (
         patch(
             "blink_downloader.media_server.ai._is_moondream_installed",
             return_value=False,
         ),
-        patch("asyncio.create_task", side_effect=_capture),
+        hold_back_task("_run_install") as captured,
     ):
         resp = await client.post("/api/ai/moondream/install")
     assert resp.status == 200
@@ -4222,22 +4214,19 @@ async def test_moondream_run_install_timeout(client: TestClient) -> None:
     ms._moondream_install_state = {"status": "idle", "log": ""}
 
 
-async def test_moondream_run_install_generic_exception(client: TestClient) -> None:
+async def test_moondream_run_install_generic_exception(
+    client: TestClient, hold_back_task: HoldBackTask
+) -> None:
     from blink_downloader.media_server import ai as ms
 
     ms._moondream_install_state = {"status": "idle", "log": ""}
-    captured: list = []
-
-    def _capture(coro):
-        captured.append(coro)
-        return MagicMock()
 
     with (
         patch(
             "blink_downloader.media_server.ai._is_moondream_installed",
             return_value=False,
         ),
-        patch("asyncio.create_task", side_effect=_capture),
+        hold_back_task("_run_install") as captured,
     ):
         resp = await client.post("/api/ai/moondream/install")
     assert resp.status == 200
@@ -7929,7 +7918,9 @@ async def test_gdrive_connect_device_flow_failure_returns_502(
 
 
 async def test_gdrive_connect_starts_device_flow(
-    db: ClipDatabase, monkeypatch: pytest.MonkeyPatch
+    db: ClipDatabase,
+    hold_back_task: HoldBackTask,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
         media_server_storage, "_gdrive_connect_state", {"phase": "idle"}
@@ -7944,12 +7935,8 @@ async def test_gdrive_connect_starts_device_flow(
     gdrive_client = _make_gdrive_client_mock(is_configured=True, device_flow_info=info)
     server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
     tc = await _start_server(server)
-    captured: list = []
     try:
-        with patch(
-            "asyncio.create_task",
-            side_effect=lambda coro, **_k: captured.append(coro) or MagicMock(),
-        ):
+        with hold_back_task("_poll_for_token") as captured:
             resp = await tc.post("/api/storage/gdrive/connect")
         assert resp.status == 200
         data = await resp.json()
@@ -7995,7 +7982,9 @@ async def test_gdrive_connect_returns_existing_state_when_already_pending(
 
 
 async def test_gdrive_connect_poll_success_sets_connected_state(
-    db: ClipDatabase, monkeypatch: pytest.MonkeyPatch
+    db: ClipDatabase,
+    hold_back_task: HoldBackTask,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
         media_server_storage, "_gdrive_connect_state", {"phase": "idle"}
@@ -8015,12 +8004,8 @@ async def test_gdrive_connect_poll_success_sets_connected_state(
     )
     server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
     tc = await _start_server(server)
-    captured: list = []
     try:
-        with patch(
-            "asyncio.create_task",
-            side_effect=lambda coro, **_k: captured.append(coro) or MagicMock(),
-        ):
+        with hold_back_task("_poll_for_token") as captured:
             await tc.post("/api/storage/gdrive/connect")
         with patch("asyncio.sleep", AsyncMock()):
             await captured[0]
@@ -8033,7 +8018,9 @@ async def test_gdrive_connect_poll_success_sets_connected_state(
 
 
 async def test_gdrive_connect_poll_denied_sets_error_state(
-    db: ClipDatabase, monkeypatch: pytest.MonkeyPatch
+    db: ClipDatabase,
+    hold_back_task: HoldBackTask,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
         media_server_storage, "_gdrive_connect_state", {"phase": "idle"}
@@ -8051,12 +8038,8 @@ async def test_gdrive_connect_poll_denied_sets_error_state(
     )
     server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
     tc = await _start_server(server)
-    captured: list = []
     try:
-        with patch(
-            "asyncio.create_task",
-            side_effect=lambda coro, **_k: captured.append(coro) or MagicMock(),
-        ):
+        with hold_back_task("_poll_for_token") as captured:
             await tc.post("/api/storage/gdrive/connect")
         with patch("asyncio.sleep", AsyncMock()):
             await captured[0]
@@ -8066,7 +8049,9 @@ async def test_gdrive_connect_poll_denied_sets_error_state(
 
 
 async def test_gdrive_connect_poll_generic_error_sets_error_state(
-    db: ClipDatabase, monkeypatch: pytest.MonkeyPatch
+    db: ClipDatabase,
+    hold_back_task: HoldBackTask,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
         media_server_storage, "_gdrive_connect_state", {"phase": "idle"}
@@ -8084,12 +8069,8 @@ async def test_gdrive_connect_poll_generic_error_sets_error_state(
     )
     server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
     tc = await _start_server(server)
-    captured: list = []
     try:
-        with patch(
-            "asyncio.create_task",
-            side_effect=lambda coro, **_k: captured.append(coro) or MagicMock(),
-        ):
+        with hold_back_task("_poll_for_token") as captured:
             await tc.post("/api/storage/gdrive/connect")
         with patch("asyncio.sleep", AsyncMock()):
             await captured[0]
@@ -8102,7 +8083,9 @@ async def test_gdrive_connect_poll_generic_error_sets_error_state(
 
 
 async def test_gdrive_connect_poll_slow_down_then_success(
-    db: ClipDatabase, monkeypatch: pytest.MonkeyPatch
+    db: ClipDatabase,
+    hold_back_task: HoldBackTask,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A slow_down response must not end the poll loop — it keeps polling
     (at a backed-off interval) until a terminal outcome."""
@@ -8125,12 +8108,8 @@ async def test_gdrive_connect_poll_slow_down_then_success(
     )
     server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
     tc = await _start_server(server)
-    captured: list = []
     try:
-        with patch(
-            "asyncio.create_task",
-            side_effect=lambda coro, **_k: captured.append(coro) or MagicMock(),
-        ):
+        with hold_back_task("_poll_for_token") as captured:
             await tc.post("/api/storage/gdrive/connect")
         with patch("asyncio.sleep", AsyncMock()):
             await captured[0]
@@ -8141,7 +8120,9 @@ async def test_gdrive_connect_poll_slow_down_then_success(
 
 
 async def test_gdrive_connect_poll_pending_then_success(
-    db: ClipDatabase, monkeypatch: pytest.MonkeyPatch
+    db: ClipDatabase,
+    hold_back_task: HoldBackTask,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A pending result is the ordinary answer for every tick before the
     user finishes signing in — the one status that falls through every
@@ -8166,12 +8147,8 @@ async def test_gdrive_connect_poll_pending_then_success(
     )
     server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
     tc = await _start_server(server)
-    captured: list = []
     try:
-        with patch(
-            "asyncio.create_task",
-            side_effect=lambda coro, **_k: captured.append(coro) or MagicMock(),
-        ):
+        with hold_back_task("_poll_for_token") as captured:
             await tc.post("/api/storage/gdrive/connect")
         with patch("asyncio.sleep", AsyncMock()) as sleep_mock:
             await captured[0]
@@ -8184,7 +8161,9 @@ async def test_gdrive_connect_poll_pending_then_success(
 
 
 async def test_gdrive_connect_poll_gives_up_after_deadline_with_no_terminal_result(
-    db: ClipDatabase, monkeypatch: pytest.MonkeyPatch
+    db: ClipDatabase,
+    hold_back_task: HoldBackTask,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """If the deadline is already passed before the loop's first check (a
     code_code that expired faster than expected, or a slow first tick), the
@@ -8202,12 +8181,8 @@ async def test_gdrive_connect_poll_gives_up_after_deadline_with_no_terminal_resu
     gdrive_client = _make_gdrive_client_mock(is_configured=True, device_flow_info=info)
     server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
     tc = await _start_server(server)
-    captured: list = []
     try:
-        with patch(
-            "asyncio.create_task",
-            side_effect=lambda coro, **_k: captured.append(coro) or MagicMock(),
-        ):
+        with hold_back_task("_poll_for_token") as captured:
             await tc.post("/api/storage/gdrive/connect")
         # First call computes deadline = 0 + 1800; second call (the while
         # condition) sees 99999, which is already past it — the loop body
