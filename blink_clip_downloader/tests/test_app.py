@@ -140,6 +140,48 @@ async def test_camera_rename_updates_ai_filters_and_event_watcher(app, tmp_path)
     app._event_watcher.rename_camera.assert_called_once_with("Front Door", "Entryway")
 
 
+async def test_camera_rename_drops_a_stale_alias_for_the_name_it_takes(app, tmp_path):
+    """A camera renamed into a name an older rename once left behind must not
+    stay shadowed by that alias.
+
+    "Garage" was renamed to "Driveway" some time ago, so ``Garage -> Driveway``
+    is on disk. When another camera is now renamed *to* "Garage", that alias
+    would send its settings to the Driveway camera on every save, so the
+    rename drops it. Aliases that still describe a real rename stay.
+    """
+    app._db.rename_camera = AsyncMock(return_value=True)
+    app._media_server.rename_camera = AsyncMock()
+    app._analyzer = None
+    app._camera_name_aliases = {"Garage": "Driveway", "Legacy Door": "Front Door"}
+    alias_file = tmp_path / "camera_name_aliases.json"
+
+    with patch("blink_downloader.app.CAMERA_NAME_ALIASES_FILE", alias_file):
+        await app._handle_camera_renamed("Shed", "garage")
+
+    expected = {"Legacy Door": "Front Door", "Shed": "garage"}
+    assert app._camera_name_aliases == expected
+    assert json.loads(alias_file.read_text()) == expected
+
+
+async def test_camera_rename_that_only_changes_capitalisation_keeps_its_alias(
+    app, tmp_path
+):
+    """The alias for a case-only rename is recorded after the stale one is
+    dropped, not removed along with it."""
+    app._db.rename_camera = AsyncMock(return_value=True)
+    app._media_server.rename_camera = AsyncMock()
+    app._analyzer = None
+    app._camera_name_aliases = {}
+
+    with patch(
+        "blink_downloader.app.CAMERA_NAME_ALIASES_FILE",
+        tmp_path / "camera_name_aliases.json",
+    ):
+        await app._handle_camera_renamed("Front door", "Front Door")
+
+    assert app._camera_name_aliases == {"Front door": "Front Door"}
+
+
 async def test_camera_rename_skips_event_watcher_when_not_yet_constructed(
     app, tmp_path
 ):
@@ -613,6 +655,29 @@ async def test_on_clips_downloaded_still_analyzes_enabled_camera_when_another_is
     await app._on_clips_downloaded(clips)
 
     app._analysis_queue.enqueue.assert_awaited_once_with(clips[1])
+
+
+async def test_on_clips_downloaded_skips_disabled_camera_whatever_its_capitalisation(
+    app,
+):
+    """A setting saved as "Front door" holds for a clip Blink names "Front
+    Door" -- compared exactly, the switch silently did nothing."""
+    app._analysis_queue = MagicMock()
+    app._analysis_queue.enqueue = AsyncMock()
+    app._auto_analysis_disabled_cameras = {"Front door"}
+    clips = [
+        {
+            "id": "1",
+            "camera": "Front Door",
+            "path": "/p",
+            "timestamp": "t",
+            "size_bytes": 5,
+        }
+    ]
+
+    await app._on_clips_downloaded(clips)
+
+    app._analysis_queue.enqueue.assert_not_awaited()
 
 
 def test_set_auto_analysis_disabled_cameras_replaces_the_runtime_set(app):

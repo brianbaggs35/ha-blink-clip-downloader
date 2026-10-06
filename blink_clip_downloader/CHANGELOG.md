@@ -76,6 +76,41 @@ mocks.
   string `"false"` meant *arm*. Anything else is a 400. The YAML the
   Automations tab generates already sends real booleans.
 
+### Camera settings: automatic analysis no longer switches itself back on
+
+Turning automatic AI analysis off for one camera, saving, and coming back to
+find it on again. Renaming cameras was the common thread: each cause below is
+a setting that was saved correctly and then looked for under a different name
+than it was saved under, so the camera showed its defaults. Nothing about the
+AI Analysis Configuration dialog itself was wrong.
+
+- **A camera that takes over an old camera's name keeps its own settings.**
+  Renaming "Garage" to "Driveway" leaves a note that "Garage" now means
+  "Driveway". When another camera later became "Garage" (renamed into the name,
+  or added under it), every save moved that camera's settings onto the
+  Driveway camera, so the switch you flipped for one camera landed on the
+  other and the right one never kept it. A name a camera carries now is never
+  redirected, and renaming a camera into a name retires the old note for it.
+  Notes already saved by earlier versions are handled too.
+- **A rename that only changes capitals no longer deletes the camera's
+  settings.** Renaming "Front door" to "Front Door" removed that camera's
+  whole entry from the saved camera settings: its description, custom prompt,
+  car-camera setting, car zone and the automatic-analysis switch all went back
+  to their defaults.
+- **Capitals no longer hide a saved setting.** The clip library, the saved
+  settings and Blink can each spell a camera differently ("Front door" and
+  "Front Door"), and settings were looked up by exact spelling. The camera then
+  showed its defaults, with automatic analysis on, and could be listed twice.
+  Cameras are now matched regardless of capitals and shown under the spelling
+  Blink uses. The same applies when you save or clear a vehicle zone (which
+  used to add a second entry with automatic analysis back on) and when a new
+  clip is checked against the cameras you switched off.
+- **Renaming onto a camera that already has settings keeps what you chose.**
+  When Blink renames a camera to a name that already has a settings entry, the
+  two are merged, and an entry that was only at its defaults used to win:
+  automatic analysis turned off, or a camera marked as seeing the protected
+  vehicle, was lost. Either one stays on the merged camera.
+
 ## 6.0.10
 
 ### Bug fixes
