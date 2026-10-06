@@ -129,7 +129,7 @@ class VehicleRoutesMixin(CameraConfigsRoutesMixin):
 
         async with self._camera_configs_lock:
             configs = self._read_camera_configs()
-            entry = next((c for c in configs if c.get("camera") == camera), None)
+            entry = self._find_camera_config(configs, camera)
             if entry is None:
                 entry = {
                     "camera": camera,
@@ -183,7 +183,7 @@ class VehicleRoutesMixin(CameraConfigsRoutesMixin):
         camera = request.match_info["camera"]
         async with self._camera_configs_lock:
             configs = self._read_camera_configs()
-            entry = next((c for c in configs if c.get("camera") == camera), None)
+            entry = self._find_camera_config(configs, camera)
             if entry is not None:
                 entry["car_zone"] = None
                 # Applied before the write attempt, not after: a failure to
