@@ -2216,6 +2216,336 @@ async def test_ai_camera_configs_get_includes_live_camera_with_no_clips_or_confi
     assert fresh["auto_analyze"] is True
 
 
+# ---------------------------------------------------------------------------
+# Camera settings that must hold across renames and spelling differences.
+# Reported as "I turned automatic AI analysis off for one camera, saved, and
+# when I came back it was on again" -- each test below is one way a saved
+# setting was found under a different name than it was saved under.
+# ---------------------------------------------------------------------------
+
+
+def _camera_entry(camera: str, **overrides: Any) -> dict[str, Any]:
+    return {
+        "camera": camera,
+        "description": "",
+        "custom_prompt": "",
+        "is_car_camera": False,
+        "car_zone": None,
+        "auto_analyze": True,
+        **overrides,
+    }
+
+
+@contextlib.asynccontextmanager
+async def _camera_configs_client(
+    db: ClipDatabase,
+    tmp_path: Path,
+    *,
+    live: list[str] | None = None,
+    configs: list[dict[str, Any]] | None = None,
+    aliases: dict[str, str] | None = None,
+    **server_kwargs: Any,
+) -> AsyncGenerator[tuple[TestClient, MediaServer, Path]]:
+    """A test client whose camera configs / aliases files live in *tmp_path*."""
+    cfg_file = tmp_path / "camera_configs.json"
+    if configs is not None:
+        cfg_file.write_text(json.dumps(configs))
+    alias_file = tmp_path / "camera_name_aliases.json"
+    if aliases is not None:
+        alias_file.write_text(json.dumps(aliases))
+    server = MediaServer(
+        db=db,
+        port=0,
+        list_camera_names=(lambda: list(live)) if live is not None else None,
+        **server_kwargs,
+    )
+    with (
+        patch.object(server, "_CAMERA_CONFIGS_FILE", cfg_file),
+        patch.object(server, "_CAMERA_NAME_ALIASES_FILE", alias_file),
+    ):
+        tc = TestClient(TestServer(server._build_app()))
+        await tc.start_server()
+        try:
+            yield tc, server, cfg_file
+        finally:
+            await tc.close()
+
+
+async def _switch_automatic_analysis(
+    tc: TestClient, camera: str, enabled: bool
+) -> dict[str, bool]:
+    """What the AI Analysis Configuration modal does -- read the list, flip one
+    camera, save it back with the revision it read -- then read it again."""
+    got = await tc.get("/api/ai/camera-configs")
+    latest = await got.json()
+    payload = [
+        {**c, "auto_analyze": enabled if c["camera"] == camera else c["auto_analyze"]}
+        for c in latest
+    ]
+    saved = await tc.put(
+        "/api/ai/camera-configs",
+        json=payload,
+        headers={"If-Match": got.headers["ETag"]},
+    )
+    assert saved.status == 200, await saved.text()
+    reread = await tc.get("/api/ai/camera-configs")
+    return {c["camera"]: c["auto_analyze"] for c in await reread.json()}
+
+
+async def test_turning_automatic_analysis_off_for_one_camera_sticks(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    await db.add_clip(_make_clip("c1", camera="Front Door"))
+    await db.add_clip(_make_clip("c2", camera="Backyard"))
+    disabled: list[set[str]] = []
+
+    async with _camera_configs_client(
+        db,
+        tmp_path,
+        live=["Front Door", "Backyard"],
+        update_auto_analysis_cameras=disabled.append,
+    ) as (tc, _server, cfg_file):
+        state = await _switch_automatic_analysis(tc, "Backyard", False)
+        # ...and still off on every later visit, until it is turned on again.
+        again = await (await tc.get("/api/ai/camera-configs")).json()
+        back_on = await _switch_automatic_analysis(tc, "Backyard", True)
+
+    assert state == {"Front Door": True, "Backyard": False}
+    assert {c["camera"]: c["auto_analyze"] for c in again} == state
+    assert back_on == {"Front Door": True, "Backyard": True}
+    assert disabled == [{"Backyard"}, set()]
+    assert json.loads(cfg_file.read_text())[1]["auto_analyze"] is True
+
+
+async def test_camera_config_is_found_when_clip_history_spells_the_name_differently(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """The clip history reports one spelling per camera (``MIN(camera)`` of
+    every spelling it holds), the saved entry and Blink may each use another.
+    Looking the entry up by exact spelling missed it, so the camera showed
+    the defaults -- automatic analysis back on -- and the entry reappeared as
+    a second row of the same camera."""
+    await db.add_clip(_make_clip("c1", camera="Front door"))
+    configs = [_camera_entry("Front Door", description="Entry", auto_analyze=False)]
+
+    async with _camera_configs_client(
+        db, tmp_path, live=["Front Door"], configs=configs
+    ) as (tc, _server, _cfg):
+        data = await (await tc.get("/api/ai/camera-configs")).json()
+
+    assert [c["camera"] for c in data] == ["Front Door"]
+    assert data[0]["description"] == "Entry"
+    assert data[0]["auto_analyze"] is False
+
+
+async def test_camera_config_with_no_clips_is_one_row_under_blinks_spelling(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """A saved entry for a camera without clips, spelled differently from
+    Blink's name, is that camera -- not a second row, and not lost."""
+    configs = [_camera_entry("front door", auto_analyze=False)]
+
+    async with _camera_configs_client(
+        db, tmp_path, live=["Front Door"], configs=configs
+    ) as (tc, _server, _cfg):
+        data = await (await tc.get("/api/ai/camera-configs")).json()
+
+    assert [(c["camera"], c["auto_analyze"]) for c in data] == [("Front Door", False)]
+
+
+async def test_turning_automatic_analysis_off_sticks_for_a_camera_that_reuses_a_renamed_name(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """ "Garage" was renamed to "Driveway" once, so ``Garage -> Driveway`` is
+    still on disk; another camera is now called "Garage". Saving rewrote its
+    entry onto Driveway -- where the last one in the list won -- so the switch
+    flipped the wrong camera and the right one never kept it."""
+    await db.add_clip(_make_clip("c1", camera="Driveway"))
+    await db.add_clip(_make_clip("c2", camera="Garage"))
+
+    async with _camera_configs_client(
+        db, tmp_path, live=["Driveway", "Garage"], aliases={"Garage": "Driveway"}
+    ) as (tc, _server, cfg_file):
+        state = await _switch_automatic_analysis(tc, "Garage", False)
+
+    assert state == {"Driveway": True, "Garage": False}
+    assert {c["camera"] for c in json.loads(cfg_file.read_text())} == {
+        "Driveway",
+        "Garage",
+    }
+
+
+async def test_a_camera_name_that_is_live_again_is_not_an_alias(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """The aliases the tab is told about are only the ones still standing for
+    a rename; one whose old name a camera carries again is left out."""
+    aliases = {"Garage": "Driveway", "Porch": "Front Door"}
+
+    async with _camera_configs_client(
+        db, tmp_path, live=["Driveway", "Garage", "Front Door"], aliases=aliases
+    ) as (tc, server, _cfg):
+        resp = await tc.get("/api/ai/camera-configs")
+        header = json.loads(resp.headers["X-Camera-Aliases"])
+        effective = server._effective_camera_aliases()
+
+    assert header == {"porch": "Front Door"}
+    assert effective == {"porch": "Front Door"}
+
+
+async def test_every_alias_applies_before_blink_has_reported_its_cameras(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """No camera list yet is a startup window, not "no cameras": a stale
+    alias cannot be told from a live one, so aliases apply as they always
+    did rather than silently ceasing to."""
+    async with _camera_configs_client(
+        db, tmp_path, live=[], aliases={"Front Door": "Entryway"}
+    ) as (_tc, server, _cfg):
+        assert server._effective_camera_aliases() == {"front door": "Entryway"}
+
+    no_provider = MediaServer(db=db, port=0)
+    alias_file = tmp_path / "camera_name_aliases.json"
+    with patch.object(no_provider, "_CAMERA_NAME_ALIASES_FILE", alias_file):
+        assert no_provider._effective_camera_aliases() == {"front door": "Entryway"}
+
+
+async def test_a_save_from_a_stale_name_still_follows_its_rename(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """A page still holding the camera's old name saves it under the new one
+    when nothing carries the old name any more."""
+    await db.add_clip(_make_clip("c1", camera="Entryway"))
+    payload = [_camera_entry("Front Door", auto_analyze=False)]
+
+    async with _camera_configs_client(
+        db, tmp_path, live=["Entryway"], aliases={"Front Door": "Entryway"}
+    ) as (tc, _server, cfg_file):
+        resp = await tc.put("/api/ai/camera-configs", json=payload)
+        assert resp.status == 200
+
+    saved = json.loads(cfg_file.read_text())
+    assert [(c["camera"], c["auto_analyze"]) for c in saved] == [("Entryway", False)]
+
+
+async def test_rename_that_only_changes_capitalisation_keeps_the_camera_settings(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """ "Front door" -> "Front Door" is the entry already named new_name, and
+    migrating it merged it into itself and dropped it: its description, car
+    zone and automatic-analysis switch were gone from the file (and from the
+    running analyzer) after a rename that changed no letters."""
+    disabled: list[set[str]] = []
+    configs = [
+        _camera_entry("Other"),
+        _camera_entry(
+            "Front door", description="Entry", is_car_camera=True, auto_analyze=False
+        ),
+    ]
+
+    async with _camera_configs_client(
+        db,
+        tmp_path,
+        live=["Other", "Front Door"],
+        configs=configs,
+        update_auto_analysis_cameras=disabled.append,
+    ) as (_tc, server, cfg_file):
+        await server.rename_camera("Front door", "Front Door")
+
+    saved = json.loads(cfg_file.read_text())
+    assert [c["camera"] for c in saved] == ["Other", "Front Door"]
+    assert saved[1]["description"] == "Entry"
+    assert saved[1]["is_car_camera"] is True
+    assert saved[1]["auto_analyze"] is False
+    assert disabled == [{"Front Door"}]
+
+
+async def test_rename_that_only_changes_capitalisation_folds_duplicate_entries(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    configs = [
+        _camera_entry("Front door", description="Kept"),
+        _camera_entry("front door", description="Dropped", auto_analyze=False),
+    ]
+
+    async with _camera_configs_client(db, tmp_path, configs=configs) as (
+        _tc,
+        server,
+        cfg_file,
+    ):
+        await server.rename_camera("Front door", "Front Door")
+
+    saved = json.loads(cfg_file.read_text())
+    assert [(c["camera"], c["description"]) for c in saved] == [("Front Door", "Kept")]
+    assert saved[0]["auto_analyze"] is False
+
+
+async def test_rename_onto_an_existing_entry_keeps_what_was_switched_off_or_on(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """Renaming onto a name that already has an entry merges the two. An
+    entry that is merely at its defaults must not win: a deliberate "off"
+    for automatic analysis, or "on" for a car camera, survives."""
+    configs = [
+        _camera_entry("Entryway"),
+        _camera_entry(
+            "Front Door", description="Entry", is_car_camera=True, auto_analyze=False
+        ),
+    ]
+
+    async with _camera_configs_client(db, tmp_path, configs=configs) as (
+        _tc,
+        server,
+        cfg_file,
+    ):
+        await server.rename_camera("Front Door", "Entryway")
+
+    saved = json.loads(cfg_file.read_text())
+    assert len(saved) == 1
+    assert saved[0]["camera"] == "Entryway"
+    assert saved[0]["description"] == "Entry"
+    assert saved[0]["is_car_camera"] is True
+    assert saved[0]["auto_analyze"] is False
+
+
+def test_merge_camera_config_fields_keeps_the_target_where_it_has_a_value() -> None:
+    target = _camera_entry("A", description="Mine", auto_analyze=True)
+    source = _camera_entry("B", description="Theirs", custom_prompt="Prompt")
+
+    MediaServer._merge_camera_config_fields(target, source)
+
+    assert target["description"] == "Mine"
+    assert target["custom_prompt"] == "Prompt"
+    assert target["auto_analyze"] is True
+    assert target["is_car_camera"] is False
+
+
+def test_merge_camera_config_fields_fills_in_fields_an_entry_never_had() -> None:
+    """A hand-edited or very old entry may lack fields entirely."""
+    target: dict[str, Any] = {"camera": "A"}
+
+    MediaServer._merge_camera_config_fields(
+        target, {"camera": "B", "description": "Entry", "auto_analyze": False}
+    )
+
+    assert target == {
+        "camera": "A",
+        "description": "Entry",
+        "custom_prompt": None,
+        "car_zone": None,
+        "is_car_camera": False,
+        "auto_analyze": False,
+    }
+
+
+def test_find_camera_config_ignores_capitalisation() -> None:
+    entry = _camera_entry("Front Door")
+
+    assert MediaServer._find_camera_config([entry], "front DOOR") is entry
+    assert MediaServer._find_camera_config([entry], "Garage") is None
+    assert MediaServer._find_camera_config([{}], "Garage") is None
+
+
 async def test_rename_camera_migrates_persisted_settings(
     db: ClipDatabase, tmp_path: Path
 ) -> None:
@@ -5692,6 +6022,56 @@ async def test_vehicle_zone_put_saves_zone_snapshot_and_updates_analyzer(
             analyzer.update_car_zones.assert_called_once()
     finally:
         await tc.close()
+
+
+async def test_vehicle_zone_put_and_delete_find_the_entry_whatever_its_capitalisation(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """The picker sends the camera spelling it was shown; an entry saved
+    under another spelling is still that camera's. Not found, a second entry
+    was created with automatic analysis back on -- undoing a switch that had
+    been turned off, just by saving a zone."""
+    await db.add_clip(_make_clip_with_thumb(tmp_path, "zc"))
+    server = MediaServer(db=db, port=0)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    cfg_file = tmp_path / "camera_configs.json"
+    cfg_file.write_text(
+        json.dumps(
+            [_camera_entry("front door", description="Entry", auto_analyze=False)]
+        )
+    )
+    zone = {"shape": "rect", "x_min": 0.1, "y_min": 0.1, "x_max": 0.5, "y_max": 0.5}
+    try:
+        with (
+            patch(
+                "blink_downloader.media_server.MediaServer._CAMERA_CONFIGS_FILE",
+                new=cfg_file,
+            ),
+            patch(
+                "blink_downloader.media_server.MediaServer._VEHICLE_ZONE_SNAPSHOTS_DIR",
+                new=tmp_path / "snapshots",
+            ),
+        ):
+            put = await tc.put(
+                "/api/vehicle/zone/Front Door", json={"zone": zone, "clip_id": "zc"}
+            )
+            assert put.status == 200
+            after_put = json.loads(cfg_file.read_text())
+
+            deleted = await tc.delete("/api/vehicle/zone/FRONT DOOR")
+            assert deleted.status == 200
+            after_delete = json.loads(cfg_file.read_text())
+    finally:
+        await tc.close()
+
+    assert len(after_put) == 1
+    assert after_put[0]["car_zone"]["shape"] == "rect"
+    assert after_put[0]["description"] == "Entry"
+    assert after_put[0]["auto_analyze"] is False
+    assert len(after_delete) == 1
+    assert after_delete[0]["car_zone"] is None
+    assert after_delete[0]["auto_analyze"] is False
 
 
 async def test_vehicle_zone_put_saves_polygon_zone(

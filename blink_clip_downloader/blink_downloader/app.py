@@ -523,6 +523,16 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         """Apply automatic-analysis camera preferences without a restart."""
         self._auto_analysis_disabled_cameras = set(cameras)
 
+    def _auto_analysis_disabled_for(self, camera: str) -> bool:
+        """True when automatic analysis is switched off for *camera*.
+
+        Compared without regard to capitalisation, like every other place a
+        camera's saved settings are matched: a setting saved under
+        "Front door" has to hold for a clip Blink names "Front Door".
+        """
+        key = camera.lower()
+        return any(c.lower() == key for c in self._auto_analysis_disabled_cameras)
+
     async def _handle_camera_renamed(self, old_name: str, new_name: str) -> None:
         """Keep database, analyzer, filters, and persisted settings in sync."""
         await self._db.rename_camera(old_name, new_name)
@@ -551,6 +561,14 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         self._auto_analysis_disabled_cameras = {
             new_name if camera.lower() == old_name.lower() else camera
             for camera in self._auto_analysis_disabled_cameras
+        }
+        # new_name belongs to a real camera now, so an alias that still sent
+        # it somewhere else (the camera it once named was renamed away
+        # earlier) would carry this camera's settings onto that other one.
+        self._camera_name_aliases = {
+            alias: target
+            for alias, target in self._camera_name_aliases.items()
+            if alias.lower() != new_name.lower()
         }
         self._camera_name_aliases[old_name] = new_name
         for alias, target in self._camera_name_aliases.items():
@@ -1326,7 +1344,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             analyze
             and clip.get("source") != "liveview"
             and self._analysis_queue
-            and camera not in self._auto_analysis_disabled_cameras
+            and not self._auto_analysis_disabled_for(camera)
         ):
             await self._analysis_queue.enqueue(clip)
 

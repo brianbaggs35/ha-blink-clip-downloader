@@ -523,6 +523,24 @@ those two Vue components must round-trip the fields it doesn't own
 unchanged, or saving from one would silently clobber edits made from the
 other. The `is_car_camera` checkbox is what populates `ai_car_cameras`.
 
+**A camera is matched by name case-insensitively, everywhere.** The clip
+history (`get_camera_stats` reports `MIN(camera)` of every spelling it holds),
+`camera_configs.json` and Blink can each spell one camera differently
+("Front door" / "Front Door"); an exact-spelling lookup misses the saved entry,
+so the camera shows defaults — automatic analysis back **on** — and the entry
+comes back as a second row. `GET /api/ai/camera-configs` therefore collapses by
+lower-cased name and reports Blink's spelling; use `_find_camera_config`
+rather than `c.get("camera") == name`, and `_auto_analysis_disabled_for` rather
+than `in _auto_analysis_disabled_cameras`. Two related rules: a rename whose
+old and new names differ only in capitals makes the entry *being* renamed its
+own merge target (`_migrate_camera_configs` once dropped it from the file that
+way), and `camera_name_aliases.json` outlives the names it points away from, so
+`_effective_camera_aliases()` ignores an alias whose old name a live camera
+carries again — applying it saved that camera's settings onto the camera the
+old name became. `_merge_camera_config_fields` keeps a switched-off
+`auto_analyze` / switched-on `is_car_camera` from either entry, since a default
+has no "empty" to fill.
+
 The one car-protection setting that isn't per-camera —
 `ai_car_description` — is similarly overridable from the web UI via a
 sibling file, `/data/vehicle_settings.json`

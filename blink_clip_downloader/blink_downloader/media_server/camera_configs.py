@@ -52,47 +52,44 @@ class CameraConfigsRoutesMixin(_MediaServerBase):
         # endpoint is "configure this camera going forward" -- the AI tab's
         # Camera Configurations and the Vehicles tab. A camera that no
         # longer exists under this name has nothing to configure, no matter
-        # how much clip history it has: without this filter here too, a
-        # camera renamed *after* it had already produced clips (the common
-        # case -- e.g. "Inside" with hundreds of old clips, renamed to
-        # "Inside House") would sail straight through this cam_names list
-        # forever, since only the second loop below (configured-but-
-        # unclipped entries) previously checked the live camera list.
-        live_names = self._list_camera_names() if self._list_camera_names else []
-        live_names_lower = {str(n).lower() for n in live_names}
-        cam_names = [
-            c["camera"]
-            for c in cameras
-            if not live_names_lower or c["camera"].lower() in live_names_lower
+        # how much clip history it has: without this filter, a camera renamed
+        # *after* it had already produced clips (the common case -- e.g.
+        # "Inside" with hundreds of old clips, renamed to "Inside House")
+        # would sail straight through the clip history forever. Only
+        # filtered when there is a real, non-empty list to check against, so
+        # a startup window before Blink has connected yet (the list briefly
+        # empty) can't be misread as "every camera is gone" and hide them all.
+        live_names = [
+            str(n)
+            for n in (self._list_camera_names() if self._list_camera_names else [])
         ]
+        # A camera is one camera whatever the capitalisation: the clip
+        # history, the saved entry and Blink can each spell it differently
+        # ("Front door" / "Front Door"), and a saved setting that is looked
+        # up by exact spelling is simply not found -- the camera then shows
+        # the defaults, with automatic analysis back on. Blink's spelling is
+        # the camera's current name, so it is the one shown.
+        live_spelling = {n.lower(): n for n in live_names}
         async with self._camera_configs_lock:
             configs = self._read_camera_configs()
             revision = self._camera_configs_revision(configs)
-        # Ensure every known camera has an entry
-        configured = {c.get("camera", ""): c for c in configs}
-        result = []
-        for name in cam_names:
-            entry = configured.get(
-                name,
-                {
-                    "camera": name,
-                    "description": "",
-                    "custom_prompt": "",
-                    "is_car_camera": False,
-                    "car_zone": None,
-                    "auto_analyze": True,
-                },
-            )
-            result.append(
-                {
-                    "camera": name,
-                    "description": str(entry.get("description", "")),
-                    "custom_prompt": str(entry.get("custom_prompt", "")),
-                    "is_car_camera": bool(entry.get("is_car_camera", False)),
-                    "car_zone": self._normalize_car_zone(entry.get("car_zone")),
-                    "auto_analyze": entry.get("auto_analyze", True) is not False,
-                }
-            )
+        configured = {str(c.get("camera", "")).lower(): c for c in configs}
+
+        names: list[str] = []
+        seen: set[str] = set()
+
+        def add(name: str) -> None:
+            key = name.lower()
+            if key not in seen:
+                seen.add(key)
+                names.append(live_spelling.get(key, name))
+
+        def is_live(name: str) -> bool:
+            return not live_spelling or name.lower() in live_spelling
+
+        for camera in cameras:
+            if is_live(camera["camera"]):
+                add(camera["camera"])
         # Also include configured cameras not in the current clip list (e.g.
         # a battery-dead camera that hasn't produced a clip recently) -- but
         # only if they still exist under this name on the Blink account.
@@ -100,29 +97,10 @@ class CameraConfigsRoutesMixin(_MediaServerBase):
         # before this add-on's rename-tracking ever ran, or before it had
         # ever seen the camera at all) has nothing to migrate this entry
         # away from, so without this check it would linger here forever,
-        # looking like a real, selectable camera long after the name is
-        # gone. list_camera_names() reflects every camera *registered* to
-        # the account regardless of recent activity (unlike cam_names,
-        # which only reflects recent clips) so a merely-offline camera is
-        # unaffected -- only skip when we have a real, non-empty list to
-        # check against, so a startup window before Blink has connected
-        # yet (list_camera_names() briefly empty) can't be misread as
-        # "every configured camera is gone" and hide them all.
-        for name, entry in configured.items():
-            if name in cam_names:
-                continue
-            if live_names_lower and name.lower() not in live_names_lower:
-                continue
-            result.append(
-                {
-                    "camera": name,
-                    "description": str(entry.get("description", "")),
-                    "custom_prompt": str(entry.get("custom_prompt", "")),
-                    "is_car_camera": bool(entry.get("is_car_camera", False)),
-                    "car_zone": self._normalize_car_zone(entry.get("car_zone")),
-                    "auto_analyze": entry.get("auto_analyze", True) is not False,
-                }
-            )
+        # looking like a real, selectable camera long after the name is gone.
+        for config in configs:
+            if is_live(str(config.get("camera", ""))):
+                add(str(config.get("camera", "")))
         # Also include a live camera that has neither clip history nor a
         # saved config entry yet -- e.g. one just added to the account, or
         # one this add-on has only just started seeing clips for but hasn't
@@ -132,30 +110,35 @@ class CameraConfigsRoutesMixin(_MediaServerBase):
         # perfectly real, currently-live camera stays invisible on the AI
         # tab's Camera Configurations section, the Vehicles tab, and the AI
         # Analysis Configuration modal until its first clip happens to
-        # download -- mirrors _handle_cameras's identical union, which this
-        # function's own comments above already assumed existed here too.
-        result_names_lower = {str(r["camera"]).lower() for r in result}
+        # download -- mirrors _handle_cameras's identical union.
         for name in live_names:
-            if name.lower() in result_names_lower:
-                continue
-            result.append(
-                {
-                    "camera": name,
-                    "description": "",
-                    "custom_prompt": "",
-                    "is_car_camera": False,
-                    "car_zone": None,
-                    "auto_analyze": True,
-                }
-            )
-            result_names_lower.add(name.lower())
+            add(name)
         return web.json_response(
-            result,
+            [
+                self._camera_config_view(name, configured.get(name.lower()))
+                for name in names
+            ],
             headers={
                 "ETag": f'"{revision}"',
-                "X-Camera-Aliases": json.dumps(self._read_camera_name_aliases()),
+                "X-Camera-Aliases": json.dumps(self._effective_camera_aliases()),
             },
         )
+
+    @classmethod
+    def _camera_config_view(
+        cls, camera: str, entry: dict[str, Any] | None
+    ) -> dict[str, Any]:
+        """One camera's settings as the API reports them; defaults when it has
+        no saved entry."""
+        entry = entry or {}
+        return {
+            "camera": camera,
+            "description": str(entry.get("description", "")),
+            "custom_prompt": str(entry.get("custom_prompt", "")),
+            "is_car_camera": bool(entry.get("is_car_camera", False)),
+            "car_zone": cls._normalize_car_zone(entry.get("car_zone")),
+            "auto_analyze": entry.get("auto_analyze", True) is not False,
+        }
 
     async def _handle_ai_camera_configs_put(self, request: web.Request) -> web.Response:
         """Save per-camera AI configurations and update the live analyzer."""
@@ -169,14 +152,7 @@ class CameraConfigsRoutesMixin(_MediaServerBase):
                 # wiping every camera's settings with no error surfaced.
                 raise web.HTTPBadRequest(text=_INVALID_JSON_BODY)
             configs = [
-                {
-                    "camera": str(c["camera"]),
-                    "description": str(c.get("description", "")),
-                    "custom_prompt": str(c.get("custom_prompt", "")),
-                    "is_car_camera": bool(c.get("is_car_camera", False)),
-                    "car_zone": self._normalize_car_zone(c.get("car_zone")),
-                    "auto_analyze": c.get("auto_analyze", True) is not False,
-                }
+                self._camera_config_view(str(c["camera"]), c)
                 for c in body
                 if isinstance(c, dict) and c.get("camera")
             ]
@@ -227,15 +203,35 @@ class CameraConfigsRoutesMixin(_MediaServerBase):
     def _merge_camera_config_fields(
         target: dict[str, Any], source: dict[str, Any]
     ) -> None:
-        for field in (
-            "description",
-            "custom_prompt",
-            "is_car_camera",
-            "car_zone",
-            "auto_analyze",
-        ):
+        """Fold *source*'s settings into *target*, the entry that survives.
+
+        *target* wins wherever it has a value. The two switches have no
+        "empty" to fill in -- off for a car camera and on for automatic
+        analysis are just their defaults -- so a plain "keep what is there"
+        let a default throw away a deliberate setting. Each keeps whichever
+        side asked for the non-default: a car camera on either side stays
+        one, and automatic analysis turned off on either side stays off.
+        """
+        for field in ("description", "custom_prompt", "car_zone"):
             if field not in target or target[field] in ("", None):
                 target[field] = source.get(field)
+        target["is_car_camera"] = bool(target.get("is_car_camera")) or bool(
+            source.get("is_car_camera")
+        )
+        target["auto_analyze"] = (
+            target.get("auto_analyze", True) is not False
+            and source.get("auto_analyze", True) is not False
+        )
+
+    @staticmethod
+    def _find_camera_config(
+        configs: list[dict[str, Any]], camera: str
+    ) -> dict[str, Any] | None:
+        """The saved entry for *camera*, whatever its capitalisation."""
+        key = camera.lower()
+        return next(
+            (c for c in configs if str(c.get("camera", "")).lower() == key), None
+        )
 
     @staticmethod
     def _normalize_car_zone(zone: Any) -> dict[str, Any] | None:
@@ -283,7 +279,7 @@ class CameraConfigsRoutesMixin(_MediaServerBase):
         self, configs: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
         """Apply durable camera aliases and collapse stale duplicate entries."""
-        aliases = self._read_camera_name_aliases()
+        aliases = self._effective_camera_aliases()
 
         canonical: list[dict[str, Any]] = []
         by_name: dict[str, int] = {}
@@ -320,6 +316,24 @@ class CameraConfigsRoutesMixin(_MediaServerBase):
             if alias and target
         }
 
+    def _effective_camera_aliases(self) -> dict[str, str]:
+        """The aliases that still stand for a rename.
+
+        An alias is forever in ``camera_name_aliases.json``, but the name it
+        points away from can be taken again -- a camera renamed into it, or
+        added under it. That name is then a real camera, and rewriting its
+        settings onto the camera the old one became would save them on the
+        wrong camera and drop them from the right one. Only checked when
+        Blink has reported its cameras (an empty list is a startup window,
+        not "no cameras", so every alias applies as it always did).
+        """
+        aliases = self._read_camera_name_aliases()
+        live = {
+            str(n).lower()
+            for n in (self._list_camera_names() if self._list_camera_names else [])
+        }
+        return {alias: target for alias, target in aliases.items() if alias not in live}
+
     def _migrate_camera_configs(self, old_name: str, new_name: str) -> None:
         configs = self._read_camera_configs()
         target = next(
@@ -337,17 +351,21 @@ class CameraConfigsRoutesMixin(_MediaServerBase):
                 migrated.append(config)
                 continue
             changed = True
-            if target is None:
+            if target is None or target is config:
+                # target is config itself when only the capitalisation
+                # changed ("Front door" -> "Front Door"): the entry already
+                # named new_name *is* the one being renamed. Merging it into
+                # itself and moving on dropped it from the file -- its
+                # settings, automatic analysis switch included, gone with a
+                # rename that changed no letters.
                 config["camera"] = new_name
                 target = config
                 migrated.append(config)
             else:
-                # target is always a different object here: it was either
-                # found (before this loop ran) among entries already named
-                # new_name, or fixed on an earlier iteration of this same
-                # loop -- never this iteration's own `config`, since the
-                # caller guarantees old_name != new_name and `configs`
-                # (freshly parsed JSON) never repeats an object reference.
+                # Otherwise target is a different object: found (before this
+                # loop ran) among entries already named new_name, or fixed on
+                # an earlier iteration of this same loop -- `configs` (freshly
+                # parsed JSON) never repeats an object reference.
                 self._merge_camera_config_fields(target, config)
         if not changed:
             return
