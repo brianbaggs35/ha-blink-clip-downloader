@@ -111,8 +111,6 @@ AI Analysis Configuration dialog itself was wrong.
   automatic analysis turned off, or a camera marked as seeing the protected
   vehicle, was lost. Either one stays on the merged camera.
 
-## 6.0.10
-
 ### Bug fixes
 
 - Disable Ollama model thinking during clip analysis so thinking-capable models
