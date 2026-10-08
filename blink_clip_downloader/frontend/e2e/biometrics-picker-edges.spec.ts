@@ -61,6 +61,52 @@ test("a file that isn't a readable photo is explained", async ({ page }) => {
   await expect(page.locator('.face-tile')).toHaveCount(0)
 })
 
+test('shrinks a large photo to the detector input limit before upload', async ({ page }) => {
+  let uploadedSize: { width: number; height: number } | undefined
+  await page.route('**/api/ai/faces/detect', async (route) => {
+    const body = route.request().postDataJSON() as { image_base64: string }
+    const image = Buffer.from(body.image_base64.split(',')[1] ?? '', 'base64')
+    for (let offset = 2; offset < image.length - 9;) {
+      if (image[offset] !== 0xff) {
+        offset += 1
+        continue
+      }
+      const marker = image[offset + 1]
+      const segmentLength = image.readUInt16BE(offset + 2)
+      if (marker === 0xc0 || marker === 0xc2) {
+        uploadedSize = {
+          height: image.readUInt16BE(offset + 5),
+          width: image.readUInt16BE(offset + 7),
+        }
+        break
+      }
+      offset += segmentLength + 2
+    }
+    await route.fulfill({ json: { faces: [] } })
+  })
+
+  await openBiometrics(page)
+  await page.getByRole('tab', { name: 'From a photo' }).click()
+  const largePng = await page.evaluate(() => {
+    const canvas = document.createElement('canvas')
+    canvas.width = 2000
+    canvas.height = 1000
+    const context = canvas.getContext('2d')
+    if (!context) throw new Error('Canvas is unavailable')
+    context.fillStyle = '#4a6f8f'
+    context.fillRect(0, 0, canvas.width, canvas.height)
+    return canvas.toDataURL('image/png')
+  })
+  await page.locator('input[type="file"]').setInputFiles({
+    name: 'large.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(largePng.split(',')[1] ?? '', 'base64'),
+  })
+
+  await expect(page.locator('.photo-results')).toContainText('No clear face found')
+  expect(uploadedSize).toEqual({ width: 1280, height: 640 })
+})
+
 test('an enrollment the server turns down reports the reason it gave @standalone', async ({ page }) => {
   await openBiometrics(page)
   await chooseScratchCamera(page)

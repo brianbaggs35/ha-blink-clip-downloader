@@ -348,6 +348,46 @@ test('the AI panel prompt-debug button shows the real prompt text sent to the mo
   await expect(modal).toBeVisible()
 })
 
+test('explains when prompt debug was enabled after a clip was analyzed', async ({ page }) => {
+  await patchAiStatus(page, { prompt_debug_enabled: true })
+  await page.route('**/api/ai/results/e2e-clip-000', (route) =>
+    fulfillJson(route, {
+      clip_id: 'e2e-clip-000',
+      camera: 'Front Door',
+      model: 'llava:7b',
+      response_text: 'A person walks up to the front door and rings the bell.',
+      is_suspicious: false,
+      confidence: 0.15,
+      summary: 'Person at the door',
+      frame_count: 4,
+      analysis_duration: 1.4,
+      analyzed_at: '2026-01-01T00:00:00Z',
+      tokens_prompt: 512,
+      tokens_completion: 64,
+      anomaly_score: 0.1,
+      escalation_model: '',
+      escalation_tokens_prompt: 0,
+      escalation_tokens_completion: 0,
+      escalation_provider: '',
+      prompt_text: '',
+      face_bypass_applied: false,
+      face_bypass_names: '',
+    }),
+  )
+
+  await page.goto('/')
+  await page.waitForSelector('.app-nav-tab.active[data-tab="library"]')
+  await page.locator('.clip-card[data-id="e2e-clip-000"]').click()
+  const modal = page.locator('.modal-bg.open')
+  await modal.locator('.ai-panel-hdr').click()
+  await expect(modal.getByText('Person at the door')).toBeVisible()
+
+  await modal.getByRole('button', { name: '📝 Prompt' }).click()
+  const promptOverlay = page.locator('.modal-bg.nested-overlay.open')
+  await expect(promptOverlay.getByText('No prompt was recorded')).toBeVisible()
+  await expect(promptOverlay.locator('pre')).toHaveCount(0)
+})
+
 test('shows a successful mocked email alert result', async ({ page }) => {
   await patchAiStatus(page, { smtp_configured: true })
   await page.route('**/api/notifications/test-email', (route) =>
