@@ -122,7 +122,10 @@ the direct-access port (`http://<ha-ip>:8099`), which since 6.0.8 asks for your
 network can use it. Home Assistant's own cameras and scripts that call that
 port use an access token, which the Automations tab adds to the YAML it
 generates. See [Direct access sign-in](blink_clip_downloader/DOCS.md#direct-access-sign-in)
-for the details, including how to turn it off.
+for the details, including how to turn it off. Optional HTTPS on port 8100
+reuses Home Assistant's existing `/ssl/fullchain.pem` and `/ssl/privkey.pem`
+by default; use a hostname covered by that certificate. See
+[HTTPS on the direct port](blink_clip_downloader/DOCS.md#https-on-the-direct-port).
 
 ### Updating from 4.0.2 or earlier
 

@@ -88,12 +88,14 @@ can change which host port it maps to under the add-on's **Network** section).
   already has HTTPS, there is nothing else to set up. For a different pair in
   that folder, set `certfile` and `keyfile` (file names inside `/ssl`).
   Restart the add-on after the certificate is renewed.
-- **Signing in moves to HTTPS.** With it on, opening `http://<ha-ip>:8099`
-  while signed out sends you to `https://<ha-ip>:8100` to sign in, and a
-  password posted to the plain port is ignored. Everything that already gets
-  in without signing in is untouched: the sidebar panel, a browser that is
-  already signed in, and Home Assistant's own calls with the access token
-  (which keep using `http://` and port 8099).
+- **Signing in moves to HTTPS.** With it on, opening
+  `http://<ha-hostname>:8099` while signed out sends you to
+  `https://<ha-hostname>:8100` to sign in. Use a hostname covered by the
+  certificate; an IP address may not match it. A password posted to the
+  plain port is ignored. Everything that already gets in without signing in
+  is untouched: the sidebar panel, a browser that is already signed in, and
+  Home Assistant's own calls with the access token (which keep using
+  `http://` and port 8099).
 - **A bad certificate never takes the web UI down.** If the files are missing
   or do not match, the add-on log says so (look for `HTTPS is turned on (ssl)
   but cannot start`), the web UI keeps working on plain HTTP, and nobody is
