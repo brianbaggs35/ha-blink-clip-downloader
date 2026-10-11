@@ -23,6 +23,7 @@ import {
   severityRank,
   severityTag,
 } from '../security/severity'
+import { clipFaceLine } from './clipFaces'
 import { usePromptOverlayStore } from '../../stores/promptOverlay'
 import { useRefreshStore } from '../../stores/refresh'
 import { useToastStore } from '../../stores/toast'
@@ -62,6 +63,9 @@ const securityEvents = computed(() =>
  *  layer found something — an empty section would otherwise appear on every
  *  clip for anyone with the feature off. */
 const hasSecurityAssessment = computed(() => securityEvents.value.length > 0)
+/** What face recognition made of this clip, in a sentence; null when it
+ *  examined nothing. */
+const faceLine = computed(() => clipFaceLine(result.value))
 const showFaceReportPicker = ref(false)
 const faceReportPersonName = ref('')
 const faceReportType = ref<FaceFeedbackReportType>('false_negative')
@@ -452,6 +456,10 @@ const faceReportNameOptions = computed(() => [
             <p v-if="result.risk_override_applied" class="ai-security-override">
               Flagged on detection evidence — the AI model itself reported nothing unusual.
             </p>
+            <p v-if="result.routine_visit_applied" class="ai-security-override" data-testid="ai-routine-visit">
+              Cleared as routine door use — the AI model flagged this while unsure, but the clip is one person's brief
+              trip through a marked door and nothing else in it needed explaining.
+            </p>
             <ul class="ai-security-list">
               <li v-for="event in securityEvents" :key="event.id">
                 <span class="ai-security-time">{{ formatOffset(event.start_offset) }}</span>
@@ -519,6 +527,7 @@ const faceReportNameOptions = computed(() => [
 
           <section class="ai-section ai-footer-section">
             <h4 class="ai-section-title">Face recognition</h4>
+            <p v-if="faceLine" class="ai-face-outcome" data-testid="ai-face-outcome">{{ faceLine }}</p>
             <div v-if="faceReportSubmitted" class="ai-face-done">✓ Reported — thanks</div>
             <div v-else-if="result.face_bypass_applied" class="ai-face-row">
               <span class="ai-face-ask">👤 Face match ({{ result.face_bypass_names }}) — correct?</span>
@@ -816,6 +825,11 @@ const faceReportNameOptions = computed(() => [
   color: var(--muted);
   max-height: 160px;
   overflow-y: auto;
+}
+.ai-face-outcome {
+  margin: 0 0 0.45rem;
+  font-size: 0.78rem;
+  color: var(--muted);
 }
 .ai-feedback-row,
 .ai-face-row {

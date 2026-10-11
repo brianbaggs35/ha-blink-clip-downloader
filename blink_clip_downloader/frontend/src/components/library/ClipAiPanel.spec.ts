@@ -361,6 +361,113 @@ describe('ClipAiPanel', () => {
     expect(wrapper.text()).toContain('the AI model itself reported nothing unusual')
   })
 
+  it('says when a flag was cleared because the clip was a routine trip through a door', async () => {
+    const event = {
+      id: 1,
+      clip_id: 'c1',
+      camera: 'front',
+      event_type: 'door_used',
+      severity: 'routine' as const,
+      confidence: 0.8,
+      risk_score: 22,
+      evidence_quality: 0.7,
+      detail: 'The person was at "Front door" for under 5s and was then not seen again for the rest of the clip.',
+      subject_label: 'person',
+      track_id: 1,
+      asset_name: 'Front door',
+      asset_type: 'door',
+      start_offset: 3,
+      end_offset: 5,
+      evidence: {},
+      created_at: '2026-01-05T10:00:00Z',
+    }
+    mockFetch({
+      '/api/ai/results/c1': {
+        ...RESULT,
+        is_suspicious: false,
+        routine_visit_applied: true,
+        risk_score: 22,
+        severity: 'routine',
+        evidence_quality: 0.7,
+        security_events: [event],
+      },
+      '/api/ai/feedback/c1': null,
+    })
+    const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
+    await wrapper.find('.ai-panel-hdr').trigger('click')
+    await flushPromises()
+    const note = wrapper.find('[data-testid="ai-routine-visit"]')
+    expect(note.exists()).toBe(true)
+    expect(note.text()).toContain('Cleared as routine door use')
+    expect(wrapper.find('.ai-security-list').text()).toContain('Door used')
+  })
+
+  it('says nothing about routine door use on an ordinary clip', async () => {
+    mockFetch({
+      '/api/ai/results/c1': {
+        ...RESULT,
+        risk_score: 12,
+        severity: 'routine',
+        evidence_quality: 0.7,
+        security_events: [
+          {
+            id: 1,
+            clip_id: 'c1',
+            camera: 'front',
+            event_type: 'subject_present',
+            severity: 'routine',
+            confidence: 0.8,
+            risk_score: 12,
+            evidence_quality: 0.7,
+            detail: 'A person was visible.',
+            subject_label: 'person',
+            track_id: 1,
+            asset_name: '',
+            asset_type: '',
+            start_offset: 0,
+            end_offset: 2,
+            evidence: {},
+            created_at: '2026-01-05T10:00:00Z',
+          },
+        ],
+      },
+      '/api/ai/feedback/c1': null,
+    })
+    const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
+    await wrapper.find('.ai-panel-hdr').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="ai-security"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ai-routine-visit"]').exists()).toBe(false)
+  })
+
+  it('says why face recognition did or did not count a clip', async () => {
+    mockFetch({
+      '/api/ai/results/c1': {
+        ...RESULT,
+        face_outcome: 'no_faces',
+        faces_seen: 0,
+        faces_matched: 0,
+        faces_unclear: 0,
+      },
+      '/api/ai/feedback/c1': null,
+    })
+    const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
+    await wrapper.find('.ai-panel-hdr').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="ai-face-outcome"]').text()).toContain('No face was found')
+  })
+
+  it('says nothing about faces for an analysis recognition never examined', async () => {
+    mockFetch({
+      '/api/ai/results/c1': { ...RESULT, face_outcome: '' },
+      '/api/ai/feedback/c1': null,
+    })
+    const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
+    await wrapper.find('.ai-panel-hdr').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="ai-face-outcome"]').exists()).toBe(false)
+  })
+
   it('renders safely when an older analysis row has events but no scores', async () => {
     mockFetch({
       '/api/ai/results/c1': {

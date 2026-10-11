@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import time
+from datetime import UTC, datetime, time
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from blink_downloader.analysis_queue import AnalysisQueue
+from blink_downloader.analysis_queue import AnalysisQueue, compute_anomaly_score
 from blink_downloader.analyzer import AnalysisResult, ClipAnalyzer
 from blink_downloader.database import ClipDatabase
 
@@ -1041,3 +1041,41 @@ async def test_a_failing_dispatch_still_lets_the_analyzed_event_fire(
         await queue._process_pending()
 
     on_analyzed.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# compute_anomaly_score -- shared with the on-demand analysis routes
+# ---------------------------------------------------------------------------
+
+
+async def test_the_anomaly_score_is_asked_for_the_hour_the_clip_was_recorded() -> None:
+    db = MagicMock()
+    db.get_anomaly_score = AsyncMock(return_value=0.4)
+
+    score = await compute_anomaly_score(db, "Porch", "2024-06-01T03:30:00+00:00", 12.0)
+
+    assert score == 0.4
+    db.get_anomaly_score.assert_awaited_once_with(camera="Porch", hour=3, duration=12.0)
+
+
+async def test_a_clip_with_no_timestamp_is_scored_for_the_current_hour() -> None:
+    db = MagicMock()
+    db.get_anomaly_score = AsyncMock(return_value=0.1)
+    with patch("blink_downloader.analysis_queue.datetime") as clock:
+        clock.now.return_value = datetime(2024, 6, 1, 22, 5, tzinfo=UTC)
+        assert await compute_anomaly_score(db, "Porch", "", 0.0) == 0.1
+
+    db.get_anomaly_score.assert_awaited_once_with(camera="Porch", hour=22, duration=0.0)
+
+
+@pytest.mark.parametrize("timestamp", ["", "not-a-timestamp"])
+async def test_an_anomaly_score_that_cannot_be_computed_is_zero(
+    timestamp: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    db = MagicMock()
+    db.get_anomaly_score = AsyncMock(side_effect=RuntimeError("db error"))
+
+    with caplog.at_level(logging.DEBUG, logger="blink_downloader.analysis_queue"):
+        assert await compute_anomaly_score(db, "Porch", timestamp, 5.0) == 0.0
+
+    assert "Could not compute anomaly score for camera Porch" in caplog.text

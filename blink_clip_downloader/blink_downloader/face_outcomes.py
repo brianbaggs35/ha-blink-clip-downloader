@@ -119,6 +119,50 @@ def classify_face_outcome(result: FaceRecognitionResult, *, recognized: bool) ->
     return FaceOutcome.EXTRA_PEOPLE
 
 
+class FaceEvidence(StrEnum):
+    """What a clip's faces say about whether the person at the door lives here.
+
+    Not the face bypass's test, which asks whether *everyone* is an approved
+    member and so needs every face matched. This is the question behaviour
+    asks of identity (``security/routine.py``): does anything contradict a
+    household member, and does anything confirm one. A face that is merely
+    hard to read -- blurred, turned away, cut off -- is neither, which is
+    what a person at a lock with their back half to the camera produces.
+    """
+
+    #: No face was found to say anything, or recognition has nothing enrolled
+    #: to compare with: neither for nor against.
+    NONE = "none"
+    #: An approved household member matched, and nothing contradicts it.
+    CONFIRMS = "confirms"
+    #: Something says the person may not be a household member: a clear look
+    #: at a face that matched nobody, a recognized person who is not
+    #: approved, or a frame that could not be examined and might have held
+    #: anyone.
+    CONTRADICTS = "contradicts"
+
+
+def face_evidence(result: FaceRecognitionResult | None) -> FaceEvidence:
+    """The :class:`FaceEvidence` of a clip's recognition *result*.
+
+    "A clear look at a face that matched nobody" is the same count
+    :func:`classify_face_outcome` calls ``UNFAMILIAR`` -- faces seen, less
+    those matched, less those with an inconclusive look -- so the two cannot
+    disagree about what a stranger is, and ``ai_face_recognition_ignore_
+    unclear_faces`` changes neither.
+    """
+    if result is None or result.tally is None:
+        return FaceEvidence.NONE
+    tally = result.tally
+    if (
+        result.other_names
+        or tally.unexamined
+        or tally.seen - tally.matched - tally.unclear
+    ):
+        return FaceEvidence.CONTRADICTS
+    return FaceEvidence.CONFIRMS if result.approved_names else FaceEvidence.NONE
+
+
 def summarize_face_outcomes(rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     """The Recognition results panel's numbers from per-outcome totals.
 

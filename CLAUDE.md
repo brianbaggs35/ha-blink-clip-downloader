@@ -207,6 +207,22 @@ architecture.
     a learned per-camera parking position + a learned colour fingerprint),
     and is allowed to answer "none of them", which is what stops a
     neighbour's car being treated as yours.
+    `routine.py` is the policy half of **routine door use** (6.1.1,
+    `ai_routine_door_use_enabled`, off by default; see the bypass section
+    below for why it is safety-critical): `routine_door_visit` says whether one
+    `DOOR_USED` event explains the *whole* clip, `flag_can_be_cleared` how
+    unsure the model must have been. The measuring half is
+    `detector._door_use_event`, behind `DetectionContext.detect_door_use` —
+    with the option off no `DOOR_USED` exists at all. Its rules under-claim on
+    purpose and each one is pinned in `tests/test_security_door_use.py`: one
+    continuous stay; a tracked person with 3+ sightings; "brief" is proved from
+    *sparse* frames by adding a sampling gap at each end to the time seen
+    (`observed + 2 x interval <= loiter_seconds`), so the wider the spacing the
+    less it vouches for; "gone" needs 2 frames *and* 3 s with nobody and a last
+    sighting clear of the left/right/bottom border (`geometry.box_touches_
+    frame_edge`, else a porch-wide zone turns walking out of shot into going
+    indoors); and `_EXPLAINED_BY_A_VISIT` is an **allow-list**, so a new event
+    type blocks by default.
     Four rules around the protected car that are easy to break, each pinned
     by a scenario in `tests/test_security_scenarios.py`:
     - **Whether a contact was confirmed is recorded, not re-derived.** The
@@ -939,6 +955,38 @@ only *decides* with the option on; with it off the verdict is the old
 `test_the_option_never_changes_what_the_strict_rule_decides` checks that over
 hundreds of random clips. Keep it that way: diagnostics must never move a
 verdict.
+
+Since 6.1.1 there is a **second clearing path that does not use identity**:
+`BaseAnalyzer._routine_visit_clears` (`ai_routine_door_use_enabled`, off by
+default, needs a door marked on the Assets tab). It lowers a flag the model
+raised *while unsure* when the clip is nothing but one person's brief trip
+through the marked door, and it is the only local adjustment that lowers a
+verdict without knowing who the person was, so it is built to be harder to
+satisfy than the bypass, not easier. Rules that must not be loosened casually:
+it runs **after** the face bypass (a clip identity cleared is recorded as that,
+`routine_visit_applied` stays false) and never when `risk_forces_alert`; the
+model's confidence must be under `ROUTINE_VISIT_MAX_CONFIDENCE` (0.70, or 0.85
+with an approved match) -- the prompt reserves 0.8+ for the plainest findings;
+without an approved match the camera's anomaly score must be under 0.35
+(`ROUTINE_VISIT_MAX_ANOMALY`: its rarest two hour bands); both of those last
+two face/hour conditions are applied in `_door_use_applies`, **before the model
+is asked**, because a visit also reaches the prompt (`narrative._ROUTINE_VISIT_
+NOTE` tells the model it is ordinary use of a door) and that would soften the
+model's own verdict on a stranger or a 3am clip; and face evidence is
+read by `face_outcomes.face_evidence`: a **clear** face that matched nobody
+(`seen - matched - unclear`, the count the Recognition results panel calls
+unfamiliar), a recognized-but-not-approved person or an unexamined frame always
+vetoes -- in `_door_use_applies`, which stops the `DOOR_USED` event (and so the
+prompt note telling the model it was ordinary use of a door) from existing at all,
+not merely the clear -- while faces too hard to read (`unclear`) deliberately count for nothing
+-- someone at a lock with their back half turned produces exactly those, and
+vetoing on them would defeat the feature. The 12 s / 0.70 / 0.85 / 0.35 numbers
+are judgement calls, not measurements (no real front-door corpus exists); say
+so rather than presenting them as measured. `app.py`'s
+`_routine_door_use_active` turns it off, with a warning naming the option, when
+Enhanced Detection, the security layer or the temporal scan (`ai_temporal_
+scan_frames` of 0 reports durations that are not real, which this rule's whole
+test is) is off.
 
 Separately, `ai_risk_alert_threshold` can flag a clip the model called
 unremarkable. It is checked *before* the bypass so the two can never

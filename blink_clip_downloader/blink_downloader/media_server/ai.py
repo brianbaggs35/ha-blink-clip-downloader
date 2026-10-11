@@ -14,9 +14,11 @@ import logging
 import platform
 import sys
 from pathlib import Path
+from typing import Any
 
 from aiohttp import web
 
+from ..analysis_queue import compute_anomaly_score
 from ..database import SUSPICIOUS_PERIODS
 from ..vision import torch_cpu_compatible
 from .core import _MediaServerBase
@@ -233,6 +235,25 @@ class AiRoutesMixin(_MediaServerBase):
         total = await self._db.count_suspicious_clips(period=period)
         return web.json_response({"items": items, "total": total})
 
+    async def _analysis_context(self, clip: dict[str, Any]) -> dict[str, Any]:
+        """What the background queue tells the analyzer about a clip beyond the
+        file itself: when it was recorded, how unusual that is for the
+        camera, how long it ran, and the corrections people have made on that
+        camera. An analysis run by hand gets the same, so it is the same
+        analysis -- the hour in particular decides whether
+        ``ai_routine_door_use_enabled`` may clear a flag, and a manual
+        re-analysis that skipped it would clear clips the queue kept."""
+        timestamp = str(clip.get("timestamp", "") or "")
+        duration = float(clip.get("duration") or 0)
+        return {
+            "anomaly_score": await compute_anomaly_score(
+                self._db, clip["camera"], timestamp, duration
+            ),
+            "clip_timestamp": timestamp,
+            "clip_duration": duration,
+            "recent_corrections": await self._db.get_prompt_corrections(clip["camera"]),
+        }
+
     async def _handle_ai_analyze_now(self, request: web.Request) -> web.Response:
         if not self._analyzer:
             return web.json_response(
@@ -248,7 +269,7 @@ class AiRoutesMixin(_MediaServerBase):
                 clip_path=clip["file_path"],
                 clip_id=clip_id,
                 camera=clip["camera"],
-                clip_duration=float(clip.get("duration") or 0),
+                **await self._analysis_context(clip),
             )
             await self._db.save_analysis(result)
             return web.json_response(result.to_dict())
@@ -278,7 +299,7 @@ class AiRoutesMixin(_MediaServerBase):
                 clip_path=clip["file_path"],
                 clip_id=clip["id"],
                 camera=clip["camera"],
-                clip_duration=float(clip.get("duration") or 0),
+                **await self._analysis_context(clip),
             )
             await self._db.save_analysis(result)
             return web.json_response(

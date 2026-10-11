@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from .events import AUDIO_EVENTS
 from .evidence import EvidenceQuality
+from .routine import routine_door_visit
 from .scoring import RiskAssessment
 from .vehicles import VehicleIdentification, relative_side
 
@@ -24,6 +25,26 @@ from .vehicles import VehicleIdentification, relative_side
 #: of routine presence events, and the point of this section is evidence,
 #: not an exhaustive log — the most severe entries are the ones kept.
 _MAX_TIMELINE_ENTRIES = 8
+
+#: Added to the SECURITY EVIDENCE section when the whole clip is one person's
+#: brief trip through a marked door (see :func:`.routine.routine_door_visit`).
+#: The global prompt tells the model to prefer a low-confidence "suspicious"
+#: over saying nothing when it cannot tell; for a figure with their back to
+#: the lens at a lock, it cannot, so this says what ordinary looks like and
+#: what would still count -- and asks for "not suspicious" rather than a
+#: hedge when none of it is visible.
+_ROUTINE_VISIT_NOTE = (
+    " The only person in this clip went through the door they were at and was "
+    "not there for long -- which is how ordinary use of a door looks, including "
+    "a resident with their back to the camera while they unlock or lock it. "
+    "Their face being turned away, or their hands being at the lock or handle "
+    "for a few seconds, is not by itself a reason to report suspicious "
+    "activity. Report it if the frames show the lock or handle being worked at "
+    "repeatedly or for a long time, forcing, prying or kicking, peering in, "
+    "someone waiting or watching, or something being carried off; if none of "
+    "that is visible, report suspicious=false rather than a low-confidence "
+    "guess."
+)
 
 
 def _timeline_line(start: float, end: float, detail: str, severity: str) -> str:
@@ -107,6 +128,8 @@ def build_security_segment(
         "Never quote any of these numbers, times, scores, or the phrase 'risk "
         "score' in your description — write only what a homeowner would see."
     )
+    if routine_door_visit(assessment.events, evidence) is not None:
+        parts.append(_ROUTINE_VISIT_NOTE)
     if heard:
         which = "One entry above was" if len(heard) == 1 else "Some entries above were"
         parts.append(

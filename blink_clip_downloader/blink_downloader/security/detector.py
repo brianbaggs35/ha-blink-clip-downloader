@@ -16,11 +16,13 @@ rule's own comment for exactly what it does and does not establish.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field, replace
+from itertools import pairwise
 
 from .assets import ProtectedAsset
 from .events import SecurityEvent, SecurityEventType, Severity, severity_rank
-from .geometry import box_foot_point
+from .geometry import box_foot_point, box_touches_frame_edge
 from .tracks import (
     ANIMAL_LABELS,
     CARRYABLE_LABELS,
@@ -107,6 +109,17 @@ class DetectorThresholds:
     #: everyone who walks in front of or behind a parked car overlaps it;
     #: only a substantial overlap distinguishes touching from passing.
     contact_overlap_fraction: float = 0.15
+    #: Fewest sightings of a person that a visit to a door may rest on. One
+    #: or two frames cannot show someone arriving, being at the door and then
+    #: gone, however confident the detector was about them.
+    door_use_min_sightings: int = 3
+    #: How long a person must stay out of sight after their last sighting at
+    #: a door before the visit counts as having gone through it: at least
+    #: this many sampled frames *and* this many seconds. The frames guard
+    #: against one frame the detector dropped; the seconds against a clip
+    #: sampled so finely that several frames are barely a moment.
+    door_use_unseen_frames: int = 2
+    door_use_unseen_seconds: float = 3.0
 
 
 @dataclass
@@ -159,6 +172,11 @@ class DetectionContext:
     #: first and last scan frames, by key — only for assets nobody was
     #: standing in front of in either frame (see vision/pipeline.py).
     marked_asset_changes: dict[str, float] = field(default_factory=dict)
+    #: Whether to look for people going through a marked door (see
+    #: ``SecurityEventType.DOOR_USED``). Off unless the owner asked for it
+    #: (``ai_routine_door_use_enabled``): with it off no such event exists, and
+    #: every clip is assessed exactly as it was before the rule did.
+    detect_door_use: bool = False
 
     @property
     def timeline_end(self) -> float:
@@ -443,6 +461,9 @@ class SecurityEventDetector:
             # visit, and costs next to nothing in the score.
             if near and profile.retreated:
                 events.append(self._retreat_event(track, standing, asset))
+            events.extend(
+                self._door_use_events(track, profile, asset, ctx, depth_verdict)
+            )
             return events
 
         if near and cv_applies and ctx.posture_reaching:
@@ -452,6 +473,151 @@ class SecurityEventDetector:
             self._contact_events(track, profile, standing, asset, ctx, cv_applies, near)
         )
         return events
+
+    def _door_use_events(
+        self,
+        track: ObjectTrack,
+        profile: ApproachProfile,
+        asset: ProtectedAsset,
+        ctx: DetectionContext,
+        depth_verdict: bool | None,
+    ) -> list[SecurityEvent]:
+        """The door visit *track* made to *asset*, if looking for them was asked
+        for (``ctx.detect_door_use``) and *asset* is a door. A list of zero or
+        one, so the caller adds no branch of its own."""
+        if not (ctx.detect_door_use and asset.entered_through):
+            return []
+        event = self._door_use_event(track, profile, asset, ctx, depth_verdict)
+        return [] if event is None else [event]
+
+    def _door_use_event(
+        self,
+        track: ObjectTrack,
+        profile: ApproachProfile,
+        asset: ProtectedAsset,
+        ctx: DetectionContext,
+        depth_verdict: bool | None,
+    ) -> SecurityEvent | None:
+        """One person's single, brief trip through a door: in, or out.
+
+        What the door's owner described as ordinary: a few seconds with a
+        key or a handle and then through it, or out of it and away -- as
+        against hanging about, picking at the lock, or trying the handle and
+        leaving. Only the shape is established, never who it was or what
+        their hands did; the face and the AI model judge those.
+
+        *In*: the person's last sighting is at the door and they are not
+        seen again for the rest of the clip, so they went through it, or at
+        least out of the picture beyond it. *Out*: their first sighting is
+        at the door and they then moved clear of it. Everything else about
+        a visit is held to under-claim, because the result can lower a
+        verdict:
+
+        * **One run at the door.** Leaving and coming back is trying a
+          handle, not using a door -- and a track that flickers across the
+          zone's edge fails this, which errs toward the verdict standing.
+        * **Provably brief from sparse frames.** Frames are seconds apart, so
+          the time seen at the door is a lower bound: they may have arrived
+          just after one frame and left just before the next. The visit
+          counts as brief only when the time seen *plus a sampling gap at
+          each end* is still under the lingering limit, which makes the rule
+          stricter the further apart the frames are. At 1s spacing a visit
+          seen over ten frames still qualifies; at 4s one seen twice does;
+          at 6s only one seen once. Time spent at the door before the clip
+          began cannot be seen at all.
+        * **Gone, not lost.** An *in* visit needs the person absent for
+          several frames and seconds, and their last sighting clear of the
+          frame's left, right and bottom borders: a zone drawn big enough
+          to take in the porch otherwise turns walking off the side of the
+          picture into entering the house. An *out* visit has the same
+          border test on its first sighting.
+        * **A real track**, tracked rather than inferred, of enough
+          sightings -- and not contradicted by the depth stage, which
+          already stands the zone rules down when it places them elsewhere.
+        """
+        zone = asset.zone
+        if zone is None or not self._could_be_a_visit(track, depth_verdict):
+            return None
+        inside = track.zone_membership(zone)
+        if _entries(inside) != 1:
+            return None
+        interval = ctx.frame_interval
+        observed = track.zone_dwell(zone)
+        ceiling = observed + 2.0 * interval
+        if ceiling > self._t.loiter_seconds:
+            return None
+
+        evidence: dict[str, object] = {}
+        if inside[-1]:
+            unseen = self._unseen_after(track, ctx)
+            if unseen is None:
+                return None
+            direction = "in"
+            evidence["unseen_seconds"] = unseen
+        elif inside[0] and self._came_clear_of_door(track, profile):
+            direction = "out"
+        else:
+            return None
+
+        at_door = [p.offset for p, here in zip(track.points, inside) if here]
+        return SecurityEvent(
+            event_type=SecurityEventType.DOOR_USED,
+            severity=Severity.ROUTINE,
+            confidence=track.mean_confidence,
+            detail=_door_use_detail(direction, track, asset, ceiling),
+            subject_label=track.label,
+            track_id=track.track_id,
+            asset_name=asset.name,
+            asset_type=str(asset.asset_type),
+            start_offset=at_door[0],
+            end_offset=at_door[-1],
+            evidence=_round_evidence(
+                {
+                    "direction": direction,
+                    "dwell_seconds": observed,
+                    "dwell_ceiling_seconds": ceiling,
+                    "sightings_at_door": len(at_door),
+                    "frame_interval": interval,
+                    **evidence,
+                }
+            ),
+        )
+
+    def _could_be_a_visit(self, track: ObjectTrack, depth_verdict: bool | None) -> bool:
+        """Whether *track* is the kind of evidence a visit can rest on: a
+        person the tracker really followed, seen often enough, and not placed
+        elsewhere by the depth stage."""
+        return (
+            depth_verdict is not False
+            and track.label == PERSON_LABEL
+            and track.tracked
+            and track.frame_count >= self._t.door_use_min_sightings
+        )
+
+    def _unseen_after(self, track: ObjectTrack, ctx: DetectionContext) -> float | None:
+        """Seconds the clip went on without *track* after its last sighting,
+        or ``None`` when that is not enough to say they went through the door:
+        too few frames, too short a time, or a last sighting at the picture's
+        edge, which is someone leaving the frame rather than the building."""
+        last = track.points[-1]
+        frames_after = ctx.frame_count - 1 - last.frame_index
+        seconds = frames_after * ctx.frame_interval
+        if (
+            frames_after < self._t.door_use_unseen_frames
+            or seconds < self._t.door_use_unseen_seconds
+            or box_touches_frame_edge(last.box, track.frame_size)
+        ):
+            return None
+        return seconds
+
+    @staticmethod
+    def _came_clear_of_door(track: ObjectTrack, profile: ApproachProfile) -> bool:
+        """Whether a track that began at the door moved clear of it, and began
+        somewhere other than the picture's edge (walking into a zone that
+        reaches the border is not coming out of anything)."""
+        return profile.retreated and not box_touches_frame_edge(
+            track.points[0].box, track.frame_size
+        )
 
     def _nearness(
         self,
@@ -1236,6 +1402,32 @@ _VISIT_EVENTS: frozenset[SecurityEventType] = frozenset(
         SecurityEventType.ANIMAL_ASSET_INTERACTION,
     }
 )
+
+
+def _entries(membership: list[bool]) -> int:
+    """How many separate times a track went from outside a zone to inside it
+    -- counting the start, so a track that begins inside has entered once."""
+    return sum(
+        1 for before, after in pairwise([False, *membership]) if after and not before
+    )
+
+
+def _door_use_detail(
+    direction: str, track: ObjectTrack, asset: ProtectedAsset, ceiling: float
+) -> str:
+    """The sentence a visit is recorded as: a statement of consistency, never
+    of fact, naming the longest the stay can have been."""
+    under = f"under {math.ceil(ceiling)}s"
+    if direction == "in":
+        return (
+            f"The {track.label} was at {asset.reference} for {under} and was then "
+            "not seen again for the rest of the clip — consistent with going "
+            "through it."
+        )
+    return (
+        f"The {track.label} was at {asset.reference} when first seen, for {under}, "
+        "and then walked away from it — consistent with having come out through it."
+    )
 
 
 def _track_key(event: SecurityEvent) -> tuple[object, ...]:

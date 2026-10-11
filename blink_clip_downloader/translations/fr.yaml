@@ -628,6 +628,23 @@ configuration:
       suspect même si le modèle d'IA l'a jugé anodin. La valeur par défaut (75)
       ne couvre que la bande critique. Mettre 0 pour laisser le verdict du
       modèle définitif.
+  ai_routine_door_use_enabled:
+    name: Traiter l'usage courant d'une porte comme normal
+    description: >-
+      Lève le signalement d'un clip que le modèle d'IA a jugé suspect sans en
+      être sûr lorsque tout le clip n'est que le bref passage d'une seule
+      personne par une porte marquée dans l'onglet Assets -- hors de vue de
+      l'autre côté ou éloignée en quelques secondes --, sans personne d'autre,
+      sans rien d'autre qui se passe et sans visage bien visible qui ne
+      correspond à personne. Prévu pour la porte d'entrée, où la personne qui
+      la déverrouille tourne le dos à la caméra et où la reconnaissance
+      faciale ne peut rien faire. Un constat assuré, une deuxième personne, un
+      stationnement prolongé, une heure où la caméra voit rarement de
+      l'activité ou une personne reconnue mais non approuvée l'empêchent.
+      Désactivé par défaut car, contrairement à la dérogation par
+      reconnaissance faciale, il ne sait pas qui était la personne. Nécessite
+      la détection et le suivi avancés, l'analyse de sécurité structurée et des
+      images pour l'analyse comportementale en nombre supérieur à 0.
   mobile_app_target:
     name: Entité cible de l'application mobile
     description: >-
