@@ -2461,6 +2461,26 @@ def test_face_recognition_resolution_reaches_recognition_and_enrollment(
     assert app._media_server._face_recognition_enabled is True
 
 
+@pytest.mark.parametrize("ignore_unclear", [False, True])
+def test_ignore_unclear_faces_reaches_the_vision_pipeline(
+    base_config, tmp_path, ignore_unclear: bool
+) -> None:
+    """Off by default and only on when asked: the option decides whether the
+    bypass can lean on faces too poor to identify, so it has to arrive at the
+    recognizer exactly as set."""
+    _app, mock_create_analyzer = _build_app_with_camera_configs(
+        base_config,
+        tmp_path,
+        None,
+        ai_face_recognition_enabled=True,
+        ai_face_recognition_ignore_unclear_faces=ignore_unclear,
+    )
+    pipeline = mock_create_analyzer.return_value.attach_vision_pipeline.call_args.args[
+        0
+    ]
+    assert pipeline._config.face_ignore_unclear is ignore_unclear
+
+
 def test_init_sets_huggingface_token_environment(base_config, monkeypatch) -> None:
     import dataclasses
 

@@ -1,6 +1,6 @@
 ---
 name: Blink Clip Downloader
-version: "v6.1.0"
+version: "v6.1.1"
 slug: blink_clip_downloader
 image: "ghcr.io/brianbaggs35/blink_clip_downloader"
 description: >-
@@ -485,6 +485,16 @@ options:
   # the Biometrics tab after changing it — a face matches best against
   # photos enrolled at the same resolution.
   ai_face_recognition_resolution: "standard"
+  # Whether a face too poor to identify (blurred by motion, cut off by the
+  # edge of the frame, turned away or half hidden) still counts as a
+  # possible stranger. Off keeps the bypass exactly as strict as it has
+  # always been: every face that matches nobody blocks it. On, such a face is
+  # set aside when it can be accounted for as one of the household members
+  # recognized elsewhere in the same clip -- so a clip of two residents is no
+  # longer lost to one blurred frame of either -- while a clear face that
+  # matches nobody, or more faces at once than recognized people, still
+  # blocks it. See DOCS.md for the details and the trade-off.
+  ai_face_recognition_ignore_unclear_faces: false
   # Body-keypoint (pose) estimation for whoever is nearest the protected
   # vehicle, on the one frame the depth/contact stages already examine.
   # Adds three narrow facts a bounding box cannot give: an arm extended
@@ -686,6 +696,7 @@ schema:
   # yamllint enable rule:line-length
   ai_face_recognition_enabled: "bool"
   ai_face_recognition_resolution: "list(standard|high|very_high)"
+  ai_face_recognition_ignore_unclear_faces: "bool"
   ai_pose_estimation_enabled: "bool"
   # yamllint disable rule:line-length
   ai_pose_model: "list(yolo26n-pose.pt|yolo26s-pose.pt|yolo26m-pose.pt|yolo26l-pose.pt|yolo26x-pose.pt|yolo11n-pose.pt|yolo11s-pose.pt|yolo11m-pose.pt|yolo11l-pose.pt|yolo11x-pose.pt)"

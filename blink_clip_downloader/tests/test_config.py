@@ -695,6 +695,25 @@ def test_face_recognition_resolutions_agree_everywhere():
     assert FACE_RESOLUTION_WIDTHS["standard"] == 640
 
 
+def test_ignore_unclear_faces_is_off_unless_asked_for():
+    """Off is the strict rule every install has always had, so an options.json
+    written before the option existed (or one that says nothing) keeps it."""
+    base = {"username": "u", "password": "p"}
+    assert _parse_config(base).ai_face_recognition_ignore_unclear_faces is False
+    on = _parse_config({**base, "ai_face_recognition_ignore_unclear_faces": True})
+    assert on.ai_face_recognition_ignore_unclear_faces is True
+
+
+def test_ignore_unclear_faces_ships_off_in_the_manifest():
+    """config.yaml is what a fresh install's options.json is written from, so
+    its default is the one that matters; the schema has to offer a switch."""
+    manifest = yaml.safe_load(
+        (Path(__file__).resolve().parent.parent / "config.yaml").read_text()
+    )
+    assert manifest["options"]["ai_face_recognition_ignore_unclear_faces"] is False
+    assert manifest["schema"]["ai_face_recognition_ignore_unclear_faces"] == "bool"
+
+
 def test_huggingface_token_is_trimmed():
     cfg = _parse_config(
         {"username": "u", "password": "p", "hf_token": "  hf_test_token  "}

@@ -76,8 +76,10 @@ from blink_downloader.vision.detection import (
     _ZoneReference,
 )
 from blink_downloader.vision.faces import (
+    DetectedFace,
     _build_recognition_hint,
     _frontality,
+    _resemblance,
     _sharpness,
     match_enrollment,
 )
@@ -2104,20 +2106,22 @@ def _checkerboard_jpeg(size: tuple[int, int]) -> bytes:
     return buf.getvalue()
 
 
-async def test_face_embedder_embed_returns_empty_when_no_face(
+async def test_face_embedder_detect_returns_empty_when_no_face(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _fake_facenet(monkeypatch)
     embedder = FaceEmbedder()
-    assert await embedder.embed(_real_jpeg_bytes()) == []
+    assert await embedder.detect(_real_jpeg_bytes()) == []
 
 
-async def test_face_embedder_embed_returns_embeddings(
+async def test_face_embedder_detect_returns_embeddings(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _one_face(monkeypatch, [2.0, 2.0, 8.0, 8.0])
     embedder = FaceEmbedder()
-    assert await embedder.embed(_real_jpeg_bytes()) == [[0.1, 0.2, 0.3]]
+    faces = await embedder.detect(_real_jpeg_bytes())
+    assert faces is not None
+    assert [face.embedding for face in faces] == [[0.1, 0.2, 0.3]]
 
 
 async def test_face_embedder_detect_matches_mtcnn_forward(
@@ -2135,7 +2139,7 @@ async def test_face_embedder_detect_matches_mtcnn_forward(
     assert extract_args[2] is None
 
 
-async def test_face_embedder_embed_unsqueezes_single_face(
+async def test_face_embedder_detect_unsqueezes_single_face(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _fake_facenet(
@@ -2147,12 +2151,14 @@ async def test_face_embedder_embed_unsqueezes_single_face(
         embeddings=_FakeFaceTensor(np.array([[0.4, 0.5]])),
     )
     embedder = FaceEmbedder()
-    assert await embedder.embed(_real_jpeg_bytes()) == [[0.4, 0.5]]
+    faces = await embedder.detect(_real_jpeg_bytes())
+    assert faces is not None
+    assert [face.embedding for face in faces] == [[0.4, 0.5]]
     resnet_input = embedder._resnet.call_args.args[0]
     assert resnet_input.dim() == 4
 
 
-async def test_face_embedder_embed_returns_none_when_unavailable(
+async def test_face_embedder_detect_returns_none_when_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """None, not [] — "the models could not run" must not read as "nobody
@@ -2161,16 +2167,16 @@ async def test_face_embedder_embed_returns_none_when_unavailable(
     monkeypatch.delitem(sys.modules, "facenet_pytorch", raising=False)
     with patch("builtins.__import__", side_effect=ImportError):
         embedder = FaceEmbedder()
-        assert await embedder.embed(frame) is None
+        assert await embedder.detect(frame) is None
 
 
-async def test_face_embedder_embed_returns_none_on_exception(
+async def test_face_embedder_detect_returns_none_on_exception(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     mtcnn = _fake_facenet(monkeypatch)
     mtcnn.detect.side_effect = RuntimeError("boom")
     embedder = FaceEmbedder()
-    assert await embedder.embed(_real_jpeg_bytes()) is None
+    assert await embedder.detect(_real_jpeg_bytes()) is None
 
 
 async def test_face_embedder_detect_returns_none_for_undecodable_image(
@@ -2268,6 +2274,31 @@ async def test_face_quality_prefers_big_sharp_faces(
     assert blurry[0].quality < big[0].quality
 
 
+async def test_face_embedder_detect_flags_a_face_the_frame_border_cuts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """MTCNN does not clip its boxes to the frame: a face pushed half out of
+    it comes back with a box that runs past the border. Quality, which sees
+    sharpness and pose, scored such faces a median 0.91, so the border is the
+    only place to tell."""
+    frame = _real_jpeg_bytes((300, 300))
+    cases = {
+        (20.0, 20.0, 120.0, 140.0): False,  # well inside
+        (3.0, 20.0, 120.0, 140.0): False,  # 3px from the left edge: whole
+        (20.0, 20.0, 297.0, 140.0): False,  # 3px from the right edge: whole
+        (2.0, 20.0, 120.0, 140.0): True,  # reaching the left edge
+        (-30.0, 20.0, 70.0, 140.0): True,  # past the left edge
+        (20.0, -12.0, 120.0, 100.0): True,  # past the top
+        (200.0, 20.0, 310.0, 140.0): True,  # past the right
+        (20.0, 200.0, 120.0, 305.0): True,  # past the bottom
+    }
+    for box, expected in cases.items():
+        _one_face(monkeypatch, list(box))
+        faces = await FaceEmbedder().detect(frame)
+        assert faces is not None
+        assert faces[0].cut_off is expected, box
+
+
 def test_frontality_falls_as_the_head_turns() -> None:
     frontal = _frontality(_FRONTAL_POINTS[0])
     turned = _frontality(np.array([[30, 40], [70, 40], [65, 55], [35, 70], [65, 70]]))
@@ -2317,18 +2348,47 @@ def test_cosine_similarity_mismatched_length_is_zero() -> None:
     assert cosine_similarity([1.0, 0.0], [1.0, 0.0, 0.0, 0.0]) == 0.0
 
 
+def _face(
+    embedding: list[float],
+    *,
+    quality: float = 0.9,
+    width: int = 90,
+    cut_off: bool = False,
+) -> DetectedFace:
+    """A face as the recognizer sees it: a clear 90px look unless a test says
+    otherwise."""
+    return DetectedFace(
+        embedding=embedding,
+        probability=1.0,
+        width=width,
+        quality=quality,
+        cut_off=cut_off,
+    )
+
+
+def _detecting(by_frame: dict[bytes, list[DetectedFace] | None]) -> MagicMock:
+    """A FaceEmbedder whose detect() answers each frame from *by_frame*;
+    ``None`` is a frame it could not examine."""
+
+    async def _detect(frame: bytes, **_kwargs: Any) -> list[DetectedFace] | None:
+        return by_frame[frame]
+
+    embedder = MagicMock(spec=FaceEmbedder)
+    embedder.detect = _detect
+    return embedder
+
+
 async def test_face_recognizer_no_enrollments_returns_empty(db: ClipDatabase) -> None:
     embedder = MagicMock(spec=FaceEmbedder)
     recognizer = FaceRecognizer(embedder, db)
     result = await recognizer.recognize([b"frame"])
     assert result == FaceRecognitionResult()
-    embedder.embed.assert_not_called()
+    embedder.detect.assert_not_called()
 
 
 async def test_face_recognizer_matches_approved_member(db: ClipDatabase) -> None:
     await db.add_face_enrollment("Brian", [1.0, 0.0, 0.0], approved=True)
-    embedder = MagicMock(spec=FaceEmbedder)
-    embedder.embed = MagicMock(return_value=_async_result([[1.0, 0.0, 0.0]]))
+    embedder = _detecting({b"frame": [_face([1.0, 0.0, 0.0])]})
 
     recognizer = FaceRecognizer(embedder, db)
     result = await recognizer.recognize([b"frame"])
@@ -2342,8 +2402,7 @@ async def test_face_recognizer_matches_unapproved_member(db: ClipDatabase) -> No
     match — it lands in other_names, which blocks the bypass exactly like a
     stranger would (see _face_bypass_applies)."""
     await db.add_face_enrollment("Nanny", [1.0, 0.0, 0.0], approved=False)
-    embedder = MagicMock(spec=FaceEmbedder)
-    embedder.embed = MagicMock(return_value=_async_result([[1.0, 0.0, 0.0]]))
+    embedder = _detecting({b"frame": [_face([1.0, 0.0, 0.0])]})
 
     recognizer = FaceRecognizer(embedder, db)
     result = await recognizer.recognize([b"frame"])
@@ -2356,8 +2415,7 @@ async def test_face_recognizer_no_match_below_threshold_is_unrecognized(
     db: ClipDatabase,
 ) -> None:
     await db.add_face_enrollment("Brian", [1.0, 0.0, 0.0])
-    embedder = MagicMock(spec=FaceEmbedder)
-    embedder.embed = MagicMock(return_value=_async_result([[0.0, 1.0, 0.0]]))
+    embedder = _detecting({b"frame": [_face([0.0, 1.0, 0.0])]})
 
     recognizer = FaceRecognizer(embedder, db)
     result = await recognizer.recognize([b"frame"])
@@ -2374,14 +2432,12 @@ async def test_face_recognizer_approved_plus_stranger_blocks_bypass_signal(
     result must report both facts, since this is exactly what must prevent
     the suspicious-flag bypass from firing."""
     await db.add_face_enrollment("Brian", [1.0, 0.0, 0.0], approved=True)
-
-    async def _embed(frame: bytes) -> list[list[float]]:
-        if frame == b"frame-brian":
-            return [[1.0, 0.0, 0.0]]
-        return [[0.0, 1.0, 0.0]]  # stranger, no enrollment matches
-
-    embedder = MagicMock(spec=FaceEmbedder)
-    embedder.embed = _embed
+    embedder = _detecting(
+        {
+            b"frame-brian": [_face([1.0, 0.0, 0.0])],
+            b"frame-stranger": [_face([0.0, 1.0, 0.0])],  # no enrollment matches
+        }
+    )
 
     recognizer = FaceRecognizer(embedder, db)
     result = await recognizer.recognize([b"frame-brian", b"frame-stranger"])
@@ -2392,14 +2448,12 @@ async def test_face_recognizer_approved_plus_stranger_blocks_bypass_signal(
 async def test_face_recognizer_picks_best_match_across_frames(db: ClipDatabase) -> None:
     await db.add_face_enrollment("Brian", [1.0, 0.0, 0.0])
     await db.add_face_enrollment("Amy", [0.0, 1.0, 0.0])
-
-    async def _embed(frame: bytes) -> list[list[float]]:
-        if frame == b"frame-amy":
-            return [[0.0, 0.9, 0.1]]
-        return [[0.99, 0.05, 0.0]]
-
-    embedder = MagicMock(spec=FaceEmbedder)
-    embedder.embed = _embed
+    embedder = _detecting(
+        {
+            b"frame-amy": [_face([0.0, 0.9, 0.1])],
+            b"frame-brian": [_face([0.99, 0.05, 0.0])],
+        }
+    )
 
     recognizer = FaceRecognizer(embedder, db)
     result = await recognizer.recognize([b"frame-amy", b"frame-brian"])
@@ -2410,10 +2464,7 @@ async def test_face_recognizer_multiple_faces_same_frame(db: ClipDatabase) -> No
     """MTCNN (keep_all=True) can return multiple faces from a single frame —
     each must be matched independently, not collapsed to one."""
     await db.add_face_enrollment("Brian", [1.0, 0.0, 0.0], approved=True)
-    embedder = MagicMock(spec=FaceEmbedder)
-    embedder.embed = MagicMock(
-        return_value=_async_result([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
-    )
+    embedder = _detecting({b"frame": [_face([1.0, 0.0, 0.0]), _face([0.0, 1.0, 0.0])]})
 
     recognizer = FaceRecognizer(embedder, db)
     result = await recognizer.recognize([b"frame"])
@@ -2431,7 +2482,7 @@ async def test_face_recognizer_db_error_returns_empty(db: ClipDatabase) -> None:
     recognizer = FaceRecognizer(embedder, broken_db)
     result = await recognizer.recognize([b"frame"])
     assert result == FaceRecognitionResult()
-    embedder.embed.assert_not_called()
+    embedder.detect.assert_not_called()
 
 
 async def test_face_recognizer_frame_that_cannot_be_examined_blocks_the_bypass(
@@ -2442,18 +2493,306 @@ async def test_face_recognizer_frame_that_cannot_be_examined_blocks_the_bypass(
     the clip look fully accounted for — and eligible to have its suspicious
     flag cleared — when it had not been fully checked."""
     await db.add_face_enrollment("Brian", [1.0, 0.0, 0.0], approved=True)
-
-    async def _embed(frame: bytes) -> list[list[float]] | None:
-        return [[1.0, 0.0, 0.0]] if frame == b"frame-brian" else None
-
-    embedder = MagicMock(spec=FaceEmbedder)
-    embedder.embed = _embed
+    embedder = _detecting(
+        {b"frame-brian": [_face([1.0, 0.0, 0.0])], b"frame-unreadable": None}
+    )
 
     result = await FaceRecognizer(embedder, db).recognize(
         [b"frame-brian", b"frame-unreadable"]
     )
     assert result.approved_names == ["Brian"]
     assert result.unrecognized_present is True
+
+
+# ------------------------------------------------------------------
+# FaceRecognizer: ai_face_recognition_ignore_unclear_faces
+#
+# The default is the strict rule every test above pins. These pin the option:
+# what it sets aside, and -- as much the point -- every way a stranger is
+# still counted. Four-dimensional unit vectors keep the arithmetic readable:
+# Amy, Brian and Carl each own an axis, and the fourth axis is nobody.
+# ------------------------------------------------------------------
+
+_PEOPLE = {"Amy": 0, "Brian": 1, "Carl": 2}
+
+
+def _axis(index: int) -> list[float]:
+    vector = [0.0, 0.0, 0.0, 0.0]
+    vector[index] = 1.0
+    return vector
+
+
+def _like(index: int, similarity: float) -> list[float]:
+    """A vector whose cosine similarity to person *index*'s axis is exactly
+    *similarity* and to every other enrolled person is 0."""
+    vector = [0.0, 0.0, 0.0, (1 - similarity**2) ** 0.5]
+    vector[index] = similarity
+    return vector
+
+
+async def _enroll(db: ClipDatabase, *names: str, unapproved: str = "") -> None:
+    for name in names:
+        await db.add_face_enrollment(name, _axis(_PEOPLE[name]), approved=True)
+    if unapproved:
+        await db.add_face_enrollment(
+            unapproved, _axis(_PEOPLE[unapproved]), approved=False
+        )
+
+
+def _person(name: str) -> DetectedFace:
+    """A clear look at an enrolled person: matches them."""
+    return _face(_axis(_PEOPLE[name]))
+
+
+def _blurred(**kwargs: Any) -> DetectedFace:
+    """A poor look at somebody: Fair/Low quality, and matches nobody."""
+    return _face(_axis(3), quality=kwargs.pop("quality", 0.3), **kwargs)
+
+
+def _stranger() -> DetectedFace:
+    """A clear look at somebody who is not enrolled."""
+    return _face(_axis(3))
+
+
+async def _recognize(
+    db: ClipDatabase,
+    frames: list[list[DetectedFace] | None],
+    *,
+    ignore_unclear: bool = True,
+) -> FaceRecognitionResult:
+    keyed = {f"frame-{i}".encode(): faces for i, faces in enumerate(frames)}
+    return await FaceRecognizer(_detecting(keyed), db).recognize(
+        list(keyed), ignore_unclear=ignore_unclear
+    )
+
+
+async def test_an_unclear_face_counts_as_a_stranger_unless_the_option_is_on(
+    db: ClipDatabase,
+) -> None:
+    await _enroll(db, "Amy", "Brian")
+    frames = [[_person("Amy"), _person("Brian")], [_person("Amy"), _blurred()]]
+
+    strict = await _recognize(db, frames, ignore_unclear=False)
+    assert strict.unrecognized_present is True
+    assert strict.unclear_faces == 0
+
+    relaxed = await _recognize(db, frames)
+    assert relaxed.unrecognized_present is False
+    assert relaxed.unclear_faces == 1
+    assert relaxed.approved_names == ["Amy", "Brian"]
+
+
+async def test_an_unclear_face_beside_the_only_person_recognized_still_counts(
+    db: ClipDatabase,
+) -> None:
+    """Two faces cannot be one person: with only Amy recognized, a blurred
+    face next to hers is somebody else -- exactly a stranger beside a
+    resident, who must keep the clip flagged."""
+    await _enroll(db, "Amy", "Brian")
+    result = await _recognize(db, [[_person("Amy")], [_person("Amy"), _blurred()]])
+    assert result.unrecognized_present is True
+    assert result.unclear_faces == 0
+
+
+async def test_a_frame_cannot_hold_more_faces_than_people_recognized(
+    db: ClipDatabase,
+) -> None:
+    await _enroll(db, "Amy", "Brian")
+    both = [_person("Amy"), _person("Brian")]
+    result = await _recognize(db, [both, [*both, _blurred()]])
+    assert result.unrecognized_present is True
+
+
+async def test_every_unmatched_face_in_a_frame_must_be_unclear(
+    db: ClipDatabase,
+) -> None:
+    await _enroll(db, "Amy", "Brian", "Carl")
+    everyone = [_person("Amy"), _person("Brian"), _person("Carl")]
+    result = await _recognize(db, [everyone, [_person("Amy"), _blurred(), _stranger()]])
+    assert result.unrecognized_present is True
+    assert result.unclear_faces == 0
+
+
+async def test_a_clear_face_that_matches_nobody_always_counts(db: ClipDatabase) -> None:
+    """The stranger's signature -- a good look at a face nobody enrolled --
+    is never set aside, whoever else is there."""
+    await _enroll(db, "Amy", "Brian")
+    result = await _recognize(
+        db, [[_person("Amy"), _person("Brian")], [_person("Amy"), _stranger()]]
+    )
+    assert result.unrecognized_present is True
+    assert result.unclear_faces == 0
+
+
+async def test_a_face_too_small_to_judge_always_counts(db: ClipDatabase) -> None:
+    """Someone far behind the residents is as likely as anyone to be a
+    stranger, and a face that small cannot be read either way."""
+    await _enroll(db, "Amy", "Brian")
+    both = [_person("Amy"), _person("Brian")]
+    narrow = await _recognize(db, [both, [_person("Amy"), _blurred(width=49)]])
+    assert narrow.unrecognized_present is True
+    wide_enough = await _recognize(db, [both, [_person("Amy"), _blurred(width=50)]])
+    assert wide_enough.unrecognized_present is False
+
+
+async def test_a_face_cut_off_by_the_frame_is_set_aside_however_sharp(
+    db: ClipDatabase,
+) -> None:
+    await _enroll(db, "Amy", "Brian")
+    both = [_person("Amy"), _person("Brian")]
+    cut = _face(_axis(3), quality=0.95, cut_off=True)
+    assert (
+        await _recognize(db, [both, [_person("Amy"), cut]])
+    ).unrecognized_present is False
+    whole = _face(_axis(3), quality=0.95)
+    assert (
+        await _recognize(db, [both, [_person("Amy"), whole]])
+    ).unrecognized_present is True
+
+
+async def test_a_clear_likeness_of_someone_recognized_in_the_clip_is_set_aside(
+    db: ClipDatabase,
+) -> None:
+    await _enroll(db, "Amy", "Brian")
+    both = [_person("Amy"), _person("Brian")]
+    # Short of the match bar (0.75) but a clear likeness of Amy.
+    like_amy = _face(_like(0, 0.56))
+    result = await _recognize(db, [both, [_person("Brian"), like_amy]])
+    assert result.unrecognized_present is False
+    assert result.unclear_faces == 1
+    # Not enough of a likeness: an ordinary, clear, unfamiliar face.
+    unlike = _face(_like(0, 0.54))
+    assert (
+        await _recognize(db, [both, [_person("Brian"), unlike]])
+    ).unrecognized_present is True
+
+
+async def test_a_likeness_of_someone_not_recognized_in_the_clip_does_not_count(
+    db: ClipDatabase,
+) -> None:
+    """Carl is enrolled but never seen here, so a face that looks like Carl is
+    no evidence it is one of the people who *were* -- and is the face of a
+    household member's lookalike or relative, not to be waved through."""
+    await _enroll(db, "Amy", "Brian", "Carl")
+    both = [_person("Amy"), _person("Brian")]
+    like_carl = _face(_like(2, 0.7))
+    result = await _recognize(db, [both, [_person("Amy"), like_carl]])
+    assert result.unrecognized_present is True
+
+
+async def test_a_stranger_who_takes_a_residents_place_is_not_taken_for_them(
+    db: ClipDatabase,
+) -> None:
+    """Amy and Brian are both recognized; Brian leaves and somebody whose face
+    is never clear stands beside Amy in his place. Two faces, two people
+    recognized, so counting heads cannot tell -- the stranger passes for
+    Brian only for as long as Brian was seen a frame earlier."""
+    await _enroll(db, "Amy", "Brian")
+    both = [_person("Amy"), _person("Brian")]
+    stand_in = [_person("Amy"), _blurred()]
+    # One blurred frame of Brian, between two clear ones.
+    assert (await _recognize(db, [both, stand_in, both])).unrecognized_present is False
+    # Somebody who stays after Brian was last seen is somebody else.
+    assert (
+        await _recognize(db, [both, stand_in, stand_in])
+    ).unrecognized_present is True
+    assert (
+        await _recognize(db, [both, both, stand_in, stand_in, stand_in])
+    ).unrecognized_present is True
+
+
+async def test_a_likeness_only_counts_for_people_seen_nearby(
+    db: ClipDatabase,
+) -> None:
+    await _enroll(db, "Amy", "Brian", "Carl")
+    like_carl = _face(_like(2, 0.7))
+    nearby = await _recognize(db, [[_person("Carl")], [_person("Amy"), like_carl]])
+    assert nearby.unrecognized_present is False
+    # Carl was recognized in this clip, but not near that frame.
+    far = await _recognize(
+        db,
+        [[_person("Carl")], [], [_person("Brian")], [_person("Amy"), like_carl]],
+    )
+    assert far.unrecognized_present is True
+
+
+async def test_an_unclear_face_needs_a_recognized_person_in_or_beside_its_frame(
+    db: ClipDatabase,
+) -> None:
+    """A stranger who arrives once the residents have gone is not "the
+    resident again": the face has to sit in, or right next to, a frame where
+    somebody was recognized."""
+    await _enroll(db, "Amy", "Brian")
+    both = [_person("Amy"), _person("Brian")]
+    after = await _recognize(db, [both, [_blurred()]])
+    assert after.unrecognized_present is False
+    before = await _recognize(db, [[_blurred()], both])
+    assert before.unrecognized_present is False
+    # Two frames away is no longer next to.
+    late = await _recognize(db, [both, [], [_blurred()]])
+    assert late.unrecognized_present is True
+    early = await _recognize(db, [[_blurred()], [], both])
+    assert early.unrecognized_present is True
+
+
+async def test_a_frame_that_could_not_be_examined_still_blocks_the_clip(
+    db: ClipDatabase,
+) -> None:
+    await _enroll(db, "Amy", "Brian")
+    both = [_person("Amy"), _person("Brian")]
+    result = await _recognize(db, [both, [_person("Amy"), _blurred()], None])
+    assert result.unrecognized_present is True
+    assert result.unclear_faces == 0
+
+
+async def test_faces_are_only_set_aside_when_none_in_the_clip_counts(
+    db: ClipDatabase,
+) -> None:
+    await _enroll(db, "Amy", "Brian")
+    both = [_person("Amy"), _person("Brian")]
+    result = await _recognize(
+        db,
+        [both, [_person("Amy"), _blurred()], [_person("Amy"), _stranger()]],
+    )
+    assert result.unrecognized_present is True
+    assert result.unclear_faces == 0
+
+
+async def test_people_recognized_but_not_approved_make_room_for_unclear_faces(
+    db: ClipDatabase,
+) -> None:
+    """They are people in the clip like any other. The bypass is withheld for
+    them regardless (other_names), so this only widens who a blurred face may
+    be put down to -- and who a summary is allowed to name."""
+    await _enroll(db, "Amy", unapproved="Carl")
+    pair = [_person("Amy"), _person("Carl")]
+    result = await _recognize(db, [pair, [_person("Amy"), _blurred()]])
+    assert result.unrecognized_present is False
+    assert result.other_names == ["Carl"]
+
+
+async def test_two_photos_of_one_person_count_once_towards_who_is_there(
+    db: ClipDatabase,
+) -> None:
+    await _enroll(db, "Amy")
+    await db.add_face_enrollment("Amy", _axis(1), approved=True)  # a second photo
+    result = await _recognize(db, [[_person("Amy")], [_face(_axis(1)), _blurred()]])
+    # One person recognized, so a blurred face beside her is a second person.
+    assert result.approved_names == ["Amy"]
+    assert result.unrecognized_present is True
+
+
+def test_resemblance_keeps_the_best_photo_per_person() -> None:
+    photos = [
+        {"name": "Amy", "embedding": [1.0, 0.0]},
+        {"name": "Amy", "embedding": [0.0, 1.0]},
+    ]
+    brian = {"name": "Brian", "embedding": [1.0, 1.0]}
+    # Whichever order the photos come in, it is the closest one that counts.
+    for order in (photos, photos[::-1]):
+        assert _resemblance([0.0, 1.0], [*order, brian]) == pytest.approx(
+            {"Amy": 1.0, "Brian": 0.7071067811865476}
+        )
 
 
 def test_match_enrollment_reports_name_and_similarity() -> None:
@@ -2513,6 +2852,30 @@ def test_build_recognition_hint_notes_stranger_present() -> None:
     )
     assert hint is not None
     assert "NOTE" in hint
+
+
+def test_build_recognition_hint_says_when_a_face_was_too_unclear_to_identify() -> None:
+    """A face set aside for the bypass is still not a face anyone identified,
+    and the model is told so -- without a name and without a count."""
+    hint = _build_recognition_hint(
+        FaceRecognitionResult(approved_names=["Brian", "Amy"], unclear_faces=3)
+    )
+    assert hint is not None
+    assert "too unclear to identify" in hint
+    assert "do not assume everyone present is a known resident" in hint
+    assert "Brian" not in hint and "Amy" not in hint
+    assert "3" not in hint
+
+
+def test_build_recognition_hint_does_not_note_a_face_twice() -> None:
+    hint = _build_recognition_hint(
+        FaceRecognitionResult(
+            approved_names=["Brian"], unrecognized_present=True, unclear_faces=1
+        )
+    )
+    assert hint is not None
+    assert hint.count("NOTE") == 1
+    assert "did NOT match" in hint
 
 
 def test_build_recognition_hint_none_when_no_approved_match() -> None:
@@ -2889,12 +3252,64 @@ async def test_vision_pipeline_stays_silent_when_the_detector_never_ran() -> Non
 async def test_vision_pipeline_face_recognition(db: ClipDatabase) -> None:
     await db.add_face_enrollment("Brian", [1.0, 0.0])
     pipeline = VisionPipeline(VisionConfig(face_recognition_enabled=True), db=db)
-    with patch.object(FaceEmbedder, "embed", return_value=[[1.0, 0.0]]):
+    with patch.object(FaceEmbedder, "detect", return_value=[_face([1.0, 0.0])]):
         hints = await pipeline.process_clip([b"frame"])
     assert hints.recognized_resident_hint is not None
     assert "Brian" not in hints.recognized_resident_hint  # name never sent to AI
     assert hints.face_recognition is not None
     assert hints.face_recognition.approved_names == ["Brian"]
+
+
+async def _clip_with_a_blurred_resident(
+    db: ClipDatabase, config: VisionConfig
+) -> VisionHints:
+    """Amy and Brian recognized in one frame; in the next, Amy and a blurred
+    face that matches neither."""
+    await db.add_face_enrollment("Amy", [1.0, 0.0, 0.0, 0.0])
+    await db.add_face_enrollment("Brian", [0.0, 1.0, 0.0, 0.0])
+    frames = {
+        b"frame-1": [_face([1.0, 0.0, 0.0, 0.0]), _face([0.0, 1.0, 0.0, 0.0])],
+        b"frame-2": [
+            _face([1.0, 0.0, 0.0, 0.0]),
+            _face([0.0, 0.0, 0.0, 1.0], quality=0.3),
+        ],
+    }
+
+    async def _detect(frame: bytes, **_kwargs: Any) -> list[DetectedFace]:
+        return frames[frame]
+
+    with patch.object(FaceEmbedder, "detect", side_effect=_detect):
+        return await VisionPipeline(config, db=db).process_clip(
+            [b"prompt"], raw_frames=list(frames)
+        )
+
+
+async def test_vision_pipeline_counts_an_unclear_face_unless_configured_otherwise(
+    db: ClipDatabase,
+) -> None:
+    hints = await _clip_with_a_blurred_resident(
+        db, VisionConfig(face_recognition_enabled=True)
+    )
+    assert hints.face_recognition is not None
+    assert hints.face_recognition.unrecognized_present is True
+    assert hints.recognized_resident_hint is not None
+    assert "did NOT match" in hints.recognized_resident_hint
+
+
+async def test_vision_pipeline_sets_an_unclear_face_aside_when_configured(
+    db: ClipDatabase,
+) -> None:
+    hints = await _clip_with_a_blurred_resident(
+        db, VisionConfig(face_recognition_enabled=True, face_ignore_unclear=True)
+    )
+    assert hints.face_recognition is not None
+    assert hints.face_recognition.unrecognized_present is False
+    assert hints.face_recognition.unclear_faces == 1
+    # What the AI provider is sent: a nameless, countless fact.
+    hint = hints.recognized_resident_hint
+    assert hint is not None
+    assert "too unclear to identify" in hint
+    assert "Amy" not in hint and "Brian" not in hint
 
 
 async def test_vision_pipeline_face_recognition_uses_raw_frames_not_enhanced(
@@ -2911,9 +3326,9 @@ async def test_vision_pipeline_face_recognition_uses_raw_frames_not_enhanced(
     raw_frames = [b"raw-frame-1", b"raw-frame-2"]
     seen_frames: list[bytes] = []
 
-    async def _embed(frame: bytes) -> list[list[float]]:
+    async def _detect(frame: bytes, **_kwargs: Any) -> list[DetectedFace]:
         seen_frames.append(frame)
-        return [[1.0, 0.0]]
+        return [_face([1.0, 0.0])]
 
     config = VisionConfig(
         enhanced_detection_enabled=True, face_recognition_enabled=True
@@ -2925,7 +3340,7 @@ async def test_vision_pipeline_face_recognition_uses_raw_frames_not_enhanced(
             "enhance",
             side_effect=lambda frames: [b"enhanced-" + f for f in frames],
         ),
-        patch.object(FaceEmbedder, "embed", side_effect=_embed),
+        patch.object(FaceEmbedder, "detect", side_effect=_detect),
     ):
         hints = await pipeline.process_clip(raw_frames)
 
@@ -2948,13 +3363,13 @@ async def test_vision_pipeline_face_recognition_prefers_face_recognition_frames_
     wider_pool = [b"pool-frame-1", b"pool-frame-2", b"pool-frame-3"]
     seen_frames: list[bytes] = []
 
-    async def _embed(frame: bytes) -> list[list[float]]:
+    async def _detect(frame: bytes, **_kwargs: Any) -> list[DetectedFace]:
         seen_frames.append(frame)
-        return [[1.0, 0.0]]
+        return [_face([1.0, 0.0])]
 
     config = VisionConfig(face_recognition_enabled=True)
     pipeline = VisionPipeline(config, db=db)
-    with patch.object(FaceEmbedder, "embed", side_effect=_embed):
+    with patch.object(FaceEmbedder, "detect", side_effect=_detect):
         hints = await pipeline.process_clip(prompt_frames, raw_frames=wider_pool)
 
     assert seen_frames == wider_pool
@@ -2973,7 +3388,7 @@ async def _recognized_frames(
     await db.add_face_enrollment("Brian", [1.0, 0.0])
     seen: list[bytes] = []
 
-    async def _embed(frame: bytes) -> list[list[float]]:
+    async def _detect(frame: bytes, **_kwargs: Any) -> list[DetectedFace]:
         seen.append(frame)
         return []
 
@@ -2982,7 +3397,7 @@ async def _recognized_frames(
     )
     extract = MagicMock(side_effect=lambda *a, **k: _async_result(extracted))
     with (
-        patch.object(FaceEmbedder, "embed", side_effect=_embed),
+        patch.object(FaceEmbedder, "detect", side_effect=_detect),
         patch("blink_downloader.vision.pipeline.extract_jpeg_frames", extract),
     ):
         await pipeline.process_clip(
