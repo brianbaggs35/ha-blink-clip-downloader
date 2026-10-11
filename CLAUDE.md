@@ -148,6 +148,23 @@ architecture.
     real faces shrunk to camera size; the comments say what they are.
     `media_server/faces.py` is the route side; `vision/faces.py`'s
     `FaceEmbedder.detect()` finds the faces.
+  - `face_outcomes.py` — what face recognition made of a clip, stdlib only
+    (the analyzer, which stores it, does not import the optional `vision`
+    package): `FaceTally` (faces seen/matched/unclear, frames unexamined, and
+    whether the set-aside rule would clear the clip), `FaceOutcome` (why the
+    clip did or did not count as recognized -- **stored values: add, never
+    rename**), `classify_face_outcome` and `summarize_face_outcomes`, the
+    Biometrics tab's Recognition results panel's totals. Counts and a code,
+    never who. Four `analysis_results` columns ride on it (`faces_seen`,
+    `faces_matched`, `faces_unclear`, `face_outcome`; `''` means recognition
+    examined nothing and the row is left out, which is also every row from
+    before 6.1.1), read by `get_face_outcome_counts` -- latest analysis per
+    clip, like the Recognized badge -- behind
+    `GET /api/ai/faces/recognition-stats`. `classify_face_outcome`'s last
+    reason (`extra_people`) is a residual that relies on
+    `_face_match_is_unambiguous`'s definition of "recognized";
+    `test_every_outcome_agrees_with_what_the_analyzer_counts_as_recognized`
+    is what notices if that definition grows another blocker.
   - `security/` — the structured security layer (`events.py`, `tracks.py`,
     `geometry.py`, `zones`/`assets.py`, `vehicles.py`, `detector.py`,
     `sounds.py`, `scoring.py`, `evidence.py`, `narrative.py`,
@@ -725,7 +742,12 @@ removed in 5.0.0.
   the enrolled face on the next scan — runs through the real server code.
   Its 4-d embeddings share a space with the seeded enrollments, chosen so
   nothing matches by accident and one of Riley's photos is flagged by the
-  photo review. The Vehicles tab's zone-drawing
+  photo review. The Recognition results panel's spec
+  (`biometrics-recognition-results.spec.ts`) runs against the real server only
+  for its empty state -- nothing seeded may carry a recognition outcome, since
+  `approved_faces_seen` rows would break `library-filters.spec.ts`'s "nothing
+  seeded has a recorded face match" and any analysis row moves the AI tabs'
+  counts -- and answers the one endpoint itself for the figures. The Vehicles tab's zone-drawing
   canvas depends on its background `<img>` firing a real `load` event,
   which needs a real thumbnail file on disk — solved by giving `Test
   Scratch` a real, `ffmpeg`-generated video (the same fixture Biometrics'
@@ -872,7 +894,7 @@ matches nobody blocks": `ai_face_recognition_ignore_unclear_faces` (off by
 default; off, the code path is the old one and every strict-mode test pins
 it). It lives entirely in `vision/faces.py` --
 `FaceRecognizer.recognize(..., ignore_unclear=True)` and its helpers
-`_count_strangers`/`_vouched_for`/`_inconclusive` -- and still just sets the
+`_account_unmatched`/`_available`/`_could_be`/`_each_has_their_own` -- and still just sets the
 one `FaceRecognitionResult.unrecognized_present` flag that
 `_faces_all_approved`, the Library badge, the known-person discount,
 `_personalization_names` and the AI hint all read, **so no consumer grew a
@@ -884,24 +906,39 @@ a poor look (quality under 0.6, the Biometrics tab's "Good" line, or
 person at `_RESEMBLANCE_SIMILARITY` (0.55, short of the 0.75 match bar), and
 (2) it can be assigned to a different recognized person matched in that
 frame's neighbourhood (the frame before, itself, the one after) and not
-already matched in the frame. Each clause closes a leak that was measured, on
+already matched in the frame -- a real one-person-per-face assignment
+(`_each_has_their_own`, a bipartite matching), not a head count: a poor look
+could be any available person but a sharp, whole face only one it resembles,
+so two sharp faces that both resemble only Amy are not both Amy (a count let
+that through; `tests/test_vision.py` pins it, and a brute-force oracle written
+from the rule's wording agreed with the code on every random clip it was
+checked against). Each clause closes a leak that was measured, on
 clips rendered from real LFW faces through H.264 and the real MTCNN + FaceNet,
 not argued: without "a different person not already in the frame" a stranger
 beside a resident cleared 6-12% of such clips; without the neighbourhood, one
 arriving after the residents left 3%; a global head count instead of the
 local assignment, one taking a resident's place beside the other 4%; without
-the width floor a distant stranger beside residents is waved through. As
-shipped: 0 of 336 stranger clips cleared through the production code path
-(and 0 of 672 more during design), against 7% -> 63% of resident-only clips
-(0% -> 83% for two residents enrolled from the same camera). **Re-measure
+the width floor a distant stranger beside residents is waved through. As shipped: 0 of 336 stranger clips cleared through the production code path at
+both 1280px and 640px frames (and 0 of 672 more during design, at 1280px), against
+7% -> 62% of resident-only clips at 1280px but only 9% -> 16% at the default 640px:
+the median resident face is 84px wide at 1280 and about 42px at 640, so 74% fall under
+`_MIN_JUDGEABLE_WIDTH` there. 960px (`high`) was not yet measured. The docs say so and
+tell users to raise `ai_face_recognition_resolution` with the option. **Re-measure
 before changing a threshold or dropping a clause**; `tests/test_vision.py`'s
 adversarial cases pin each clause, and a mutation run of the helpers found
 every one caught. Privacy is unchanged and must stay so: the hint stays
 nameless *and* countless (the extra NOTE is a yes/no), `unclear_faces` is never
-persisted, sent or put in a prompt, and
+sent or put in a prompt (the counts stored with an analysis are `FaceTally`'s:
+numbers in this add-on's own database, never names), and
 `test_the_prompt_stays_name_free_when_unclear_faces_were_set_aside` plus
 `test_build_recognition_hint_says_when_a_face_was_too_unclear_to_identify`
-hold that.
+hold that. The rule is *worked out for every clip* (so `FaceTally` can say what
+the option would have done, which the Recognition results panel reports) but
+only *decides* with the option on; with it off the verdict is the old
+"any face that matched nobody, or any unexamined frame, counts", and
+`test_the_option_never_changes_what_the_strict_rule_decides` checks that over
+hundreds of random clips. Keep it that way: diagnostics must never move a
+verdict.
 
 Separately, `ai_risk_alert_threshold` can flag a clip the model called
 unremarkable. It is checked *before* the bypass so the two can never

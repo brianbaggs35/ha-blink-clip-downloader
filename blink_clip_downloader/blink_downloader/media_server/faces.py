@@ -36,6 +36,7 @@ from ..face_enrollment import (
     review_enrollments,
     suppress_near_duplicates,
 )
+from ..face_outcomes import summarize_face_outcomes
 from ..ffmpeg_output import extract_jpeg_frames
 from ..vision import is_face_recognition_available
 from ..vision.faces import DetectedFace, match_enrollment
@@ -43,6 +44,9 @@ from .core import _MediaServerBase
 from .support import _CLIP_NOT_FOUND, _json_object
 
 _LOGGER = logging.getLogger(__name__)
+
+# How far back the Recognition results panel looks.
+_RECOGNITION_RESULTS_DAYS = 30
 
 # A person's name ends up in notification text and on the Biometrics tab;
 # anything longer than this is a paste accident rather than a name.
@@ -150,6 +154,9 @@ class FaceRoutesMixin(_MediaServerBase):
         app.router.add_post("/api/ai/faces/group", self._handle_faces_group)
         app.router.add_get(
             "/api/ai/faces/bypass-stats", self._handle_faces_bypass_stats
+        )
+        app.router.add_get(
+            "/api/ai/faces/recognition-stats", self._handle_faces_recognition_stats
         )
         app.router.add_get(
             "/api/ai/faces/feedback", self._handle_face_recognition_feedback_list
@@ -503,6 +510,27 @@ class FaceRoutesMixin(_MediaServerBase):
     async def _handle_faces_bypass_stats(self, _request: web.Request) -> web.Response:
         stats = await self._db.get_face_bypass_stats()
         return web.json_response(stats)
+
+    async def _handle_faces_recognition_stats(
+        self, _request: web.Request
+    ) -> web.Response:
+        """What recognition made of the last few weeks of clips: how many were
+        recognized, how many faces matched, and why the rest did not count.
+
+        Counts only, never who. ``recognition_enabled`` lets the panel tell
+        "nothing yet" from "recognition is off", and ``ignore_unclear_faces``
+        lets it word its advice about unclear faces for how the option is set
+        right now.
+        """
+        rows = await self._db.get_face_outcome_counts(_RECOGNITION_RESULTS_DAYS)
+        return web.json_response(
+            {
+                "days": _RECOGNITION_RESULTS_DAYS,
+                "recognition_enabled": self._face_recognition_enabled,
+                "ignore_unclear_faces": self._face_ignore_unclear,
+                **summarize_face_outcomes(rows),
+            }
+        )
 
     async def _handle_face_recognition_feedback_submit(
         self, request: web.Request

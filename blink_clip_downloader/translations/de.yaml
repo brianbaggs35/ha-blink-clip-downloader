@@ -529,16 +529,6 @@ configuration:
       und verlässt niemals dieses Add-on oder dein Netzwerk — sie wird
       niemals an einen Cloud-KI-Anbieter gesendet, unabhängig davon,
       welcher oben konfiguriert ist. Standardmäßig deaktiviert.
-  ai_face_recognition_resolution:
-    name: Auflösung der Gesichtserkennung
-    description: >-
-      Mit wie viel Detail Gesichter verglichen werden. „standard“ nutzt
-      die 640 px breiten Bilder, die die Analyse ohnehin extrahiert;
-      „high“ (960 px) und „very_high“ (1280 px) betrachten dieselben
-      Momente detaillierter und erkennen so Personen weiter entfernt von
-      der Kamera, bei etwas höherer CPU-Last. Scanne nach einer Änderung
-      einen Clip im Biometrie-Tab erneut — Gesichter werden am besten
-      mit Fotos derselben Auflösung abgeglichen.
   ai_face_recognition_ignore_unclear_faces:
     name: Unklare Gesichter ignorieren
     description: >-
@@ -549,11 +539,22 @@ configuration:
       schlechtes Gesicht (verwackelt, vom Bildrand abgeschnitten,
       abgewandt oder halb verdeckt – oder eines, das jemandem aus
       demselben Clip deutlich ähnelt) stattdessen beiseitegelegt, aber nur,
-      wenn in diesem Bild oder direkt daneben jemand erkannt wurde und das
-      Bild nicht mehr Gesichter zeigt als erkannte Personen. Ein klares
+      wenn es sich einer anderen erkannten Person zuordnen lässt: einer, die
+      in diesem Bild oder direkt daneben gesehen wurde und in diesem Bild
+      nicht schon durch ein anderes Gesicht gezeigt wird. Ein klares
       Gesicht, das zu niemandem passt, oder ein Fremder neben einem
       Haushaltsmitglied zählt weiterhin. Lies vor dem Einschalten die
       Dokumentation.
+  ai_face_recognition_resolution:
+    name: Auflösung der Gesichtserkennung
+    description: >-
+      Mit wie viel Detail Gesichter verglichen werden. „standard“ nutzt
+      die 640 px breiten Bilder, die die Analyse ohnehin extrahiert;
+      „high“ (960 px) und „very_high“ (1280 px) betrachten dieselben
+      Momente detaillierter und erkennen so Personen weiter entfernt von
+      der Kamera, bei etwas höherer CPU-Last. Scanne nach einer Änderung
+      einen Clip im Biometrie-Tab erneut — Gesichter werden am besten
+      mit Fotos derselben Auflösung abgeglichen.
   hf_token:
     name: Hugging Face-Token (optional)
     description: >-

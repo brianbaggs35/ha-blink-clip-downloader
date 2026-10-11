@@ -144,6 +144,7 @@ class MediaServer(
         moondream_api_key: str = "",
         prompt_debug_enabled: bool = False,
         face_recognition_enabled: bool = False,
+        face_ignore_unclear: bool = False,
         face_frame_width: int = ANALYSIS_FRAME_WIDTH,
         live_view: LiveViewManager | None = None,
         list_camera_names: Callable[[], list[str]] | None = None,
@@ -202,6 +203,9 @@ class MediaServer(
         # when enrolled people are not being recognized because the option
         # is off. Recognition itself runs in the analyzer's VisionPipeline.
         self._face_recognition_enabled = face_recognition_enabled
+        # Likewise only reported: the Recognition results panel words its advice
+        # about unclear faces differently once the option is already on.
+        self._face_ignore_unclear = face_ignore_unclear
         # The width recognition matches faces at, which enrollment scans
         # must use too (see vision/faces.py's FACE_RESOLUTION_WIDTHS).
         self._face_frame_width = face_frame_width

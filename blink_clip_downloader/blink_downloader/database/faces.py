@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from .core import _DatabaseBase
@@ -73,6 +73,43 @@ class FaceEnrollmentsMixin(_DatabaseBase):
             ],
             "recent": recent,
         }
+
+    async def get_face_outcome_counts(self, days: int = 30) -> list[dict[str, Any]]:
+        """Per face outcome, how many clips ended that way and the faces
+        recognition counted in them, over the last *days* days.
+
+        Backs the Biometrics tab's Recognition results panel (the figures
+        themselves are :func:`~blink_downloader.face_outcomes.summarize_face_outcomes`).
+        One row per clip: its latest analysis, the same "most recent wins"
+        scoping the Library's Recognized badge uses, so a clip re-analyzed
+        into a different outcome is not counted twice. Rows recognition never
+        examined carry no outcome and are left out -- including every row
+        written before the columns existed -- rather than being read as
+        "no faces".
+        """
+        if self._pool is None:
+            return []
+        since = (datetime.now(UTC) - timedelta(days=days)).isoformat()
+        rows = await self._pool.fetch(
+            _qm(
+                """
+                SELECT ar.face_outcome AS outcome,
+                       COUNT(*) AS clips,
+                       COALESCE(SUM(ar.faces_seen), 0) AS faces_seen,
+                       COALESCE(SUM(ar.faces_matched), 0) AS faces_matched,
+                       COALESCE(SUM(ar.faces_unclear), 0) AS faces_unclear
+                FROM analysis_results ar
+                WHERE ar.face_outcome <> ''
+                  AND ar.analyzed_at >= ?
+                  AND ar.analyzed_at = (SELECT MAX(ar2.analyzed_at)
+                                        FROM analysis_results ar2
+                                        WHERE ar2.clip_id = ar.clip_id)
+                GROUP BY ar.face_outcome
+                """
+            ),
+            since,
+        )
+        return [dict(r) for r in rows]
 
     async def add_face_recognition_feedback(
         self,

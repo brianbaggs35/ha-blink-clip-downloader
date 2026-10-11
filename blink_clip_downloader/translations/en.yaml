@@ -453,6 +453,19 @@ configuration:
       web UI's Biometrics tab and never leaves this add-on or your network
       — it is never sent to any cloud AI provider, regardless of which one
       is configured above. Off by default.
+  ai_face_recognition_ignore_unclear_faces:
+    name: Ignore Unclear Faces
+    description: >-
+      Off by default: every face that matches nobody counts as a possible
+      stranger, so one blurred frame of a household member can stop a clip
+      from being recognized or its alert from being cleared. On, a face too
+      poor to identify (blurred, cut off by the frame, turned away or half
+      hidden, or clearly resembling someone recognized in the same clip) is
+      set aside instead, but only when it can be put down to a different
+      recognized person: one seen in that frame or right next to it who is
+      not already shown by another face in that frame. A clear face that
+      matches nobody, or a stranger beside a household member, still counts.
+      Read the documentation before enabling.
   ai_face_recognition_resolution:
     name: Face Recognition Resolution
     description: >-
@@ -462,19 +475,6 @@ configuration:
       recognizes people farther from the camera at a modest extra CPU
       cost. After changing it, re-scan a clip on the Biometrics tab —
       faces match best against photos enrolled at the same resolution.
-  ai_face_recognition_ignore_unclear_faces:
-    name: Ignore Unclear Faces
-    description: >-
-      Off by default: every face that matches nobody counts as a possible
-      stranger, so one blurred frame of a household member can stop a clip
-      from being recognized or its alert from being cleared. On, a face too
-      poor to identify (blurred, cut off by the frame, turned away or half
-      hidden, or clearly resembling someone recognized in the same clip) is
-      set aside instead, but only when someone was recognized in that frame
-      or right next to it and the frame holds no more faces than recognized
-      people. A clear face that matches nobody, or a stranger beside a
-      household member, still counts. Read the documentation before
-      enabling.
   hf_token:
     name: Hugging Face Token (optional)
     description: >-

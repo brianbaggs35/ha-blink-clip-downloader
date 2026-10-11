@@ -962,8 +962,8 @@ you'll see them report unavailable there.
 | `ai_object_detection_model` | `yolo26n.pt` | Which Ultralytics model the detection stage above runs. YOLO26 (`yolo26n/s/m/l/x.pt`) is the current generation — end-to-end inference, lighter and more accurate than YOLO11 at every size — and is the default; `yolo11n/s/m/l/x.pt` remain selectable for compatibility with existing configurations. "n" (nano) is fastest/lightest and the recommended starting point on CPU-only hardware; "s"/"m"/"l"/"x" trade speed for accuracy, with "x" (extra-large) the most accurate and much slower. Small subjects are where the sizes differ most: measured on 75 real dogs rendered into camera clips, a dog about 100px tall in a 1080p frame was found at night 2 times with `yolo26n`, 16 with `yolo26s` and 21 with `yolo26m` (13, 29 and 39 by day), at roughly 2× and 5× nano's detection time, with no more phantom animals in scenes that had none. If a pet or other small animal keeps going unnoticed, try `yolo26s` first. |
 | `ai_depth_estimation_model` | `depth-anything/Depth-Anything-V2-Small-hf` | Which Depth Anything V2 checkpoint the depth-estimation stage above runs. "Small" (default) is fastest/lightest and Apache-2.0 licensed; "Base"/"Large" are more accurate but slower/heavier, and are licensed CC-BY-NC-4.0 (**non-commercial use only**) by their publisher, unlike Small's Apache-2.0 — fine for this add-on's typical personal home-security use, but confirm that licensing fits your own situation before choosing either. |
 | `ai_face_recognition_enabled` | `false` | Local-only face recognition (facenet-pytorch) to suppress alerts for enrolled household members — see below. Kept as its own toggle since it's privacy-sensitive rather than just heavier compute. |
+| `ai_face_recognition_ignore_unclear_faces` | `false` | Whether a face too poor to identify still counts as a possible stranger. Off keeps the suspicious-flag bypass exactly as strict as it has always been: every face that matches nobody blocks it, so one blurred frame of a household member can stop a whole clip being marked recognized. On, such a face is set aside instead — only when it is a poor look or a clear likeness of someone recognized in the clip, and a different recognized person nearby can account for each one. See **Unclear faces** under the Biometrics tab below for exactly when, what it measured, and what it costs, and the **Recognition results** panel for how many of your own clips it would change. Face data stays on the device either way, and the hint sent to the AI provider stays nameless. |
 | `ai_face_recognition_resolution` | `standard` | How much detail faces are matched with — face recognition's equivalent of the other stages' model size, since it has one recognition network and what there is to trade is pixels per face. `standard` uses the 640px-wide frames analysis already extracts; `high` (960px) and `very_high` (1280px) look again at the same moments in more detail. Measured on a face about 60px wide in a 1080p frame (someone a few metres from the camera), standard recognized it 11 times in 30, high 27 and very high 30, with no wrong-person match at any setting, at roughly 1.2× and 1.7× the face stage's CPU time. The Biometrics tab's clip scans use the same resolution, and a face matches best against photos enrolled at the same one — after changing it, scan a clip of each person again (the tab points out which photos were captured at the old one). |
-| `ai_face_recognition_ignore_unclear_faces` | `false` | Whether a face too poor to identify still counts as a possible stranger. Off keeps the suspicious-flag bypass exactly as strict as it has always been: every face that matches nobody blocks it, so one blurred frame of a household member can stop a whole clip being marked recognized. On, such a face is set aside instead — only when it is a poor look or a clear likeness of someone recognized in the clip, and a different recognized person nearby can account for each one. See **Unclear faces** under the Biometrics tab below for exactly when, what it measured, and what it costs. Face data stays on the device either way, and the hint sent to the AI provider stays nameless. |
 | `ai_pose_estimation_enabled` | `false` | Body-keypoint (pose) estimation for whoever is nearest the protected vehicle, on the one frame the depth and contact stages already examine. Adds three facts a bounding box cannot give: an arm extended toward the vehicle (trying a handle, reaching through a window), an arm raised above shoulder height, and a crouched or bent-over posture. Its own small model, downloaded on first use. |
 | `ai_pose_model` | `yolo26n-pose.pt` | Which Ultralytics pose checkpoint the stage above runs. YOLO26-pose is the current generation, matching the object detector's own default; `yolo11n/s/m/l/x-pose.pt` remain selectable for anyone already using them. "n" (nano) is fastest/lightest and the recommended starting point on CPU-only hardware; larger sizes are more accurate and much slower. All output the same 17 COCO keypoints. |
 | `ai_audio_analysis_enabled` | `false` | Sound-event classification of the clip's own audio track (an Audio Spectrogram Transformer fine-tuned on Google's AudioSet, via transformers). Adds an **AUDIO** hint naming what it heard — breaking glass, a raised voice, a car alarm, a door, footsteps, a power tool, a dog — as weak supporting evidence the model has to reconcile with the frames, never as a verdict of its own. It **classifies sound and never transcribes speech**: no words are read, nothing is sent anywhere, and the model runs on the same machine as the add-on (see *Audio analysis and privacy* below). Clips from a camera with no microphone, or with it switched off, produce no hint at all — the stage detects that in the same pass it uses to read the audio, so it costs nothing on installs that have no audio to analyze. Independent of `ai_enhanced_detection_enabled`: this one reads the clip file, not the sampled frames. |
@@ -1474,11 +1474,13 @@ the option on, such a face is set aside instead of counted — but only when
   stranger looks like, and always counts.
 - **It can be put down to someone recognized.** Each such face needs a
   different recognized person who was matched in that frame or the one before
-  or after it, and who is not already in that frame. A stranger beside a
-  resident has nobody left to be; one who walks in once the residents have
-  gone has nobody nearby; and one who takes a resident's place beside the
-  other passes only for as long as the resident they replaced was seen a
-  frame earlier.
+  or after it, and who is not already in that frame. A poor look could be any
+  of them; a sharp, whole face only someone it clearly resembles, so two of
+  those that both resemble only the same person are not both that person. A
+  stranger beside a resident has nobody left to be; one who walks in once the
+  residents have gone has nobody nearby; and one who takes a resident's place
+  beside the other passes only for as long as the resident they replaced was
+  seen a frame earlier.
 
 Everything else is unchanged. A frame face detection could not examine, a
 recognized person who is not approved, more people seen at once by object
@@ -1491,18 +1493,23 @@ discount follow the same decision, so they agree with the bypass.
 H.264 and this add-on's own face detection and recognition — two residents,
 one resident, and seven ways for a stranger to appear (beside both residents
 or just one, in one resident's place, after they have gone, or far behind
-them, with a clear or a poor look at the face) — clips of residents only that
-cleared the bypass
-went from 7% with the option off to 63% on; for residents enrolled from the
-same camera, two residents went from 0% to 83%. Of the 336 clips with a
-stranger in them, none cleared it, either way. Those are synthetic daytime
+them, with a clear or a poor look at the face) — the share of residents-only clips that cleared the bypass depended on how many
+pixels the faces had, which is what `ai_face_recognition_resolution` sets. Matched at
+`very_high` (1280px) it went from 7% with the option off to 62% on (10% to 79% for
+residents enrolled from the same camera); matched at the default `standard` (640px) it
+went from 9% to only 16%, because most faces in those clips are then narrower than the
+50px the rule needs to judge one, and a narrower face is never set aside. (`high` has not
+been measured yet.) Of the 336 clips with a stranger in them, none cleared it at either
+width, with the option off or on. So if you turn it on, raise the resolution as well, and
+let the **Recognition results** panel show what it would change on your own clips. Those are synthetic daytime
 clips, not your camera, and a stranger who deliberately keeps their face
 hidden is the case the option is weakest against: right after a resident has
 left the picture they can pass for that resident for a moment. That is why it
 ships off. If you turn it on, watch the Face-bypass activity card on the
 Biometrics tab for a while, and turn it off again if the bypass ever clears a
 clip it should not have. The log line for a cleared flag says how many
-unclear faces it set aside.
+unclear faces it set aside, and the **Recognition results** panel below shows
+how many clips it has helped -- and, before you turn it on, how many it would.
 
 *Privacy.* Nothing about this changes what stays on the device. Photos,
 embeddings and names are never sent to any AI provider, and the hint the AI
@@ -1520,6 +1527,31 @@ the Biometrics tab's Face-bypass activity card for you to act on (e.g.
 re-enrolling someone with clearer reference photos) rather than silently
 loosening matching on their own, since an over-loose match is exactly the
 false-bypass risk this feature is designed to avoid.
+
+**Recognition results.** Below the Face-bypass activity card, a panel shows what
+face recognition made of the last 30 days of analyzed clips, so you can see why
+a clip did not count as recognized without reading logs:
+
+- **The figures.** How many clips had a face in them, how many of those counted
+  as recognized (the same "Recognized" the Library shows), and how many faces
+  matched a household member against how many matched nobody -- split into
+  clear faces and unclear ones (blurred, cut off by the edge of the frame,
+  small or turned away). A face is counted once for every sampled frame it
+  appears in, so these are detections, not people.
+- **Why the rest did not count,** as a short list of only the reasons that
+  actually happened, each with what to do about it: a clear face matched nobody
+  (a visitor, or someone to enroll); only unclear faces matched nobody; unclear
+  faces with no recognized person to put them down to; someone enrolled who is not
+  approved; more people seen at once than faces recognized (needs object
+  detection); a frame that could not be examined.
+- **What Ignore Unclear Faces would change.** With the setting off, the panel
+  says how many clips it would count as recognized; with it on, how many it
+  has. That is the quickest way to tell whether it is worth turning on for your
+  cameras.
+
+It keeps counts and reasons only -- never who -- and only for clips analyzed
+from 6.1.1 on: earlier ones are left out rather than counted as "no faces". It
+is hidden while face recognition is off and nothing has been recorded.
 
 ---
 
@@ -1679,8 +1711,10 @@ from any browser without leaving Home Assistant.
   **Vehicles Tab** above.
 - **Biometrics tab** — find faces in your clips (or photos) and enroll household
   members from them, review and remove individual photos, approve/un-approve/
-  rename/remove people, and the all-or-nothing
-  suspicious-flag bypass this powers — see **Biometrics Tab** above.
+  rename/remove people, the all-or-nothing
+  suspicious-flag bypass this powers, and a **Recognition results** panel that
+  shows how many faces matched and why other clips didn't count as recognized —
+  see **Biometrics Tab** above.
 - **Storage tab** — view and delete archived clips, run archiving on demand
   instead of waiting for the next poll cycle, and connect a Google Drive
   account to back clips up, including retrying any upload that failed — see
