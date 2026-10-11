@@ -15,6 +15,7 @@ import asyncio
 import io
 import sys
 import time
+from collections.abc import Sequence
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -2556,7 +2557,7 @@ def _stranger() -> DetectedFace:
 
 async def _recognize(
     db: ClipDatabase,
-    frames: list[list[DetectedFace] | None],
+    frames: Sequence[list[DetectedFace] | None],
     *,
     ignore_unclear: bool = True,
 ) -> FaceRecognitionResult:
@@ -2863,7 +2864,8 @@ def test_build_recognition_hint_says_when_a_face_was_too_unclear_to_identify() -
     assert hint is not None
     assert "too unclear to identify" in hint
     assert "do not assume everyone present is a known resident" in hint
-    assert "Brian" not in hint and "Amy" not in hint
+    assert "Brian" not in hint
+    assert "Amy" not in hint
     assert "3" not in hint
 
 
@@ -3309,7 +3311,8 @@ async def test_vision_pipeline_sets_an_unclear_face_aside_when_configured(
     hint = hints.recognized_resident_hint
     assert hint is not None
     assert "too unclear to identify" in hint
-    assert "Amy" not in hint and "Brian" not in hint
+    assert "Amy" not in hint
+    assert "Brian" not in hint
 
 
 async def test_vision_pipeline_face_recognition_uses_raw_frames_not_enhanced(
