@@ -252,6 +252,7 @@ recognized without reading logs.
 - Updated prettier to 3.9.10
 - Updated typescript-eslint to 8.71.1
 - Updated vite to 8.3.4
+- Updated vue-tsc to 3.3.13
 
 ## 6.1.0
 
