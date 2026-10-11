@@ -268,6 +268,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             moondream_api_key=config.moondream_api_key,
             prompt_debug_enabled=config.ai_prompt_debug_enabled,
             face_recognition_enabled=config.ai_face_recognition_enabled,
+            face_ignore_unclear=config.ai_face_recognition_ignore_unclear_faces,
             face_frame_width=FACE_RESOLUTION_WIDTHS[
                 config.ai_face_recognition_resolution
             ],

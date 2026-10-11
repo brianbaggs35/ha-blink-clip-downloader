@@ -6864,6 +6864,89 @@ async def test_faces_bypass_stats_reflects_recorded_bypasses(
     assert data["recent"][0]["clip_id"] == "c1"
 
 
+async def test_faces_recognition_stats_empty(client: TestClient) -> None:
+    resp = await client.get("/api/ai/faces/recognition-stats")
+    assert resp.status == 200
+    data = await resp.json()
+    assert data["days"] == 30
+    assert data["recognition_enabled"] is False
+    assert data["ignore_unclear_faces"] is False
+    assert data["clips_checked"] == 0
+    assert data["clips_with_faces"] == 0
+    assert data["held_back"] == {
+        "unfamiliar": 0,
+        "unclear_ignorable": 0,
+        "unclear": 0,
+        "not_approved": 0,
+        "extra_people": 0,
+        "unexamined": 0,
+    }
+
+
+async def test_faces_recognition_stats_sum_what_analyses_recorded(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    rows = [
+        ("c1", "recognized", 4, 4, 0),
+        ("c2", "set_aside", 5, 4, 1),
+        ("c3", "unclear_ignorable", 3, 2, 1),
+        ("c4", "no_faces", 0, 0, 0),
+    ]
+    for clip_id, outcome, seen, matched, unclear in rows:
+        await db.add_clip(_make_clip(clip_id))
+        await db.add_analysis_result(
+            {
+                "clip_id": clip_id,
+                "camera": "Front Door",
+                "model": "llava",
+                "response_text": "{}",
+                "is_suspicious": False,
+                "confidence": 0.1,
+                "summary": "Someone home.",
+                "frame_count": 3,
+                "analysis_duration": 1.0,
+                "analyzed_at": datetime.now(UTC).isoformat(),
+                "faces_seen": seen,
+                "faces_matched": matched,
+                "faces_unclear": unclear,
+                "face_outcome": outcome,
+            }
+        )
+    data = await (await client.get("/api/ai/faces/recognition-stats")).json()
+    assert data["clips_checked"] == 4
+    assert data["clips_with_faces"] == 3
+    assert data["clips_recognized"] == 2
+    assert data["clips_set_aside"] == 1
+    assert data["held_back"]["unclear_ignorable"] == 1
+    assert (data["faces_seen"], data["faces_matched"], data["faces_unclear"]) == (
+        12,
+        10,
+        2,
+    )
+
+
+async def test_faces_recognition_stats_report_how_recognition_is_set(
+    db: ClipDatabase,
+) -> None:
+    """The panel words its advice about unclear faces for the setting as it
+    is right now, so the server has to say what it is."""
+    server = MediaServer(
+        db=db,
+        port=0,
+        face_recognition_enabled=True,
+        face_ignore_unclear=True,
+        analyzer=_make_analyzer(),
+    )
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        data = await (await tc.get("/api/ai/faces/recognition-stats")).json()
+    finally:
+        await tc.close()
+    assert data["recognition_enabled"] is True
+    assert data["ignore_unclear_faces"] is True
+
+
 async def test_face_recognition_feedback_list_empty(client: TestClient) -> None:
     resp = await client.get("/api/ai/faces/feedback")
     assert resp.status == 200

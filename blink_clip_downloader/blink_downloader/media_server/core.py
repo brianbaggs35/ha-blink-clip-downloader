@@ -57,6 +57,7 @@ class _MediaServerBase:
     _moondream_api_key: str
     _prompt_debug_enabled: bool
     _face_recognition_enabled: bool
+    _face_ignore_unclear: bool
     _face_frame_width: int
 
     # Narrow callables from BlinkDownloader, so no route module has to

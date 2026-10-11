@@ -527,6 +527,20 @@ configuration:
       votre réseau —
       il n'est jamais envoyé à un fournisseur d'IA cloud, quel que soit
       celui configuré ci-dessus. Désactivé par défaut.
+  ai_face_recognition_ignore_unclear_faces:
+    name: Ignorer les visages peu nets
+    description: >-
+      Désactivé par défaut : tout visage qui ne correspond à personne compte
+      comme un inconnu possible, si bien qu'une seule image floue d'un
+      membre du foyer peut empêcher un clip d'être reconnu ou son alerte
+      d'être levée. Activé, un visage trop médiocre pour être identifié
+      (flou de mouvement, coupé par le bord du cadre, de profil ou à moitié
+      masqué, ou ressemblant nettement à quelqu'un de reconnu dans le même
+      clip) est mis de côté, mais seulement s'il peut être attribué à une
+      autre personne reconnue : une personne vue sur cette image ou juste à
+      côté et qui n'y est pas déjà montrée par un autre visage. Un visage
+      net qui ne correspond à personne, ou un inconnu à côté d'un membre du
+      foyer, compte toujours. Lisez la documentation avant de l'activer.
   ai_face_recognition_resolution:
     name: Résolution de la reconnaissance faciale
     description: >-
@@ -537,20 +551,6 @@ configuration:
       éloignées de la caméra pour un coût processeur modéré. Après un
       changement, rescannez un clip dans l'onglet Biométrie — les visages
       correspondent mieux aux photos enregistrées à la même résolution.
-  ai_face_recognition_ignore_unclear_faces:
-    name: Ignorer les visages peu nets
-    description: >-
-      Désactivé par défaut : tout visage qui ne correspond à personne compte
-      comme un inconnu possible, si bien qu'une seule image floue d'un
-      membre du foyer peut empêcher un clip d'être reconnu ou son alerte
-      d'être levée. Activé, un visage trop médiocre pour être identifié
-      (flou de mouvement, coupé par le bord du cadre, de profil ou à moitié
-      masqué, ou ressemblant nettement à quelqu'un de reconnu dans le même
-      clip) est mis de côté, mais seulement si quelqu'un a été reconnu sur
-      cette image ou juste à côté et que l'image ne contient pas plus de
-      visages que de personnes reconnues. Un visage net qui ne correspond à
-      personne, ou un inconnu à côté d'un membre du foyer, compte toujours.
-      Lisez la documentation avant de l'activer.
   hf_token:
     name: Jeton Hugging Face (optionnel)
     description: >-

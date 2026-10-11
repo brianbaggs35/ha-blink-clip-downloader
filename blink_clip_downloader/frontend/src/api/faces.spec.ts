@@ -6,6 +6,7 @@ import {
   faceThumbUrl,
   getFaceBypassStats,
   getFaceRecognitionFeedback,
+  getFaceRecognitionStats,
   groupFaces,
   listFaces,
   removePerson,
@@ -106,6 +107,8 @@ describe('faces api', () => {
   it('reads the bypass audit trail and files a report', async () => {
     await getFaceBypassStats()
     expect(fetch).toHaveBeenCalledWith('/api/ai/faces/bypass-stats', {})
+    await getFaceRecognitionStats()
+    expect(fetch).toHaveBeenCalledWith('/api/ai/faces/recognition-stats', {})
     await getFaceRecognitionFeedback()
     expect(fetch).toHaveBeenCalledWith('/api/ai/faces/feedback', {})
     await submitFaceRecognitionFeedback('c1', 'false_negative')

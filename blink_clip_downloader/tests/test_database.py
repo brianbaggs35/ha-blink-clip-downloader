@@ -1570,6 +1570,139 @@ async def test_analysis_stats_empty(db: ClipDatabase) -> None:
     assert stats["frames_analyzed_today"] == 0
 
 
+def _face_analysis(
+    clip_id: str,
+    outcome: str,
+    *,
+    seen: int = 0,
+    matched: int = 0,
+    unclear: int = 0,
+    days_ago: float = 0.0,
+) -> dict:
+    """An analysis row that records what face recognition counted."""
+    return {
+        **_make_analysis(
+            clip_id,
+            analyzed_at=(datetime.now(UTC) - timedelta(days=days_ago)).isoformat(),
+        ),
+        "faces_seen": seen,
+        "faces_matched": matched,
+        "faces_unclear": unclear,
+        "face_outcome": outcome,
+    }
+
+
+def _by_outcome(rows: list[dict]) -> dict[str, tuple[int, int, int, int]]:
+    return {
+        r["outcome"]: (
+            r["clips"],
+            r["faces_seen"],
+            r["faces_matched"],
+            r["faces_unclear"],
+        )
+        for r in rows
+    }
+
+
+async def test_analysis_result_stores_what_face_recognition_counted(
+    db: ClipDatabase,
+) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.add_analysis_result(
+        _face_analysis("c1", "unclear_ignorable", seen=7, matched=5, unclear=2)
+    )
+    stored = await db.get_analysis_for_clip("c1")
+    assert stored is not None
+    assert stored["faces_seen"] == 7
+    assert stored["faces_matched"] == 5
+    assert stored["faces_unclear"] == 2
+    assert stored["face_outcome"] == "unclear_ignorable"
+
+
+async def test_an_analysis_that_counted_no_faces_stores_no_outcome(
+    db: ClipDatabase,
+) -> None:
+    """Recognition off (or nobody enrolled) records nothing to report: an
+    empty outcome, not "no faces"."""
+    await db.add_clip(_make_clip("c1"))
+    await db.add_analysis_result(_make_analysis("c1"))
+    stored = await db.get_analysis_for_clip("c1")
+    assert stored is not None
+    assert stored["face_outcome"] == ""
+    assert stored["faces_seen"] == 0
+
+
+async def test_face_outcome_counts_empty(db: ClipDatabase) -> None:
+    assert await db.get_face_outcome_counts() == []
+
+
+async def test_face_outcome_counts_without_init_returns_empty() -> None:
+    assert await ClipDatabase().get_face_outcome_counts() == []
+
+
+async def test_face_outcome_counts_group_clips_and_sum_their_faces(
+    db: ClipDatabase,
+) -> None:
+    for clip_id in ("c1", "c2", "c3", "c4"):
+        await db.add_clip(_make_clip(clip_id))
+    await db.add_analysis_result(_face_analysis("c1", "recognized", seen=4, matched=4))
+    await db.add_analysis_result(_face_analysis("c2", "recognized", seen=6, matched=6))
+    await db.add_analysis_result(
+        _face_analysis("c3", "unfamiliar", seen=3, matched=1, unclear=1)
+    )
+    await db.add_analysis_result(_face_analysis("c4", "no_faces"))
+    assert _by_outcome(await db.get_face_outcome_counts()) == {
+        "recognized": (2, 10, 10, 0),
+        "unfamiliar": (1, 3, 1, 1),
+        "no_faces": (1, 0, 0, 0),
+    }
+
+
+async def test_face_outcome_counts_use_each_clips_latest_analysis(
+    db: ClipDatabase,
+) -> None:
+    """A clip re-analyzed into a different outcome is counted once, as it
+    ended up -- the same "most recent wins" the Recognized badge follows."""
+    await db.add_clip(_make_clip("c1"))
+    await db.add_analysis_result(_face_analysis("c1", "unfamiliar", seen=2, days_ago=3))
+    await db.add_analysis_result(
+        _face_analysis("c1", "recognized", seen=2, matched=2, days_ago=1)
+    )
+    assert _by_outcome(await db.get_face_outcome_counts()) == {
+        "recognized": (1, 2, 2, 0)
+    }
+
+
+async def test_face_outcome_counts_leave_out_a_clip_whose_latest_analysis_has_none(
+    db: ClipDatabase,
+) -> None:
+    """Re-analyzed with recognition off: the old outcome no longer describes
+    the clip, so the clip drops out rather than keep counting."""
+    await db.add_clip(_make_clip("c1"))
+    await db.add_analysis_result(_face_analysis("c1", "unfamiliar", seen=2, days_ago=2))
+    await db.add_analysis_result(_face_analysis("c1", "", days_ago=1))
+    assert await db.get_face_outcome_counts() == []
+
+
+async def test_face_outcome_counts_only_look_back_the_days_asked(
+    db: ClipDatabase,
+) -> None:
+    for clip_id in ("recent", "old"):
+        await db.add_clip(_make_clip(clip_id))
+    await db.add_analysis_result(
+        _face_analysis("recent", "recognized", seen=1, matched=1, days_ago=29)
+    )
+    await db.add_analysis_result(
+        _face_analysis("old", "recognized", seen=1, matched=1, days_ago=31)
+    )
+    assert _by_outcome(await db.get_face_outcome_counts()) == {
+        "recognized": (1, 1, 1, 0)
+    }
+    assert _by_outcome(await db.get_face_outcome_counts(days=60)) == {
+        "recognized": (2, 2, 2, 0)
+    }
+
+
 async def test_get_face_bypass_stats_empty(db: ClipDatabase) -> None:
     stats = await db.get_face_bypass_stats()
     assert stats == {"total_bypassed": 0, "by_name": [], "recent": []}
@@ -5000,6 +5133,54 @@ async def test_upgrading_an_existing_database_gains_the_v6_columns(
         assert stored is not None
         assert stored["risk_score"] == 81.0
         assert len(await upgraded.get_security_events("upgraded")) == 1
+    finally:
+        await upgraded.close()
+
+
+async def test_upgrading_an_existing_database_gains_the_face_result_columns(
+    db: ClipDatabase,
+) -> None:
+    """6.1.1 records what face recognition counted on each analysis. Drop the
+    columns as a 6.1.0 database lacks them, re-run init() as the add-on does
+    on every start, and an old row must read as "not examined" while a new
+    one round-trips."""
+    assert db._pool is not None
+    columns = ["faces_seen", "faces_matched", "faces_unclear", "face_outcome"]
+    await db.add_clip(_make_clip("before"))
+    await db.add_analysis_result(_make_analysis("before"))
+    for column in columns:
+        await db._pool.execute(f"ALTER TABLE analysis_results DROP COLUMN {column}")
+
+    upgraded = ClipDatabase(TEST_DB_DSN)
+    await upgraded.init()
+    try:
+        old = await upgraded.get_analysis_for_clip("before")
+        assert old is not None
+        assert old["face_outcome"] == ""
+        assert old["faces_seen"] == 0
+        assert await upgraded.get_face_outcome_counts() == []
+
+        await upgraded.add_clip(_make_clip("after"))
+        await upgraded.save_analysis(
+            AnalysisResult(
+                clip_id="after",
+                camera="Front Door",
+                model="llava",
+                response_text="{}",
+                is_suspicious=False,
+                confidence=0.1,
+                summary="Brian came home",
+                frame_count=3,
+                analysis_duration=1.0,
+                analyzed_at=datetime.now(UTC).isoformat(),
+                faces_seen=4,
+                faces_matched=4,
+                face_outcome="recognized",
+            )
+        )
+        assert _by_outcome(await upgraded.get_face_outcome_counts()) == {
+            "recognized": (1, 4, 4, 0)
+        }
     finally:
         await upgraded.close()
 

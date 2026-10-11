@@ -7,6 +7,7 @@ import type {
   FaceFeedbackReportType,
   FaceGroupResult,
   FaceRecognitionFeedback,
+  FaceRecognitionStats,
   FaceScanResult,
   FacesResponse,
 } from './types'
@@ -69,6 +70,10 @@ export function removePerson(name: string): Promise<{ deleted: boolean }> {
 
 export function getFaceBypassStats(): Promise<FaceBypassStats> {
   return apiGet('/api/ai/faces/bypass-stats')
+}
+
+export function getFaceRecognitionStats(): Promise<FaceRecognitionStats> {
+  return apiGet('/api/ai/faces/recognition-stats')
 }
 
 export function getFaceRecognitionFeedback(): Promise<FaceRecognitionFeedback[]> {

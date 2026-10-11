@@ -26,7 +26,9 @@ when nobody was.
     recognized is what a stranger looks like and always counts.
   - It can be put down to a recognized person: a different one for each such
     face, matched in that frame or the one before or after it and not already
-    in it.
+    in it. A poor look could be any of them; a sharp, whole face only someone
+    it clearly resembles, so two such faces that both resemble only the same
+    person are not both that person.
 - **A stranger is still counted wherever they can be told from a resident.**
   A stranger beside a resident has nobody left to be, one who walks in once
   the residents have gone has nobody nearby, and one who takes a resident's
@@ -41,24 +43,60 @@ when nobody was.
   stranger to appear: beside both residents or just one, in one resident's
   place, after they have gone, or far behind them, with a clear or a poor
   look at the face), put through H.264 and the real face models, with the
-  option off and on. Clips
-  of residents only that cleared the bypass went from 7% to 63% (for
-  residents enrolled from the same camera, as the person who reported this
-  was, two residents went from 0% to 83%). Of the 336 clips with a stranger in
-  them, none did, either way. These are synthetic daytime clips, not your
+  option off and on. How many residents-only clips cleared the bypass depended on the face width
+  (`ai_face_recognition_resolution`): matched at `very_high` (1280px, which the person who
+  reported this uses) 7% to 62%; at the default `standard` (640px) only 9% to 16%, because
+  most faces are then narrower than the 50px the rule needs to judge one. Of the 336 clips
+  with a stranger in them, none cleared it at either width, with the option off or on. If
+  you turn it on, raise the resolution too. These are synthetic daytime clips, not your
   camera, which is why it ships off: after turning it on, watch the Biometrics
   tab's Face-bypass activity card and turn it off again if the bypass ever
   clears a clip it should not have.
 - **Privacy is unchanged.** Face photos, embeddings and names stay on this
-  device, nothing new is stored, and the hint sent to the AI provider stays
-  nameless: it never carries a name or a count. For a clip where faces were
-  set aside it says only that a face "was too unclear to identify" and not to
-  assume everyone present is a known resident.
+  device, and the hint sent to the AI provider stays nameless: it never
+  carries a name or a count. For a clip where faces were set aside it says only
+  that a face "was too unclear to identify" and not to assume everyone present
+  is a known resident. (The Recognition results panel below keeps counts, in
+  this add-on's own database, never names.)
 - The log line for a flag the bypass cleared now says how many unclear faces
   it set aside, so a clip that leaned on the option can be found afterwards.
 
+### Biometrics: a Recognition results panel
+
+A new panel under **Face-bypass activity** shows what face recognition made of
+the last 30 days of analyzed clips, so you can see why a clip did not count as
+recognized without reading logs.
+
+- **The figures:** clips with a face in them, how many counted as recognized
+  (the same "Recognized" the Library shows), and how many faces matched a
+  household member against how many matched nobody, split into clear faces and
+  unclear ones (blurred, cut off by the edge of the frame, small or turned
+  away). A face is counted once for every sampled frame it appears in.
+- **Why the rest did not count,** as a list of only the reasons that actually
+  happened, each with what to do about it: a clear face matched nobody (a
+  visitor, or someone to enroll); only unclear faces matched nobody; unclear
+  faces with no recognized person to put them down to; someone enrolled who is not
+  approved; more people seen at once than faces recognized; a frame that
+  could not be examined.
+- **What Ignore Unclear Faces would change.** With the setting off, the panel
+  says how many clips it would count as recognized; with it on, how many it
+  has. That is the quickest way to tell whether it is worth turning on.
+- Counts and reasons only, never who. They are recorded from this version on
+  (four new columns on each analysis); earlier analyses are left out rather
+  than read as "no faces". The panel is hidden while recognition is off and
+  nothing has been recorded, and recording it changes nothing that is decided:
+  with Ignore Unclear Faces off, a face that matches nobody counts exactly as
+  it always did.
+
 ### Internal
 
+- The set-aside rule is now worked out for every clip, so the tally can say
+  what it would have done; it only decides the verdict with the setting on. A
+  test runs hundreds of random clips to check that with it off a face that
+  matches nobody (or a frame nobody could read) counts exactly as before.
+- `face_outcomes.py` holds the tally, the outcomes and the panel's totals. It
+  is standard library only, so the analyzer that stores the outcome does not
+  have to import the optional computer-vision package.
 - Face recognition now reads each detected face (with its quality, width and
   whether the frame's border cuts it) rather than a bare embedding, so
   `FaceEmbedder.embed()`, which nothing else called, is gone. MTCNN does not
