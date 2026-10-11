@@ -246,6 +246,7 @@ recognized without reading logs.
 - Updated transformers to 5.19.0
 - Updated playwright to 1.64.0
 - Updated @types/node to 26.6.5
+- Updated @vitejs/plugin-vue to 6.0.10
 
 ## 6.1.0
 
