@@ -251,6 +251,7 @@ recognized without reading logs.
 - Updated jsdom to 30.1.2
 - Updated prettier to 3.9.10
 - Updated typescript-eslint to 8.71.1
+- Updated vite to 8.3.4
 
 ## 6.1.0
 
