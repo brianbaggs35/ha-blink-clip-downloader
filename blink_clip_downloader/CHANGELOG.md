@@ -242,6 +242,7 @@ recognized without reading logs.
 - Updated anthropic to 1.13.0
 - Updated openai to 3.29.0
 - Updated numpy to 2.5.4
+- Updated ultralytics to 8.4.175
 
 ## 6.1.0
 
