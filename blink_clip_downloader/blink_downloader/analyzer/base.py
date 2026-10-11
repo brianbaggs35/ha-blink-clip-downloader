@@ -809,6 +809,13 @@ class BaseAnalyzer(abc.ABC):
         family member must still allow the clip to be flagged; this is a
         hard safety requirement, not a convenience default, so do not loosen
         this condition without equally strong justification.
+
+        The one sanctioned exception lives upstream, not here: with
+        ``ai_face_recognition_ignore_unclear_faces`` on, a face too poor to
+        identify may have been set aside by ``FaceRecognizer.recognize``
+        (under conditions that keep a stranger counted -- read them there)
+        and so never reached ``unrecognized_present``. This method needs no
+        branch of its own for it and must not grow one.
         """
         return (
             bool(faces.approved_names)
@@ -1375,12 +1382,14 @@ class BaseAnalyzer(abc.ABC):
                 # whether the bypass is firing correctly (see
                 # BiometricsPage's bypass activity card) versus clearing a
                 # flag it shouldn't have.
+                set_aside = vision_hints.face_recognition.unclear_faces
                 _LOGGER.info(
                     "Face-recognition bypass cleared suspicious flag for "
-                    "clip=%r camera=%r: matched approved member(s) %s",
+                    "clip=%r camera=%r: matched approved member(s) %s%s",
                     clip_id,
                     camera,
                     face_bypass_names,
+                    f" ({set_aside} unclear face(s) set aside)" if set_aside else "",
                 )
 
         risk_override_applied = False

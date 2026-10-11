@@ -120,6 +120,11 @@ class VisionConfig:
     #: width the face stage reuses the frames already extracted; any other
     #: width re-extracts the same moments at that size.
     face_frame_width: int = ANALYSIS_FRAME_WIDTH
+    #: ``ai_face_recognition_ignore_unclear_faces``: whether a face too poor to
+    #: identify may be set aside rather than counted as a possible stranger
+    #: (see :meth:`.faces.FaceRecognizer.recognize`). Off keeps every
+    #: unmatched face blocking, exactly as before the option existed.
+    face_ignore_unclear: bool = False
     #: Body-keypoint estimation for the subject nearest a protected asset.
     #: Its own toggle, and its own (separate, small) model checkpoint — a
     #: user who wants object detection should not pay for a download they
@@ -390,7 +395,9 @@ class VisionPipeline:
             return
         frames = await self._face_frames(raw_pool, clip_path, frame_interval)
         recognizer = FaceRecognizer(self._face_embedder, self._db)
-        face_result = await recognizer.recognize(frames)
+        face_result = await recognizer.recognize(
+            frames, ignore_unclear=self._config.face_ignore_unclear
+        )
         hints.face_recognition = face_result
         hints.recognized_resident_hint = _build_recognition_hint(face_result)
 
@@ -434,7 +441,8 @@ class VisionPipeline:
             "Vision pipeline result: enhanced_detection=%s "
             "(detection=%r, tracking=%r, depth=%r, contact=%r, tracks=%d, "
             "scan_frames=%d, marked_assets=%d, examined_asset=%s), audio=%s, "
-            "face_recognition=%s (approved=%d, other=%d, unrecognized_present=%s)",
+            "face_recognition=%s (approved=%d, other=%d, unrecognized_present=%s, "
+            "unclear=%d)",
             self._config.enhanced_detection_enabled,
             hints.detection_hint,
             hints.tracking_hint,
@@ -449,6 +457,7 @@ class VisionPipeline:
             len(faces.approved_names) if faces else 0,
             len(faces.other_names) if faces else 0,
             faces.unrecognized_present if faces else False,
+            faces.unclear_faces if faces else 0,
         )
 
     async def _run_detection_stages(

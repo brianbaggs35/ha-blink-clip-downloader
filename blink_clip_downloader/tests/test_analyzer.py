@@ -6269,6 +6269,46 @@ def test_face_bypass_does_not_apply_beside_someone_whose_face_never_showed(
     assert ClipAnalyzer._personalization_names(hints) == []
 
 
+def test_face_bypass_follows_the_unclear_faces_the_recognizer_set_aside() -> None:
+    """With ai_face_recognition_ignore_unclear_faces on, faces too poor to
+    identify never reach unrecognized_present, so every consumer of the
+    result -- the bypass, the Library badge, the known-person discount, the
+    summary's names -- sees the clip the same way and none needs a rule of
+    its own."""
+    hints = VisionHints(
+        face_recognition=FaceRecognitionResult(
+            approved_names=["Amy", "Brian"], unclear_faces=2
+        )
+    )
+    assert ClipAnalyzer._face_bypass_applies(hints) is True
+    assert ClipAnalyzer._face_match_is_unambiguous(hints) is True
+    assert ClipAnalyzer._personalization_names(hints) == ["Amy", "Brian"]
+
+
+def test_set_aside_faces_do_not_excuse_someone_object_detection_counted() -> None:
+    """The people count is a separate check and stays one: three people seen
+    at once against two recognized is somebody unaccounted for, however the
+    unclear faces were dealt with."""
+    hints = VisionHints(
+        face_recognition=FaceRecognitionResult(
+            approved_names=["Amy", "Brian"], unclear_faces=1
+        ),
+        detections=_people(2, 3),
+    )
+    assert ClipAnalyzer._face_bypass_applies(hints) is False
+    assert ClipAnalyzer._face_match_is_unambiguous(hints) is False
+    assert ClipAnalyzer._personalization_names(hints) == []
+
+
+def test_set_aside_faces_do_not_excuse_a_stranger_who_was_counted() -> None:
+    hints = VisionHints(
+        face_recognition=FaceRecognitionResult(
+            approved_names=["Amy", "Brian"], unrecognized_present=True
+        )
+    )
+    assert ClipAnalyzer._face_bypass_applies(hints) is False
+
+
 def test_face_bypass_counts_everyone_recognized_against_everyone_seen() -> None:
     both = VisionHints(
         face_recognition=FaceRecognitionResult(approved_names=["Amy", "Brian"]),
@@ -6523,6 +6563,71 @@ async def test_analyze_clip_bypasses_suspicious_flag_for_approved_only(
     assert "Face-recognition bypass" in caplog.text
     assert "Brian" in caplog.text
     assert "c1" in caplog.text
+
+
+@pytest.mark.parametrize("unclear_faces", [0, 2])
+async def test_analyze_clip_logs_how_many_unclear_faces_a_bypass_set_aside(
+    caplog: pytest.LogCaptureFixture, unclear_faces: int
+) -> None:
+    """The bypass is the one thing this option can change that someone may
+    need to audit later, so the (local) log line says when it leaned on it --
+    and only says so then."""
+    from blink_downloader.vision import FaceRecognitionResult, VisionHints
+
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    fake_pipeline = MagicMock()
+    fake_pipeline.process_clip = AsyncMock(
+        return_value=VisionHints(
+            face_recognition=FaceRecognitionResult(
+                approved_names=["Brian", "Amy"], unclear_faces=unclear_faces
+            )
+        )
+    )
+    a.attach_vision_pipeline(fake_pipeline)
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(_real_jpeg(100) * 3, b""))
+    mock_proc.returncode = 0
+    a._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value=(
+            '{"suspicious": true, "confidence": 0.8, '
+            '"description": "People are lingering near the vehicle."}'
+        )
+    )
+
+    with (
+        patch("asyncio.create_subprocess_exec", return_value=mock_proc),
+        caplog.at_level("INFO"),
+    ):
+        result = await a.analyze_clip("/clips/test.mp4", "c1", "Driveway")
+
+    assert result.face_bypass_applied is True
+    assert ("unclear face(s) set aside" in caplog.text) is bool(unclear_faces)
+    if unclear_faces:
+        assert f"({unclear_faces} unclear face(s) set aside)" in caplog.text
+
+
+def test_the_prompt_stays_name_free_when_unclear_faces_were_set_aside() -> None:
+    """The privacy line this feature must not cross: whatever the recognizer
+    knew -- who was matched, how many faces it set aside, how it judged them --
+    the text sent to the AI provider carries a nameless fact and nothing
+    else. Built from the real hint, not a hand-written one."""
+    from blink_downloader.vision import FaceRecognitionResult, VisionHints
+    from blink_downloader.vision.faces import _build_recognition_hint
+
+    result = FaceRecognitionResult(
+        approved_names=["Brian", "Amy"], other_names=[], unclear_faces=3
+    )
+    hints = VisionHints(
+        face_recognition=result,
+        recognized_resident_hint=_build_recognition_hint(result),
+    )
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    prompt = a._build_prompt("Driveway", vision_hints=hints)
+
+    assert "RECOGNIZED RESIDENT" in prompt
+    assert "too unclear to identify" in prompt
+    for private in ("Brian", "Amy", "3 unclear", "unclear_faces", "embedding"):
+        assert private not in prompt
 
 
 async def test_analyze_clip_approved_faces_seen_even_when_not_suspicious() -> None:

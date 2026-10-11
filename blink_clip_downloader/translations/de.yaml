@@ -539,6 +539,21 @@ configuration:
       der Kamera, bei etwas höherer CPU-Last. Scanne nach einer Änderung
       einen Clip im Biometrie-Tab erneut — Gesichter werden am besten
       mit Fotos derselben Auflösung abgeglichen.
+  ai_face_recognition_ignore_unclear_faces:
+    name: Unklare Gesichter ignorieren
+    description: >-
+      Standardmäßig aus: Jedes Gesicht, das zu niemandem passt, gilt als
+      möglicher Fremder – ein einziges unscharfes Bild eines
+      Haushaltsmitglieds kann also verhindern, dass ein Clip als erkannt
+      gilt oder seine Warnung aufgehoben wird. Eingeschaltet wird ein zu
+      schlechtes Gesicht (verwackelt, vom Bildrand abgeschnitten,
+      abgewandt oder halb verdeckt – oder eines, das jemandem aus
+      demselben Clip deutlich ähnelt) stattdessen beiseitegelegt, aber nur,
+      wenn in diesem Bild oder direkt daneben jemand erkannt wurde und das
+      Bild nicht mehr Gesichter zeigt als erkannte Personen. Ein klares
+      Gesicht, das zu niemandem passt, oder ein Fremder neben einem
+      Haushaltsmitglied zählt weiterhin. Lies vor dem Einschalten die
+      Dokumentation.
   hf_token:
     name: Hugging Face-Token (optional)
     description: >-

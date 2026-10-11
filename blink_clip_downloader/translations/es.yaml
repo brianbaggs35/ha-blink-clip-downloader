@@ -527,6 +527,20 @@ configuration:
       un coste moderado de CPU. Tras cambiarlo, vuelve a escanear un clip
       en la pestaña Biometría: los rostros coinciden mejor con fotos
       registradas a la misma resolución.
+  ai_face_recognition_ignore_unclear_faces:
+    name: Ignorar rostros poco claros
+    description: >-
+      Desactivado por defecto: todo rostro que no coincide con nadie cuenta
+      como posible desconocido, de modo que un solo fotograma borroso de un
+      miembro del hogar puede impedir que un clip se reconozca o que se
+      anule su alerta. Activado, un rostro demasiado deficiente para
+      identificarlo (movido, cortado por el borde del encuadre, de espaldas
+      o medio tapado, o que se parece claramente a alguien reconocido en el
+      mismo clip) se deja de lado, pero solo si en ese fotograma o justo al
+      lado se reconoció a alguien y el fotograma no contiene más rostros
+      que personas reconocidas. Un rostro nítido que no coincide con nadie,
+      o un desconocido junto a un miembro del hogar, sigue contando. Lee la
+      documentación antes de activarlo.
   hf_token:
     name: Token de Hugging Face (opcional)
     description: >-
