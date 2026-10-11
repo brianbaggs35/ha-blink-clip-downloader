@@ -243,6 +243,7 @@ recognized without reading logs.
 - Updated openai to 3.29.0
 - Updated numpy to 2.5.4
 - Updated ultralytics to 8.4.175
+- Updated transformers to 5.19.0
 
 ## 6.1.0
 
