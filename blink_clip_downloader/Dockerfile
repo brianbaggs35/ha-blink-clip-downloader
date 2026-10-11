@@ -255,7 +255,7 @@ RUN ( \
         && rm -rf /usr/lib/python3/dist-packages/wheel \
             /usr/lib/python3/dist-packages/wheel-*.dist-info \
         && pip3 install --no-cache-dir \
-            "ultralytics>=8.4.140,<9" \
+            "ultralytics>=8.4.175,<9" \
             # lap isn't in ultralytics' own declared dependencies (`pip show
             # ultralytics` doesn't list it) — it's an optional extra
             # ultralytics only imports inside YOLO.track() (the Hungarian-
@@ -294,7 +294,7 @@ RUN ( \
             # backward-compatible surface across major versions, and this
             # add-on's usage here is exactly that surface, never
             # trust_remote_code (which stays at its safe default of False).
-            "transformers>=5.17.0,<6" \
+            "transformers>=5.19.0,<6" \
         && pip3 install --no-cache-dir --no-deps "facenet-pytorch>=2.6.0,<3" \
         2>&1 | tail -20 \
     ) || echo "INFO: computer-vision pipeline install failed; ai_object_detection_enabled \
@@ -367,7 +367,7 @@ RUN chmod a+x /etc/services.d/blink-downloader/run \
 # here lets code-only releases reuse the large Python/CV layers and lets
 # Supervisor pull only the changed application layer.
 ARG BUILD_ARCH
-ARG BUILD_VERSION=6.0.5
+ARG BUILD_VERSION=6.1.1
 
 LABEL \
     org.opencontainers.image.title="Blink Clip Downloader" \
