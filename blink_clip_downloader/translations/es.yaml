@@ -618,6 +618,22 @@ configuration:
       sospechoso aunque el modelo de IA lo considerase normal. El valor por
       defecto (75) cubre solo la banda crítica. Ponlo a 0 para que el veredicto
       del modelo sea definitivo.
+  ai_routine_door_use_enabled:
+    name: Tratar el uso rutinario de la puerta como normal
+    description: >-
+      Despeja un clip que el modelo de IA marcó con dudas cuando todo el clip
+      es solo el breve paso de una persona por una puerta marcada en la
+      pestaña Assets -- fuera de la vista al otro lado o alejándose de ella en
+      pocos segundos --, sin nadie más, sin nada más ocurriendo y sin una vista
+      clara de un rostro que no coincide con nadie. Pensado para la puerta
+      principal, donde quien la abre da la espalda a la cámara y el
+      reconocimiento facial no tiene nada con lo que trabajar. Un hallazgo
+      seguro, una segunda persona, quedarse merodeando, una hora en la que la
+      cámara rara vez ve actividad o una persona reconocida no aprobada lo
+      impiden. Desactivado por defecto porque, a diferencia de la omisión por
+      reconocimiento facial, no sabe quién era la persona. Requiere activar la detección
+      y el seguimiento avanzados, el análisis de seguridad estructurado y que
+      los fotogramas de análisis de comportamiento sean más de 0.
   mobile_app_target:
     name: Entidad de destino de la app móvil
     description: >-

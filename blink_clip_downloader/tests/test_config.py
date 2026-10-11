@@ -729,6 +729,26 @@ def test_ignore_unclear_faces_sits_right_below_the_recognition_switch():
         assert keys[switch + 2] == "ai_face_recognition_resolution", block
 
 
+def test_routine_door_use_is_off_unless_asked_for():
+    """It lowers a verdict without knowing who the person was, so an
+    options.json written before the option existed, or one that says nothing,
+    keeps every flag the model raised."""
+    base = {"username": "u", "password": "p"}
+    assert _parse_config(base).ai_routine_door_use_enabled is False
+    on = _parse_config({**base, "ai_routine_door_use_enabled": True})
+    assert on.ai_routine_door_use_enabled is True
+    off = _parse_config({**base, "ai_routine_door_use_enabled": False})
+    assert off.ai_routine_door_use_enabled is False
+
+
+def test_routine_door_use_ships_off_in_the_manifest():
+    manifest = yaml.safe_load(
+        (Path(__file__).resolve().parent.parent / "config.yaml").read_text()
+    )
+    assert manifest["options"]["ai_routine_door_use_enabled"] is False
+    assert manifest["schema"]["ai_routine_door_use_enabled"] == "bool"
+
+
 def test_huggingface_token_is_trimmed():
     cfg = _parse_config(
         {"username": "u", "password": "p", "hf_token": "  hf_test_token  "}

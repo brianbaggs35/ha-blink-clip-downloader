@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Any
 import aiohttp
 
 from .. import frame_motion, prompt_segments
-from ..face_outcomes import classify_face_outcome
+from ..face_outcomes import FaceEvidence, classify_face_outcome, face_evidence
 from ..ffmpeg_output import ANALYSIS_FRAME_WIDTH, extract_jpeg_frames
 from ..protected_assets import assets_by_camera
 
@@ -48,6 +48,9 @@ from ..security import (
     Severity,
     assess_clip,
     detect_audio_events,
+    door_use_allowed,
+    flag_can_be_cleared,
+    routine_door_visit,
     summarize_assessment,
 )
 from ..security.geometry import box_overlap_coefficient
@@ -397,6 +400,13 @@ class AnalysisResult:
     # model having judged it unremarkable — surfaced so a user can see the
     # verdict did not come from the model.
     risk_override_applied: bool = False
+    # True when ai_routine_door_use_enabled cleared this clip's suspicious
+    # flag because the whole clip was one person's brief trip through a
+    # marked door (security/routine.py) -- the counterpart of
+    # face_bypass_applied for a verdict that was not cleared by who it was
+    # but by what they did. Stored so a flag that went missing can always be
+    # traced to the rule that lowered it.
+    routine_visit_applied: bool = False
     # Sounds the optional audio stage recognized, as a JSON array of
     # {label, score} (see vision/audio.py). A JSON string rather than a
     # list because this one *is* part of the analysis row -- unlike
@@ -446,6 +456,7 @@ class AnalysisResult:
             "event_type": self.event_type,
             "evidence_quality": self.evidence_quality,
             "risk_override_applied": self.risk_override_applied,
+            "routine_visit_applied": self.routine_visit_applied,
             "audio_labels": self.audio_labels,
             "faces_seen": self.faces_seen,
             "faces_matched": self.faces_matched,
@@ -469,6 +480,11 @@ class SecurityLayerSettings:
     #: Risk score at or above which a clip is flagged regardless of the
     #: model's own verdict (``ai_risk_alert_threshold``); 0 disables it.
     risk_alert_threshold: int = 75
+    #: Whether a model-flagged clip that is only one person's brief trip
+    #: through a marked door may be cleared (``ai_routine_door_use_enabled``).
+    #: Off by default: it is the one local adjustment that lowers a verdict
+    #: without knowing who the person was.
+    routine_door_use: bool = False
 
 
 @dataclass(frozen=True)
@@ -485,6 +501,7 @@ class _Verdict:
     face_bypass_applied: bool = False
     face_bypass_names: str = ""
     risk_override_applied: bool = False
+    routine_visit_applied: bool = False
 
 
 class BaseAnalyzer(abc.ABC):
@@ -556,6 +573,10 @@ class BaseAnalyzer(abc.ABC):
         # asset must not be silently dismissed by a weak local model, while
         # nothing here can move a verdict in the reassuring direction.
         self._risk_alert_threshold = settings.risk_alert_threshold
+        # See SecurityLayerSettings.routine_door_use: both whether the
+        # detector looks for door visits at all and whether one may clear a
+        # flag, so with it off no such event exists to be weighed.
+        self._routine_door_use = settings.routine_door_use
         # Token counts set by _call_model() implementations that support them.
         # Reset to 0 at the start of each analyze_clip() call.
         self._last_prompt_tokens: int = 0
@@ -1210,6 +1231,7 @@ class BaseAnalyzer(abc.ABC):
             scene_deviation=scene_deviation,
             frames_analyzed=len(frames),
             target_frames=target_frame_count,
+            anomaly_score=anomaly_score,
         )
 
         # Shared precomputation for the two motion hints below — see
@@ -1320,6 +1342,7 @@ class BaseAnalyzer(abc.ABC):
         face_bypass_applied = verdict.face_bypass_applied
         face_bypass_names = verdict.face_bypass_names
         risk_override_applied = verdict.risk_override_applied
+        routine_visit_applied = verdict.routine_visit_applied
 
         await self._maybe_update_scene_baseline(
             camera, scene_thumbnail, is_suspicious, confidence, night=scene_night
@@ -1364,6 +1387,7 @@ class BaseAnalyzer(abc.ABC):
             event_type=self._primary_event_type(security),
             evidence_quality=security.evidence.score if security else 0.0,
             risk_override_applied=risk_override_applied,
+            routine_visit_applied=routine_visit_applied,
             audio_labels=_audio_labels_json(vision_hints),
             faces_seen=faces_seen,
             faces_matched=faces_matched,
@@ -1384,14 +1408,17 @@ class BaseAnalyzer(abc.ABC):
         clip_id: str,
         camera: str,
     ) -> _Verdict:
-        """Apply the two local, post-model adjustments to the model's verdict.
+        """Apply the local, post-model adjustments to the model's verdict.
 
         Extracted whole, in order, from ``_analyze_clip_locked``: the face
-        bypass may only *clear* a suspicious flag and the risk override may
-        only *raise* one, and the override is evaluated first precisely so
-        the two can never contradict each other. That ordering is the safety
-        property — see CLAUDE.md's face-recognition section — so it is kept
-        here as one unit rather than split across the caller.
+        bypass and the routine-door-use rule may only *clear* a suspicious
+        flag and the risk override may only *raise* one, and the override is
+        evaluated first precisely so none of them can contradict another. That
+        ordering is the safety property — see CLAUDE.md's face-recognition
+        section — so it is kept here as one unit rather than split across the
+        caller. The routine-door-use rule comes after the bypass, so a clip an
+        identity already cleared is recorded as that, and never when the risk
+        score forces an alert.
         """
         is_suspicious = verdict.is_suspicious
         confidence = verdict.confidence
@@ -1433,6 +1460,13 @@ class BaseAnalyzer(abc.ABC):
                     f" ({set_aside} unclear face(s) set aside)" if set_aside else "",
                 )
 
+        routine_visit_applied = False
+        if is_suspicious and not risk_forces_alert:
+            routine_visit_applied = self._routine_visit_clears(
+                security, vision_hints, confidence, clip_id, camera
+            )
+            is_suspicious = not routine_visit_applied
+
         risk_override_applied = False
         if risk_forces_alert and not is_suspicious:
             assert security is not None
@@ -1456,7 +1490,61 @@ class BaseAnalyzer(abc.ABC):
             face_bypass_applied=face_bypass_applied,
             face_bypass_names=face_bypass_names,
             risk_override_applied=risk_override_applied,
+            routine_visit_applied=routine_visit_applied,
         )
+
+    def _routine_visit_clears(
+        self,
+        security: SecurityOutcome | None,
+        vision_hints: VisionHints | None,
+        confidence: float,
+        clip_id: str,
+        camera: str,
+    ) -> bool:
+        """Whether this flagged clip is only one person's brief trip through
+        a marked door and so may be cleared (``ai_routine_door_use_enabled``).
+
+        Three independent lines of evidence have to agree, and each can say
+        no on its own. *Behaviour*: the whole clip is a single visit that went
+        through the door and was provably brief (``routine_door_visit``).
+        *The face*, when one was seen (``face_evidence``), and *the camera's
+        history*: a clear stranger's face, or an hour the camera rarely sees
+        activity in, leaves no visit to weigh at all -- see
+        :meth:`_door_use_applies`, which decides it before the model is asked.
+        *The model*: only a flag raised unsure of itself (``flag_can_be_
+        cleared``), though a household member matched in the clip lets it have
+        been surer; a face that is merely hard to read, which is what someone
+        at a lock with their back half turned produces, counts for nothing
+        either way.
+
+        A refusal after a visit was found is logged with its reason, so "why
+        does the front door still alert" has an answer in the log.
+        """
+        if not self._routine_door_use or security is None:
+            return False
+        visit = routine_door_visit(security.events, security.evidence)
+        if visit is None:
+            return False
+        confirmed = (
+            face_evidence(getattr(vision_hints, "face_recognition", None))
+            is FaceEvidence.CONFIRMS
+        )
+        if not flag_can_be_cleared(confidence, identity_confirmed=confirmed):
+            _LOGGER.info(
+                "Routine door use not applied to clip=%r camera=%r: the model "
+                "was too sure (confidence %.2f) for a flag to be cleared",
+                clip_id,
+                camera,
+                confidence,
+            )
+            return False
+        _LOGGER.info(
+            "Routine door use cleared suspicious flag for clip=%r camera=%r: %s",
+            clip_id,
+            camera,
+            visit.detail,
+        )
+        return True
 
     @staticmethod
     def _primary_event_type(security: SecurityOutcome | None) -> str:
@@ -1728,6 +1816,7 @@ class BaseAnalyzer(abc.ABC):
         scene_deviation: float | None,
         frames_analyzed: int,
         target_frames: int,
+        anomaly_score: float = 0.0,
     ) -> SecurityOutcome | None:
         """Run the deterministic security layer over this clip's evidence.
 
@@ -1768,6 +1857,7 @@ class BaseAnalyzer(abc.ABC):
                 scene_deviation,
                 frames_analyzed,
                 target_frames,
+                anomaly_score,
             )
         except Exception:
             # This layer is additive: every optional stage in the pipeline
@@ -1790,6 +1880,7 @@ class BaseAnalyzer(abc.ABC):
         scene_deviation: float | None,
         frames_analyzed: int,
         target_frames: int,
+        anomaly_score: float,
     ) -> SecurityOutcome:
         """The assessment itself — see :meth:`_assess_security`'s guard."""
         posture = vision_hints.posture
@@ -1830,8 +1921,51 @@ class BaseAnalyzer(abc.ABC):
                 marked_asset_changes=(
                     getattr(vision_hints, "marked_asset_changes", None) or {}
                 ),
+                detect_door_use=self._door_use_applies(
+                    camera, vision_hints, anomaly_score
+                ),
             )
         )
+
+    def _door_use_applies(
+        self, camera: str, vision_hints: Any, anomaly_score: float
+    ) -> bool:
+        """Whether to look for people going through a marked door in this clip
+        at all (``ai_routine_door_use_enabled``).
+
+        Not when face recognition saw somebody it contradicts -- a clear face
+        that matched nobody, a recognized person who is not approved, a frame
+        it could not examine -- and not, unless a household member was matched,
+        at an hour this camera rarely sees activity in. Decided here rather
+        than when the verdict is adjusted because a visit also reaches the
+        prompt: the model is told it is ordinary use of a door, and telling it
+        so beside a clear look at a stranger, or at three in the morning on a
+        camera that never sees anyone then, would soften its own verdict on
+        exactly the clip that most needs it left alone. With no visit there is
+        no event, no note and nothing to clear.
+
+        When it stands down on a camera that has a door marked, the log says
+        why, so "why does the front door still alert" has an answer.
+        """
+        if not self._routine_door_use:
+            return False
+        faces = face_evidence(getattr(vision_hints, "face_recognition", None))
+        if faces is FaceEvidence.CONTRADICTS:
+            reason = "a face in the clip does not match an approved household member"
+        elif not door_use_allowed(
+            anomaly_score, identity_confirmed=faces is FaceEvidence.CONFIRMS
+        ):
+            reason = (
+                f"this camera rarely sees activity at this hour (anomaly "
+                f"{anomaly_score:.2f}) and nobody was recognized"
+            )
+        else:
+            return True
+        if any(a.entered_through for a in getattr(vision_hints, "marked_assets", [])):
+            _LOGGER.info(
+                "Routine door use stands down for camera=%r: %s", camera, reason
+            )
+        return False
 
     @staticmethod
     def _is_night(clip_timestamp: str) -> bool:

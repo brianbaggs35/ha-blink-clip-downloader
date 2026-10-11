@@ -74,6 +74,31 @@ def box_foot_point(box: Box) -> tuple[float, float]:
     return ((x1 + x2) / 2.0, y2)
 
 
+#: Share of the frame's width (or height) within which a box counts as
+#: touching that border. Detectors clip a box to the frame, so a subject
+#: leaving the picture ends on the border itself; a little over it absorbs
+#: the box that stops a pixel or two short.
+FRAME_EDGE_MARGIN = 0.01
+
+
+def box_touches_frame_edge(box: Box, frame_size: tuple[float, float]) -> bool:
+    """True when *box* reaches the frame's left, right or bottom border.
+
+    Those are the borders a subject walks out of the picture through. The top
+    is left out on purpose: a person near the camera has their head cut off
+    by it for as long as they stand there, which says nothing about whether
+    they have left. A subject whose last sighting touches a border has
+    probably walked out of view, not disappeared into something in it.
+    """
+    x1, _y1, x2, y2 = box
+    width, height = frame_size
+    return (
+        x1 <= width * FRAME_EDGE_MARGIN
+        or x2 >= width * (1.0 - FRAME_EDGE_MARGIN)
+        or y2 >= height * (1.0 - FRAME_EDGE_MARGIN)
+    )
+
+
 #: How much more ground distance a pixel of *vertical* separation represents
 #: than a pixel of horizontal separation, for objects sharing a ground plane
 #: in a typical downward-angled security camera view. A person walking along

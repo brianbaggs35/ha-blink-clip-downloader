@@ -5185,6 +5185,67 @@ async def test_upgrading_an_existing_database_gains_the_face_result_columns(
         await upgraded.close()
 
 
+async def test_analysis_result_records_a_flag_cleared_as_routine_door_use(
+    db: ClipDatabase,
+) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.add_clip(_make_clip("c2"))
+    await db.save_analysis(
+        AnalysisResult(
+            clip_id="c1",
+            camera="Front Door",
+            model="llava",
+            response_text="{}",
+            is_suspicious=False,
+            confidence=0.6,
+            summary="A person is working at the door lock.",
+            frame_count=3,
+            analysis_duration=1.0,
+            analyzed_at=datetime.now(UTC).isoformat(),
+            routine_visit_applied=True,
+        )
+    )
+    await db.add_analysis_result(_make_analysis("c2"))
+
+    cleared = await db.get_analysis_for_clip("c1")
+    ordinary = await db.get_analysis_for_clip("c2")
+    assert cleared is not None
+    assert cleared["routine_visit_applied"] is True
+    assert ordinary is not None
+    assert ordinary["routine_visit_applied"] is False
+
+
+async def test_upgrading_an_existing_database_gains_the_routine_visit_column(
+    db: ClipDatabase,
+) -> None:
+    """6.1.1 records when a flag was cleared as routine door use. A database
+    from before has no such column, and every row it already holds must read
+    as "never cleared"."""
+    assert db._pool is not None
+    await db.add_clip(_make_clip("before"))
+    await db.add_analysis_result(_make_analysis("before"))
+    await db._pool.execute(
+        "ALTER TABLE analysis_results DROP COLUMN routine_visit_applied"
+    )
+
+    upgraded = ClipDatabase(TEST_DB_DSN)
+    await upgraded.init()
+    try:
+        old = await upgraded.get_analysis_for_clip("before")
+        assert old is not None
+        assert old["routine_visit_applied"] is False
+
+        await upgraded.add_clip(_make_clip("after"))
+        await upgraded.add_analysis_result(
+            {**_make_analysis("after"), "routine_visit_applied": True}
+        )
+        new = await upgraded.get_analysis_for_clip("after")
+        assert new is not None
+        assert new["routine_visit_applied"] is True
+    finally:
+        await upgraded.close()
+
+
 async def test_upgrading_clears_a_vehicle_fingerprint_measured_the_old_way(
     db: ClipDatabase,
 ) -> None:

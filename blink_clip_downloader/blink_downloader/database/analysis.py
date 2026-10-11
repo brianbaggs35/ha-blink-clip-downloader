@@ -54,9 +54,10 @@ class AnalysisResultsMixin(_DatabaseBase):
                    escalation_provider, prompt_text, face_bypass_applied, face_bypass_names,
                    approved_faces_seen, risk_score, severity, event_type,
                    evidence_quality, risk_override_applied, audio_labels,
-                   faces_seen, faces_matched, faces_unclear, face_outcome)
+                   faces_seen, faces_matched, faces_unclear, face_outcome,
+                   routine_visit_applied)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """
             ),
             self._res_str(result, "clip_id"),
@@ -90,6 +91,7 @@ class AnalysisResultsMixin(_DatabaseBase):
             self._res_int(result, "faces_matched"),
             self._res_int(result, "faces_unclear"),
             self._res_str(result, "face_outcome"),
+            bool(result.get("routine_visit_applied")),
         )
 
     async def get_analysis_for_clip(self, clip_id: str) -> dict[str, Any] | None:

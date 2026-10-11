@@ -556,6 +556,20 @@ configuration:
       vehicle, backed by depth or segmentation evidence. Set to 0 to leave the
       model's verdict final. This can only raise a flag the model missed, never
       clear one it raised.
+  ai_routine_door_use_enabled:
+    name: Treat Routine Door Use as Normal
+    description: >-
+      Clear a clip the AI model flagged while unsure of itself when the whole
+      clip is one person's brief trip through a door marked on the Assets tab
+      -- out of sight on the far side of it or clear of it within a few
+      seconds -- with nobody else in it, nothing else happening, and no clear
+      look at a face that matches nobody. For a front door, where whoever is
+      unlocking it has their back to the camera and face recognition has
+      nothing to work with. A confident finding, a second person, lingering,
+      an hour the camera rarely sees activity in, or a recognized person who is
+      not approved each stop it. Off by default, because unlike the face
+      bypass it does not know who the person was. Needs Enhanced Detection,
+      Structured Security Analysis and Behaviour Scan Frames above 0.
   mobile_app_target:
     name: Mobile App Target Entity
     description: >-

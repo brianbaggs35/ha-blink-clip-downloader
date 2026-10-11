@@ -72,6 +72,9 @@ class ClipMeasurements:
     #: still imports nothing from ``vision`` and needs no audio library to
     #: test — see :mod:`.sounds`.
     audio_labels: list[tuple[str, float]] | None = None
+    #: Look for people going through a marked door (``DOOR_USED``). Off by
+    #: default, as in :class:`~.detector.DetectionContext`.
+    detect_door_use: bool = False
 
 
 @dataclass
@@ -135,6 +138,7 @@ def assess_clip(
             marked_assets=measurements.marked_assets,
             examined_asset_key=measurements.examined_asset_key,
             marked_asset_changes=measurements.marked_asset_changes,
+            detect_door_use=measurements.detect_door_use,
         )
     )
 
