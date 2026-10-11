@@ -19,7 +19,7 @@ dependencies = [
     "Pillow>=12.3.0",
     "anthropic>=1.13.0",
     "openai>=3.29.0",
-    "numpy>=2.5.3",
+    "numpy>=2.5.4",
     # ha_config.py parses the Automations tab's YAML. Declared rather than
     # left to arrive with ultralytics/transformers: the Dockerfile installs
     # those best-effort, and without them the add-on could not start at all.
