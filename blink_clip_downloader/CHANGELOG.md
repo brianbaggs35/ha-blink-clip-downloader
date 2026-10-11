@@ -43,15 +43,16 @@ when nobody was.
   stranger to appear: beside both residents or just one, in one resident's
   place, after they have gone, or far behind them, with a clear or a poor
   look at the face), put through H.264 and the real face models, with the
-  option off and on. How many residents-only clips cleared the bypass depended on the face width
-  (`ai_face_recognition_resolution`): matched at `very_high` (1280px, which the person who
-  reported this uses) 7% to 62%; at the default `standard` (640px) only 9% to 16%, because
-  most faces are then narrower than the 50px the rule needs to judge one. Of the 336 clips
-  with a stranger in them, none cleared it at either width, with the option off or on. If
-  you turn it on, raise the resolution too. These are synthetic daytime clips, not your
-  camera, which is why it ships off: after turning it on, watch the Biometrics
-  tab's Face-bypass activity card and turn it off again if the bypass ever
-  clears a clip it should not have.
+  option off and on, at each face resolution. Clips of residents only that
+  cleared the bypass went from 9% to 16% at the default `standard` (640px),
+  9% to 49% at `high` (960px) and 7% to 62% at `very_high` (1280px, which the
+  person who reported this uses): most faces at 640px are narrower than the
+  50px the rule needs to judge one, so turn the resolution up along with the
+  option. Of the 336 clips with a stranger in them, none cleared it at any
+  resolution, with the option off or on. These are synthetic daytime clips,
+  not your camera, which is why it ships off: after turning it on, watch the
+  Biometrics tab's Face-bypass activity card and turn it off again if the
+  bypass ever clears a clip it should not have.
 - **Privacy is unchanged.** Face photos, embeddings and names stay on this
   device, and the hint sent to the AI provider stays nameless: it never
   carries a name or a count. For a clip where faces were set aside it says only

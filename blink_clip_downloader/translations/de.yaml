@@ -543,8 +543,9 @@ configuration:
       in diesem Bild oder direkt daneben gesehen wurde und in diesem Bild
       nicht schon durch ein anderes Gesicht gezeigt wird. Ein klares
       Gesicht, das zu niemandem passt, oder ein Fremder neben einem
-      Haushaltsmitglied zählt weiterhin. Lies vor dem Einschalten die
-      Dokumentation.
+      Haushaltsmitglied zählt weiterhin. Dafür braucht ein Gesicht genug
+      Pixel – stelle daher auch die Auflösung der Gesichtserkennung auf
+      „high“ oder „very_high“. Lies vor dem Einschalten die Dokumentation.
   ai_face_recognition_resolution:
     name: Auflösung der Gesichtserkennung
     description: >-
