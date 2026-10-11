@@ -244,6 +244,7 @@ recognized without reading logs.
 - Updated numpy to 2.5.4
 - Updated ultralytics to 8.4.175
 - Updated transformers to 5.19.0
+- Updated playwright to 1.64.0
 
 ## 6.1.0
 
