@@ -241,6 +241,7 @@ recognized without reading logs.
 - Updated python-slugify to 9.1.3
 - Updated anthropic to 1.13.0
 - Updated openai to 3.29.0
+- Updated numpy to 2.5.4
 
 ## 6.1.0
 
