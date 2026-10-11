@@ -867,6 +867,42 @@ make routine household activity permanently suspicious — exactly the
 false-positive problem the bypass exists to solve. See the set's own comment
 for why each near-miss was excluded.
 
+Since 6.1.1 there is one **opt-in, sanctioned exception** to "any face that
+matches nobody blocks": `ai_face_recognition_ignore_unclear_faces` (off by
+default; off, the code path is the old one and every strict-mode test pins
+it). It lives entirely in `vision/faces.py` --
+`FaceRecognizer.recognize(..., ignore_unclear=True)` and its helpers
+`_count_strangers`/`_vouched_for`/`_inconclusive` -- and still just sets the
+one `FaceRecognitionResult.unrecognized_present` flag that
+`_faces_all_approved`, the Library badge, the known-person discount,
+`_personalization_names` and the AI hint all read, **so no consumer grew a
+branch for it and none should** (`unclear_faces` is a count for the bypass log
+line and a yes/no for the hint, nothing else). A face that matched nobody is
+set aside only if (1) it is at least `_MIN_JUDGEABLE_WIDTH` (50px) wide and is
+a poor look (quality under 0.6, the Biometrics tab's "Good" line, or
+`DetectedFace.cut_off`, which quality cannot see) or resembles an *available*
+person at `_RESEMBLANCE_SIMILARITY` (0.55, short of the 0.75 match bar), and
+(2) it can be assigned to a different recognized person matched in that
+frame's neighbourhood (the frame before, itself, the one after) and not
+already matched in the frame. Each clause closes a leak that was measured, on
+clips rendered from real LFW faces through H.264 and the real MTCNN + FaceNet,
+not argued: without "a different person not already in the frame" a stranger
+beside a resident cleared 6-12% of such clips; without the neighbourhood, one
+arriving after the residents left 3%; a global head count instead of the
+local assignment, one taking a resident's place beside the other 4%; without
+the width floor a distant stranger beside residents is waved through. As
+shipped: 0 of 336 stranger clips cleared through the production code path
+(and 0 of 672 more during design), against 7% -> 63% of resident-only clips
+(0% -> 83% for two residents enrolled from the same camera). **Re-measure
+before changing a threshold or dropping a clause**; `tests/test_vision.py`'s
+adversarial cases pin each clause, and a mutation run of the helpers found
+every one caught. Privacy is unchanged and must stay so: the hint stays
+nameless *and* countless (the extra NOTE is a yes/no), `unclear_faces` is never
+persisted, sent or put in a prompt, and
+`test_the_prompt_stays_name_free_when_unclear_faces_were_set_aside` plus
+`test_build_recognition_hint_says_when_a_face_was_too_unclear_to_identify`
+hold that.
+
 Separately, `ai_risk_alert_threshold` can flag a clip the model called
 unremarkable. It is checked *before* the bypass so the two can never
 contradict each other (a clip is never reported as both bypassed and
@@ -887,8 +923,8 @@ also local-only, and the privacy banner and DOCS.md say so.
 A frame face detection **could not examine** (models unavailable, an
 undecodable frame, a model error) counts as `unrecognized_present` in
 `FaceRecognizer.recognize` — it might have held anyone, so it can never help
-vouch that everyone in a clip is known. `FaceEmbedder.detect()`/`embed()`
-return `None` for that case, never `[]`, precisely so callers can tell it
+vouch that everyone in a clip is known. `FaceEmbedder.detect()`
+returns `None` for that case, never `[]`, precisely so callers can tell it
 apart from "no face here"; keep that distinction.
 
 Enrollment and recognition must work at the **same frame width**

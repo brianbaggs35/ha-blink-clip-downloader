@@ -1,5 +1,71 @@
 # Changelog
 
+## 6.1.1
+
+### Face recognition: one blurred frame of a household member no longer costs the whole clip
+
+The face bypass is all-or-nothing on purpose: a single face that matches
+nobody counts as a possible stranger and withholds it. But a frame of someone
+who lives there that is blurred by motion, cut off by the edge of the picture,
+turned away or half hidden by a hand matches nobody either, and on a camera
+that films people close up nearly every clip with two residents in it holds
+one. The Library's **Recognized** badge and filter stayed almost empty (one
+clip in 64 for the person who reported it), the alert was almost never
+cleared, and the hint sent to the AI said a possible stranger was present
+when nobody was.
+
+- **New `ai_face_recognition_ignore_unclear_faces` option, off by default.**
+  With it off nothing changes: every face that matches nobody still counts.
+  With it on, a face that matched nobody is *set aside* instead of counted,
+  but only when **both** of these hold:
+  - It is at least 50px wide and is a poor look (rated below **Good** on the
+    Biometrics tab, so blurred, small or turned away, or cut off by the edge
+    of the frame) **or** it clearly resembles a person recognized in the same
+    clip (a similarity of at least 0.55 to their photos, still well short of
+    the 0.75 a match needs). A sharp, whole face that resembles nobody
+    recognized is what a stranger looks like and always counts.
+  - It can be put down to a recognized person: a different one for each such
+    face, matched in that frame or the one before or after it and not already
+    in it.
+- **A stranger is still counted wherever they can be told from a resident.**
+  A stranger beside a resident has nobody left to be, one who walks in once
+  the residents have gone has nobody nearby, and one who takes a resident's
+  place beside the other passes only for as long as the resident they
+  replaced was seen a frame earlier. A frame face detection could not examine,
+  a recognized person who is not approved, more people seen at once by object
+  detection than people recognized, and the events that always withhold the
+  bypass (a possible impact, breaking glass, a gunshot) withhold it exactly
+  as before.
+- **Measured through this add-on's own detection and recognition.** 432 clips
+  rendered from real faces (two residents, one resident, and seven ways for a
+  stranger to appear: beside both residents or just one, in one resident's
+  place, after they have gone, or far behind them, with a clear or a poor
+  look at the face), put through H.264 and the real face models, with the
+  option off and on. Clips
+  of residents only that cleared the bypass went from 7% to 63% (for
+  residents enrolled from the same camera, as the person who reported this
+  was, two residents went from 0% to 83%). Of the 336 clips with a stranger in
+  them, none did, either way. These are synthetic daytime clips, not your
+  camera, which is why it ships off: after turning it on, watch the Biometrics
+  tab's Face-bypass activity card and turn it off again if the bypass ever
+  clears a clip it should not have.
+- **Privacy is unchanged.** Face photos, embeddings and names stay on this
+  device, nothing new is stored, and the hint sent to the AI provider stays
+  nameless: it never carries a name or a count. For a clip where faces were
+  set aside it says only that a face "was too unclear to identify" and not to
+  assume everyone present is a known resident.
+- The log line for a flag the bypass cleared now says how many unclear faces
+  it set aside, so a clip that leaned on the option can be found afterwards.
+
+### Internal
+
+- Face recognition now reads each detected face (with its quality, width and
+  whether the frame's border cuts it) rather than a bare embedding, so
+  `FaceEmbedder.embed()`, which nothing else called, is gone. MTCNN does not
+  clip its boxes to the frame (faces pushed half out of a 1280px frame
+  overran the border by 26-80px), which is the only place a cut-off face can
+  be told apart: its quality score had a median of 0.91.
+
 ## 6.1.0
 
 ### HTTPS for the direct-access port

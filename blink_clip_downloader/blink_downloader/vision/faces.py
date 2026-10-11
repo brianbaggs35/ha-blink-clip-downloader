@@ -89,10 +89,14 @@ _EDGE_MARGIN = 2.0
 # frame of a resident matches nobody either. With two residents in a living
 # room most clips contain such a frame, and the bypass almost never fires.
 #
-# These numbers are from synthetic clips rendered out of real faces (672 clips
-# of two residents, with and without a stranger, through H.264 and the real
-# MTCNN + FaceNet): the rule below let 60% of resident-only clips through
-# where the strict one let 5%, and none of 480 clips with a stranger in them.
+# The numbers below are from clips rendered out of real (LFW) faces -- two
+# residents, one resident, and seven ways for a stranger to appear (beside
+# both or one, in a resident's place, after they left, far behind; clear or
+# poor look at the face) -- through H.264 and the real MTCNN + FaceNet. Through
+# this code, resident-only clips eligible for the bypass went from 7% to 63%
+# (two residents enrolled from the same camera: 0% to 83%), and none of 336
+# clips with a stranger were, option off or on. Re-measure before changing a
+# constant or dropping a clause of ``_vouched_for``: each closes a leak.
 
 # Narrower than this a face is never set aside, whatever its quality: a face
 # that small is as likely to be someone far away as someone blurred, and too
@@ -101,16 +105,16 @@ _MIN_JUDGEABLE_WIDTH = 50
 
 # The Biometrics tab's "Good" line (frontend components/biometrics/found.ts).
 # A face scoring under it is Fair or Low quality: blurred, small or turned
-# away. Motion-blurred resident faces scored a median 0.45; a clear stranger's
-# face scored a median 0.89.
+# away. Resident faces blurred by motion that matched nobody scored a median
+# 0.45; strangers' faces 80px and wider scored a median 0.89.
 _CLEAR_FACE_QUALITY = 0.6
 
-# A face that matched nobody but is at least this similar to a person
-# recognized elsewhere in the same clip (the match bar is _FACE_MATCH_THRESHOLD)
-# is taken for a poor view of that person. Degraded views of residents scored
-# a median 0.6-0.7 against their own photos; a stranger scored this high
-# against two recognized people in 0.6% of faces (1.9% against eight), and
-# against one only if every one of the stranger's faces in the clip did.
+# A face that matched nobody but is at least this similar to a person seen
+# nearby (the match bar is _FACE_MATCH_THRESHOLD) is taken for a poor view of
+# them. Resident faces that were cut off, covered or simply did not quite
+# match scored a median 0.6-0.7 against their own photos; a stranger's face
+# reached this against two recognized people in 0.6% of cases, and against
+# eight in 1.9%.
 _RESEMBLANCE_SIMILARITY = 0.55
 
 
@@ -389,7 +393,7 @@ class _Unmatched:
 
     face: DetectedFace
     #: Best similarity to each enrolled person's photos, by name -- what "looks
-    #: like someone recognized in this clip" is read from. Only worked out when
+    #: like one of the people it could be" is read from. Only worked out when
     #: unclear faces may be set aside.
     resemblance: dict[str, float]
 
