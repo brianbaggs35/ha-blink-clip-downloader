@@ -254,6 +254,7 @@ recognized without reading logs.
 - Updated vite to 8.3.4
 - Updated vue-tsc to 3.3.13
 - Updated playwright in e2e/ to 1.64.0
+- Updated trivy to 0.75.0
 
 ## 6.1.0
 
