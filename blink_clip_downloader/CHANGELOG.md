@@ -237,6 +237,7 @@ recognized without reading logs.
 ### Updated Dependencies
 
 - Updated aiohttp to 3.14.5
+- Updated asyncpg to 0.32.0
 
 ## 6.1.0
 
