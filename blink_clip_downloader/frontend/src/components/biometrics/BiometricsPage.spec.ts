@@ -28,6 +28,11 @@ const ActivityStub = defineComponent({
   emits: ['scan-clip'],
   template: '<div class="activity-stub" />',
 })
+const ResultsStub = defineComponent({
+  name: 'RecognitionResultsCard',
+  template: '<div class="results-stub" />',
+})
+const STUBS = { FaceFinder: FinderStub, FaceBypassActivityCard: ActivityStub, RecognitionResultsCard: ResultsStub }
 
 function facesResponse(faces: FaceEnrollment[], overrides: Partial<FacesResponse> = {}): FacesResponse {
   return {
@@ -55,9 +60,7 @@ function stubFetch(list: () => FacesResponse | Promise<Response>, handler: Handl
 }
 
 async function mountPage() {
-  const wrapper = mount(BiometricsPage, {
-    global: { stubs: { FaceFinder: FinderStub, FaceBypassActivityCard: ActivityStub } },
-  })
+  const wrapper = mount(BiometricsPage, { global: { stubs: STUBS } })
   await flushPromises()
   return wrapper
 }
@@ -96,9 +99,7 @@ describe('BiometricsPage', () => {
   it('shows placeholders while loading, then everyone enrolled', async () => {
     const pending = deferred<Response>()
     stubFetch(() => pending.promise)
-    const wrapper = mount(BiometricsPage, {
-      global: { stubs: { FaceFinder: FinderStub, FaceBypassActivityCard: ActivityStub } },
-    })
+    const wrapper = mount(BiometricsPage, { global: { stubs: STUBS } })
     await flushPromises()
     expect(wrapper.findAll('.p-skeleton').length).toBeGreaterThan(0)
 
@@ -107,6 +108,13 @@ describe('BiometricsPage', () => {
     expect(wrapper.findAllComponents(PersonCard).map((c) => c.props('person').name)).toEqual(['Amy', 'Brian'])
     expect(wrapper.text()).toContain('1 of 2 enrolled people are approved')
     expect(wrapper.findComponent(FinderStub).props('people')).toHaveLength(2)
+  })
+
+  it('lists the recognition results directly below the face-bypass activity', async () => {
+    stubFetch(() => facesResponse(PEOPLE))
+    const wrapper = await mountPage()
+    const activity = wrapper.find('.activity-stub').element
+    expect(activity.nextElementSibling?.classList.contains('results-stub')).toBe(true)
   })
 
   it('invites a first enrollment when nobody is enrolled', async () => {

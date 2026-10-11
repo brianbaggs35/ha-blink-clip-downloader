@@ -24,6 +24,7 @@ import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from ..face_outcomes import FaceTally
 from ..ffmpeg_output import ANALYSIS_FRAME_WIDTH
 from . import runtime
 
@@ -96,7 +97,7 @@ _EDGE_MARGIN = 2.0
 # this code, resident-only clips eligible for the bypass went from 7% to 63%
 # (two residents enrolled from the same camera: 0% to 83%), and none of 336
 # clips with a stranger were, option off or on. Re-measure before changing a
-# constant or dropping a clause of ``_vouched_for``: each closes a leak.
+# constant or dropping a clause of ``_available``: each closes a leak.
 
 # Narrower than this a face is never set aside, whatever its quality: a face
 # that small is as likely to be someone far away as someone blurred, and too
@@ -139,6 +140,9 @@ class FaceRecognitionResult:
     other_names: list[str] = field(default_factory=list)
     unrecognized_present: bool = False
     unclear_faces: int = 0
+    #: ``None`` when nothing was examined: nobody is enrolled, or the lookup
+    #: failed and the result above is the empty fail-safe one.
+    tally: FaceTally | None = None
 
 
 @dataclass(frozen=True)
@@ -446,11 +450,12 @@ class FaceRecognizer:
           is exactly what a stranger looks like, and always counts;
         * it can be put down to a recognized person: one seen in that frame
           or the one before or after, and not already matched in it, and a
-          different one for each such face. A stranger beside a resident
-          has nobody left to be; one who arrives once the residents have
-          gone has nobody nearby; one who takes a resident's place beside
-          the other only passes for as long as the resident they replaced
-          was seen a frame ago.
+          different one for each such face (a poor look could be any of
+          them, a sharp one only someone it resembles). A stranger beside a
+          resident has nobody left to be; one who arrives once the residents
+          have gone has nobody nearby; one who takes a resident's place
+          beside the other only passes for as long as the resident they
+          replaced was seen a frame ago.
 
         Guards the whole lookup like every other vision stage — a DB error
         or corrupted embedding row degrades to an empty ("nothing matched,
@@ -461,17 +466,14 @@ class FaceRecognizer:
             enrollments = await self._db.list_face_enrollments()
             if not enrollments:
                 return FaceRecognitionResult()
-            sightings = [
-                await self._sight(frame, enrollments, ignore_unclear)
-                for frame in frames
-            ]
+            sightings = [await self._sight(frame, enrollments) for frame in frames]
             return _account_for(sightings, ignore_unclear)
         except Exception as exc:  # noqa: BLE001
             _LOGGER.warning("Face recognition failed: %s", exc)
             return FaceRecognitionResult()
 
     async def _sight(
-        self, frame: bytes, enrollments: list[dict[str, Any]], ignore_unclear: bool
+        self, frame: bytes, enrollments: list[dict[str, Any]]
     ) -> _Sighting | None:
         """What one frame showed, or ``None`` if it could not be examined."""
         faces = await self._embedder.detect(frame)
@@ -479,93 +481,149 @@ class FaceRecognizer:
             return None
         sighting = _Sighting()
         for face in faces:
-            match = _best_enrollment(face.embedding, enrollments)
-            if match is not None:
-                sighting.matches.append(match)
-                continue
-            resemblance = (
-                _resemblance(face.embedding, enrollments) if ignore_unclear else {}
-            )
-            sighting.unmatched.append(_Unmatched(face, resemblance))
+            # Worked out once and used for both: the cosines are what cost
+            # time here, and they run on the event loop.
+            similarities = _similarities(face.embedding, enrollments)
+            closest = _closest(similarities, enrollments)
+            if closest is None:
+                likeness = _by_person(similarities, enrollments)
+                sighting.unmatched.append(_Unmatched(face, likeness))
+            else:
+                enrollment, _similarity = closest
+                name = str(enrollment["name"])
+                sighting.matches.append((name, bool(enrollment.get("approved", True))))
         return sighting
 
 
 def _account_for(
     sightings: list[_Sighting | None], ignore_unclear: bool
 ) -> FaceRecognitionResult:
-    """The clip's result from what each of its frames showed."""
+    """The clip's result from what each of its frames showed.
+
+    The set-aside rule is applied to every clip, so the tally can say what it
+    would have done, but it only decides the verdict with *ignore_unclear*
+    on: without it, any face that matched nobody counts, exactly as before.
+    A frame nothing could be said about counts either way.
+    """
     examined = [s for s in sightings if s is not None]
+    unexamined = len(sightings) - len(examined)
     matches = [match for s in examined for match in s.matches]
     approved = {name for name, is_approved in matches if is_approved}
     other = {name for name, is_approved in matches if not is_approved}
-    result = FaceRecognitionResult(
-        approved_names=sorted(approved), other_names=sorted(other)
+    blocked, set_aside, unclear = _account_unmatched(sightings)
+    if ignore_unclear:
+        unrecognized = bool(unexamined) or blocked
+    else:
+        unrecognized = bool(unexamined) or any(s.unmatched for s in examined)
+    return FaceRecognitionResult(
+        approved_names=sorted(approved),
+        other_names=sorted(other),
+        unrecognized_present=unrecognized,
+        unclear_faces=set_aside if ignore_unclear and not unrecognized else 0,
+        tally=FaceTally(
+            seen=len(matches) + sum(len(s.unmatched) for s in examined),
+            matched=len(matches),
+            unclear=unclear,
+            unexamined=unexamined,
+            would_clear=not unexamined and not blocked,
+        ),
     )
-    if len(examined) < len(sightings):
-        result.unrecognized_present = True
-        return result
-    result.unrecognized_present, result.unclear_faces = _count_strangers(
-        examined, ignore_unclear
-    )
-    return result
 
 
-def _count_strangers(
-    sightings: list[_Sighting], ignore_unclear: bool
-) -> tuple[bool, int]:
-    """Whether any face still counts as a possible stranger, and how many
-    faces that matched nobody were set aside instead."""
-    names_by_frame = [{name for name, _ in s.matches} for s in sightings]
-    set_aside = 0
+def _account_unmatched(sightings: list[_Sighting | None]) -> tuple[bool, int, int]:
+    """Apply the set-aside rule to every frame: whether any face still counts
+    as a stranger, how many faces it set aside, and how many of the faces that
+    matched nobody looked unclear."""
+    names_by_frame = [
+        set() if s is None else {name for name, _ in s.matches} for s in sightings
+    ]
+    blocked = False
+    set_aside = unclear = 0
     for index, sighting in enumerate(sightings):
-        if not sighting.unmatched:
+        if sighting is None or not sighting.unmatched:
             continue
-        if not (ignore_unclear and _vouched_for(index, sighting, names_by_frame)):
-            return True, 0
-        set_aside += len(sighting.unmatched)
-    return False, set_aside
+        available = _available(index, names_by_frame)
+        options = [_could_be(u, available) for u in sighting.unmatched]
+        unclear += sum(people is not None for people in options)
+        candidates = [people for people in options if people]
+        if len(candidates) == len(options) and _each_has_their_own(candidates):
+            set_aside += len(options)
+        else:
+            blocked = True
+    return blocked, set_aside, unclear
 
 
-def _vouched_for(
-    index: int, sighting: _Sighting, names_by_frame: list[set[str]]
-) -> bool:
-    """Whether every face in this frame that matched nobody can be put down to
-    a recognized person -- a different one for each face, seen in this frame's
-    neighbourhood (the frame before, itself or the one after) and not already
-    in the frame -- rather than to a stranger."""
+def _available(index: int, names_by_frame: list[set[str]]) -> set[str]:
+    """The recognized people a face in this frame could be: seen in the frame
+    before, itself or the one after, and not already in the frame."""
     nearby: set[str] = set().union(*names_by_frame[max(0, index - 1) : index + 2])
-    available = nearby - names_by_frame[index]
-    return len(sighting.unmatched) <= len(available) and all(
-        _inconclusive(u, available) for u in sighting.unmatched
-    )
+    return nearby - names_by_frame[index]
 
 
-def _inconclusive(unmatched: _Unmatched, available: set[str]) -> bool:
-    """Whether this face matching nobody says nothing about who it is: wide
-    enough to judge, and either a poor look or a clear likeness of one of the
-    *available* people."""
+def _could_be(unmatched: _Unmatched, available: set[str]) -> set[str] | None:
+    """Who this face matching nobody could still be: ``None`` for a clear look
+    at somebody unfamiliar (too narrow to judge, or sharp, whole and like no
+    one *available*), otherwise the *available* people it leaves open -- empty
+    when it is unclear but nobody is there for it to be.
+
+    A poor look (quality under Good, or cut off by the frame) says nothing
+    about who it is, so it could be any of them; a sharp, whole face could
+    only be one it clearly resembles.
+    """
     face = unmatched.face
-    return face.width >= _MIN_JUDGEABLE_WIDTH and (
-        face.quality < _CLEAR_FACE_QUALITY
-        or face.cut_off
-        or any(
-            unmatched.resemblance[name] >= _RESEMBLANCE_SIMILARITY for name in available
-        )
-    )
+    if face.width < _MIN_JUDGEABLE_WIDTH:
+        return None
+    if face.quality < _CLEAR_FACE_QUALITY or face.cut_off:
+        return set(available)
+    likenesses = {
+        name
+        for name in available
+        if unmatched.resemblance[name] >= _RESEMBLANCE_SIMILARITY
+    }
+    return likenesses or None
 
 
-def _resemblance(embedding: Any, enrollments: list[dict[str, Any]]) -> dict[str, float]:
-    """Best similarity of one face to each enrolled person's photos."""
+def _each_has_their_own(options: list[set[str]]) -> bool:
+    """Whether every face can be put down to a different person.
+
+    Counting heads is not enough: two sharp faces that both resemble only
+    Amy cannot both be Amy. Tries each face in turn, moving an earlier one
+    to someone else to make room when it has to -- a bipartite matching, on
+    sets small enough (the faces in one frame) that this is instant.
+    """
+    owner: dict[str, int] = {}
+
+    def place(face: int, tried: set[str]) -> bool:
+        for name in sorted(options[face]):
+            if name in tried:
+                continue
+            tried.add(name)
+            if name not in owner or place(owner[name], tried):
+                owner[name] = face
+                return True
+        return False
+
+    return all(place(face, set()) for face in range(len(options)))
+
+
+def _similarities(embedding: Any, enrollments: list[dict[str, Any]]) -> list[float]:
+    """Cosine similarity of one face to every enrolled photo, in enrollment order."""
+    return [cosine_similarity(embedding, e["embedding"]) for e in enrollments]
+
+
+def _by_person(
+    similarities: list[float], enrollments: list[dict[str, Any]]
+) -> dict[str, float]:
+    """Best similarity to each enrolled person's photos."""
     best: dict[str, float] = {}
-    for enrollment in enrollments:
+    for enrollment, similarity in zip(enrollments, similarities):
         name = str(enrollment["name"])
-        similarity = cosine_similarity(embedding, enrollment["embedding"])
         best[name] = max(best.get(name, similarity), similarity)
     return best
 
 
-def _closest_enrollment(
-    embedding: Any, enrollments: list[dict[str, Any]]
+def _closest(
+    similarities: list[float], enrollments: list[dict[str, Any]]
 ) -> tuple[dict[str, Any], float] | None:
     """The best-scoring enrollment for one face and its similarity, or
     ``None`` below ``_FACE_MATCH_THRESHOLD``.
@@ -578,23 +636,19 @@ def _closest_enrollment(
     """
     best: dict[str, Any] | None = None
     best_similarity = _FACE_MATCH_THRESHOLD
-    for enrollment in enrollments:
-        similarity = cosine_similarity(embedding, enrollment["embedding"])
+    for enrollment, similarity in zip(enrollments, similarities):
         if similarity >= best_similarity:
             best_similarity = similarity
             best = enrollment
     return None if best is None else (best, best_similarity)
 
 
-def _best_enrollment(
+def _closest_enrollment(
     embedding: Any, enrollments: list[dict[str, Any]]
-) -> tuple[str, bool] | None:
-    """``(name, approved)`` of :func:`_closest_enrollment`, as recognition uses it."""
-    closest = _closest_enrollment(embedding, enrollments)
-    if closest is None:
-        return None
-    enrollment, _similarity = closest
-    return (str(enrollment["name"]), bool(enrollment.get("approved", True)))
+) -> tuple[dict[str, Any], float] | None:
+    """:func:`_closest` for one face on its own, as the enrollment picker
+    asks it (see :func:`match_enrollment`)."""
+    return _closest(_similarities(embedding, enrollments), enrollments)
 
 
 def match_enrollment(

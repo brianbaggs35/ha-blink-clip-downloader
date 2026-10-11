@@ -714,6 +714,21 @@ def test_ignore_unclear_faces_ships_off_in_the_manifest():
     assert manifest["schema"]["ai_face_recognition_ignore_unclear_faces"] == "bool"
 
 
+def test_ignore_unclear_faces_sits_right_below_the_recognition_switch():
+    """Home Assistant draws the Configuration tab in the manifest's order, so
+    the setting that changes what recognition counts as a stranger belongs
+    directly under the switch that turns recognition on, ahead of the
+    resolution it is tuned alongside."""
+    manifest = yaml.safe_load(
+        (Path(__file__).resolve().parent.parent / "config.yaml").read_text()
+    )
+    for block in ("options", "schema"):
+        keys = list(manifest[block])
+        switch = keys.index("ai_face_recognition_enabled")
+        assert keys[switch + 1] == "ai_face_recognition_ignore_unclear_faces", block
+        assert keys[switch + 2] == "ai_face_recognition_resolution", block
+
+
 def test_huggingface_token_is_trimmed():
     cfg = _parse_config(
         {"username": "u", "password": "p", "hf_token": "  hf_test_token  "}
@@ -920,6 +935,20 @@ def test_every_option_has_a_translated_label(translation: Path) -> None:
         key for key, value in entries.items() if not (value or {}).get("name")
     )
     assert not unlabelled, f"{translation.name} entries with no name: {unlabelled}"
+
+
+@pytest.mark.parametrize(
+    "translation", sorted(_TRANSLATIONS.glob("*.yaml")), ids=lambda p: p.stem
+)
+def test_translated_labels_keep_the_manifest_order_for_the_face_options(
+    translation: Path,
+) -> None:
+    entries = list(yaml.safe_load(translation.read_text())["configuration"])
+    switch = entries.index("ai_face_recognition_enabled")
+    assert entries[switch + 1 : switch + 3] == [
+        "ai_face_recognition_ignore_unclear_faces",
+        "ai_face_recognition_resolution",
+    ]
 
 
 def test_the_shipped_frame_strategy_default_is_the_best_measured_one() -> None:

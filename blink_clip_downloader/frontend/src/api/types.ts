@@ -636,6 +636,35 @@ export interface FaceBypassStats {
   recent: FaceBypassEvent[]
 }
 
+/**
+ * Why a clip with faces in it did not count as recognized. Mirrors
+ * face_outcomes.py's HELD_BACK_OUTCOMES, which are stored with each analysis.
+ */
+export type FaceHeldBackReason =
+  'unfamiliar' | 'unclear_ignorable' | 'unclear' | 'not_approved' | 'extra_people' | 'unexamined'
+
+/**
+ * What face recognition made of the last `days` days of analyzed clips (the
+ * Recognition results panel). Counts only, never who. Faces are counted once
+ * per sampled frame they appear in, so they are detections, not people.
+ */
+export interface FaceRecognitionStats {
+  days: number
+  recognition_enabled: boolean
+  /** Whether `ai_face_recognition_ignore_unclear_faces` is on right now. */
+  ignore_unclear_faces: boolean
+  clips_checked: number
+  clips_with_faces: number
+  clips_recognized: number
+  /** Of the recognized clips, those that only counted because unclear faces were set aside. */
+  clips_set_aside: number
+  faces_seen: number
+  faces_matched: number
+  /** Of the faces that matched nobody, those too blurred, cut off, small or turned away to judge. */
+  faces_unclear: number
+  held_back: Record<FaceHeldBackReason, number>
+}
+
 export type FaceFeedbackReportType = 'false_positive' | 'false_negative'
 
 export interface FaceRecognitionFeedback {

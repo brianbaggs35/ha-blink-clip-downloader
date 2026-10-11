@@ -70,7 +70,18 @@ CREATE TABLE IF NOT EXISTS analysis_results (
     -- there are at most three per clip and nothing ever queries them
     -- individually -- unlike detected_objects, which the security
     -- layer joins against per box.
-    audio_labels                 TEXT    DEFAULT ''
+    audio_labels                 TEXT    DEFAULT '',
+    -- What face recognition counted in this clip (vision/faces.py's
+    -- FaceTally) and why it did or did not count as recognized (a
+    -- FaceOutcome): numbers and a code, never who. Backs the Biometrics
+    -- tab's Recognition results panel. face_outcome is '' when recognition
+    -- did not examine the clip -- it was off, or nobody was enrolled -- and
+    -- on every row written before these columns existed; the panel leaves
+    -- those out rather than reading them as "no faces".
+    faces_seen                   INTEGER DEFAULT 0,
+    faces_matched                INTEGER DEFAULT 0,
+    faces_unclear                INTEGER DEFAULT 0,
+    face_outcome                 TEXT    DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_analysis_clip   ON analysis_results (clip_id);
 CREATE INDEX IF NOT EXISTS idx_analysis_suspicious ON analysis_results (is_suspicious);
@@ -400,4 +411,11 @@ ALTER TABLE camera_vehicle_signatures ALTER COLUMN histogram_pipeline SET DEFAUL
 ALTER TABLE camera_scene_baselines ADD COLUMN IF NOT EXISTS night_thumbnail TEXT DEFAULT '';
 ALTER TABLE camera_scene_baselines ADD COLUMN IF NOT EXISTS night_sample_count INTEGER DEFAULT 0;
 ALTER TABLE camera_scene_baselines ADD COLUMN IF NOT EXISTS night_consecutive_deviation_count INTEGER DEFAULT 0;
+-- 6.1.1: what face recognition counted in each clip, for the Biometrics tab's
+-- Recognition results panel. A row from before this has no outcome (''), which
+-- the panel leaves out rather than counting as "no faces".
+ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS faces_seen INTEGER DEFAULT 0;
+ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS faces_matched INTEGER DEFAULT 0;
+ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS faces_unclear INTEGER DEFAULT 0;
+ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS face_outcome TEXT DEFAULT '';
 """

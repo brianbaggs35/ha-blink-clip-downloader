@@ -13,18 +13,26 @@ from __future__ import annotations
 
 import asyncio
 import io
+import random
 import sys
 import time
 from collections.abc import Sequence
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
 import pytest
 from PIL import Image
 
 from blink_downloader import vision as vision_module
+from blink_downloader.analyzer import ClipAnalyzer
 from blink_downloader.database import ClipDatabase
+from blink_downloader.face_outcomes import (
+    HELD_BACK_OUTCOMES,
+    FaceOutcome,
+    FaceTally,
+    classify_face_outcome,
+)
 from blink_downloader.security.assets import AssetLocation, AssetType, ProtectedAsset
 from blink_downloader.security.geometry import Box, Zone
 from blink_downloader.security.tracks import build_tracks
@@ -79,9 +87,11 @@ from blink_downloader.vision.detection import (
 from blink_downloader.vision.faces import (
     DetectedFace,
     _build_recognition_hint,
+    _by_person,
+    _each_has_their_own,
     _frontality,
-    _resemblance,
     _sharpness,
+    _similarities,
     match_enrollment,
 )
 from blink_downloader.vision.imaging import (
@@ -2681,6 +2691,54 @@ async def test_a_likeness_of_someone_not_recognized_in_the_clip_does_not_count(
     assert result.unrecognized_present is True
 
 
+async def test_two_sharp_faces_that_resemble_the_same_person_are_not_both_that_person(
+    db: ClipDatabase,
+) -> None:
+    """Amy and Brian are both nearby and neither is in the frame, so two faces
+    would have two people to be -- but each of these is sharp and whole, so
+    each could only be the one it resembles, and they cannot both be Amy."""
+    await _enroll(db, "Amy", "Brian")
+    both = [_person("Amy"), _person("Brian")]
+    two_like_amy = [_face(_like(0, 0.6)), _face(_like(0, 0.62))]
+    assert (
+        await _recognize(db, [both, two_like_amy, both])
+    ).unrecognized_present is True
+    # One of them resembling Brian instead gives each a person of their own.
+    one_each = [_face(_like(0, 0.6)), _face(_like(1, 0.6))]
+    result = await _recognize(db, [both, one_each, both])
+    assert result.unrecognized_present is False
+    assert result.unclear_faces == 2
+
+
+async def test_a_sharp_face_and_a_poor_look_are_put_down_to_different_people(
+    db: ClipDatabase,
+) -> None:
+    """The poor look could be either resident, the sharp face only Amy: so
+    Amy goes to the sharp one and Brian to the other, whichever is first."""
+    await _enroll(db, "Amy", "Brian")
+    both = [_person("Amy"), _person("Brian")]
+    for faces in (
+        [_blurred(), _face(_like(0, 0.6))],
+        [_face(_like(0, 0.6)), _blurred()],
+    ):
+        result = await _recognize(db, [both, faces, both])
+        assert result.unrecognized_present is False
+        assert result.unclear_faces == 2
+
+
+def test_each_face_needs_a_person_of_their_own() -> None:
+    amy, brian, carl = {"Amy"}, {"Brian"}, {"Carl"}
+    assert _each_has_their_own([])
+    assert _each_has_their_own([amy, brian])
+    assert not _each_has_their_own([amy, amy])
+    # More faces than people, however open each is.
+    assert not _each_has_their_own([amy | brian] * 3)
+    # An earlier face has to give up the person a later one can only be.
+    assert _each_has_their_own([amy | brian, amy])
+    assert _each_has_their_own([amy | brian, brian | carl, amy])
+    assert not _each_has_their_own([amy | brian, brian | carl, amy, brian])
+
+
 async def test_a_stranger_who_takes_a_residents_place_is_not_taken_for_them(
     db: ClipDatabase,
 ) -> None:
@@ -2783,7 +2841,7 @@ async def test_two_photos_of_one_person_count_once_towards_who_is_there(
     assert result.unrecognized_present is True
 
 
-def test_resemblance_keeps_the_best_photo_per_person() -> None:
+def test_similarity_by_person_keeps_the_best_photo() -> None:
     photos = [
         {"name": "Amy", "embedding": [1.0, 0.0]},
         {"name": "Amy", "embedding": [0.0, 1.0]},
@@ -2791,9 +2849,229 @@ def test_resemblance_keeps_the_best_photo_per_person() -> None:
     brian = {"name": "Brian", "embedding": [1.0, 1.0]}
     # Whichever order the photos come in, it is the closest one that counts.
     for order in (photos, photos[::-1]):
-        assert _resemblance([0.0, 1.0], [*order, brian]) == pytest.approx(
+        enrollments = [*order, brian]
+        similarities = _similarities([0.0, 1.0], enrollments)
+        assert _by_person(similarities, enrollments) == pytest.approx(
             {"Amy": 1.0, "Brian": 0.7071067811865476}
         )
+
+
+# ------------------------------------------------------------------
+# What recognition tallies, and the outcome it adds up to
+# ------------------------------------------------------------------
+
+
+async def test_recognition_tallies_what_it_saw(db: ClipDatabase) -> None:
+    await _enroll(db, "Amy", "Brian")
+    both = [_person("Amy"), _person("Brian")]
+    result = await _recognize(
+        db,
+        [both, [_person("Amy"), _blurred()], [_person("Amy"), _stranger()]],
+    )
+    # Six faces seen, four matched; of the two that matched nobody, only the
+    # blurred one looks unclear -- and the clear one means it would not clear.
+    assert result.tally == FaceTally(
+        seen=6, matched=4, unclear=1, unexamined=0, would_clear=False
+    )
+
+
+async def test_the_tally_says_what_ignoring_unclear_faces_would_do(
+    db: ClipDatabase,
+) -> None:
+    """The same picture of the clip with the option off or on -- off, so
+    the panel can say what turning it on would change."""
+    await _enroll(db, "Amy", "Brian")
+    frames = [[_person("Amy"), _person("Brian")], [_person("Amy"), _blurred()]]
+    off = await _recognize(db, frames, ignore_unclear=False)
+    on = await _recognize(db, frames)
+
+    assert off.unrecognized_present is True
+    assert off.unclear_faces == 0
+    assert on.unrecognized_present is False
+    assert on.unclear_faces == 1
+    expected = FaceTally(seen=4, matched=3, unclear=1, unexamined=0, would_clear=True)
+    assert off.tally == expected
+    assert on.tally == expected
+
+
+async def test_a_frame_that_could_not_be_examined_is_tallied_not_hidden(
+    db: ClipDatabase,
+) -> None:
+    await _enroll(db, "Amy", "Brian")
+    both = [_person("Amy"), _person("Brian")]
+    result = await _recognize(db, [both, None, [_blurred()]])
+    # The blurred face has nobody recognized beside it, and the unexamined
+    # frame in between does not make the two either side of it neighbours.
+    assert result.tally == FaceTally(
+        seen=3, matched=2, unclear=1, unexamined=1, would_clear=False
+    )
+    assert result.unrecognized_present is True
+
+
+async def test_nothing_is_tallied_when_nothing_was_examined(db: ClipDatabase) -> None:
+    # Nobody enrolled: detection never runs, which is not "no faces here".
+    result = await _recognize(db, [[_stranger()]])
+    assert result.tally is None
+
+
+def _people_at_once(count: int) -> list[DetectedObject]:
+    """*count* people standing apart in one sampled frame."""
+    return [
+        DetectedObject("person", 0.8, (100.0 * i, 0, 100.0 * i + 40, 120), i + 1, 0)
+        for i in range(count)
+    ]
+
+
+def _scene(
+    rng: random.Random, *, unapproved: str = ""
+) -> list[list[DetectedFace] | None]:
+    """A random clip of up to six frames, now and then one nobody could read.
+
+    Four in ten are a household's own: in every frame both residents are
+    seen, or one of them is and the other is poorly seen -- the clips the
+    option exists to clear. The rest mix in everything else the cases above
+    are made of, so plenty of clips are ones nothing should clear. With
+    *unapproved* naming an enrolled person who is not approved, they turn up
+    now and then too, which draws nothing from *rng* when it is left out."""
+    poor = [
+        _blurred,
+        lambda: _face(_axis(3), quality=0.95, cut_off=True),
+        lambda: _face(_like(0, 0.6)),
+    ]
+    anything = [
+        *poor,
+        _stranger,
+        lambda: _blurred(width=30),
+        lambda: _person("Amy"),
+    ]
+    if unapproved:
+        anything.append(lambda: _person(unapproved))
+    household = rng.random() < 0.4
+
+    def household_frame() -> list[DetectedFace]:
+        roll = rng.random()
+        if roll < 0.5:
+            faces = [_person("Amy"), _person("Brian")]
+        else:
+            faces = [_person("Amy" if roll < 0.75 else "Brian"), rng.choice(poor)()]
+        if unapproved and rng.random() < 0.15:
+            faces.append(_person(unapproved))
+        return faces
+
+    def frame() -> list[DetectedFace] | None:
+        if household:
+            return household_frame()
+        roll = rng.random()
+        if roll < 0.1:
+            return None
+        if roll < 0.5:
+            return household_frame()
+        return [rng.choice(anything)() for _ in range(rng.randint(0, 3))]
+
+    return [frame() for _ in range(rng.randint(1, 6))]
+
+
+async def test_every_outcome_agrees_with_what_the_analyzer_counts_as_recognized() -> (
+    None
+):
+    """The stored reason must never contradict the stored verdict: across
+    random clips, with the option off and on and with object detection seeing
+    anywhere from nobody to three people at once, a clip the analyzer calls
+    recognized is recognized (or set aside), every other clip with faces has
+    one of the listed reasons, and each reason is true of the result. One of
+    the three people enrolled is not approved, so that reason comes up too."""
+    enrollments = [
+        {"name": "Amy", "embedding": _axis(0), "approved": True},
+        {"name": "Brian", "embedding": _axis(1), "approved": True},
+        {"name": "Carl", "embedding": _axis(2), "approved": False},
+    ]
+    database = MagicMock(spec=ClipDatabase)
+    database.list_face_enrollments = AsyncMock(return_value=enrollments)
+    rng = random.Random(612)
+    seen_outcomes: set[str] = set()
+    for _ in range(300):
+        scene = _scene(rng, unapproved="Carl")
+        keyed = {f"frame-{i}".encode(): faces for i, faces in enumerate(scene)}
+        recognizer = FaceRecognizer(_detecting(keyed), database)
+        for ignore_unclear in (False, True):
+            result = await recognizer.recognize(
+                list(keyed), ignore_unclear=ignore_unclear
+            )
+            for people in range(4):
+                hints = VisionHints(
+                    face_recognition=result, detections=_people_at_once(people)
+                )
+                recognized = ClipAnalyzer._face_match_is_unambiguous(hints)
+                outcome = classify_face_outcome(result, recognized=recognized)
+                seen_outcomes.add(outcome)
+                if recognized:
+                    assert outcome in (FaceOutcome.RECOGNIZED, FaceOutcome.SET_ASIDE)
+                    assert (outcome == FaceOutcome.SET_ASIDE) is (
+                        result.unclear_faces > 0
+                    )
+                elif outcome == FaceOutcome.EXTRA_PEOPLE:
+                    # Only the people count is in the way.
+                    assert ClipAnalyzer._faces_all_approved(result) is True
+                elif outcome == FaceOutcome.NOT_APPROVED:
+                    # Someone enrolled but not approved, and nobody else in the way.
+                    assert result.other_names
+                    assert ClipAnalyzer._faces_all_approved(result) is False
+                elif outcome != FaceOutcome.NO_FACES:
+                    assert outcome in {o.value for o in HELD_BACK_OUTCOMES}
+                    assert result.unrecognized_present is True
+    # Not vacuous: the random clips reach every outcome this can produce.
+    assert seen_outcomes >= {
+        FaceOutcome.NO_FACES,
+        FaceOutcome.RECOGNIZED,
+        FaceOutcome.SET_ASIDE,
+        FaceOutcome.UNFAMILIAR,
+        FaceOutcome.UNEXAMINED,
+        FaceOutcome.UNCLEAR,
+        FaceOutcome.UNCLEAR_IGNORABLE,
+        FaceOutcome.NOT_APPROVED,
+        FaceOutcome.EXTRA_PEOPLE,
+    }
+
+
+async def test_the_option_never_changes_what_the_strict_rule_decides() -> None:
+    """The guarantee behind "off means nothing changes": across hundreds of
+    random clips, with the option off a face that matched nobody (or a frame
+    nobody could read) counts exactly as it always did, nothing is set aside,
+    and the option on only ever removes strangers, never adds one."""
+    enrollments = [
+        {"name": "Amy", "embedding": _axis(0), "approved": True},
+        {"name": "Brian", "embedding": _axis(1), "approved": True},
+    ]
+    database = MagicMock(spec=ClipDatabase)
+    database.list_face_enrollments = AsyncMock(return_value=enrollments)
+    rng = random.Random(611)
+    cleared_by_the_option = 0
+    for _ in range(400):
+        scene = _scene(rng)
+        keyed = {f"frame-{i}".encode(): faces for i, faces in enumerate(scene)}
+        recognizer = FaceRecognizer(_detecting(keyed), database)
+        strict = await recognizer.recognize(list(keyed), ignore_unclear=False)
+        relaxed = await recognizer.recognize(list(keyed), ignore_unclear=True)
+
+        def matched(face: DetectedFace) -> bool:
+            return face.embedding in (_axis(0), _axis(1))
+
+        unmatched = sum(not matched(face) for faces in scene for face in faces or ())
+        legacy = None in scene or unmatched > 0
+        assert strict.unrecognized_present is legacy
+        assert strict.unclear_faces == 0
+        assert relaxed.approved_names == strict.approved_names
+        assert relaxed.tally is not None
+        assert relaxed.tally == strict.tally
+        # Never stricter than the strict rule: a bool compares as 0 or 1.
+        assert relaxed.unrecognized_present <= strict.unrecognized_present
+        # What the tally promised the option would do, it does.
+        assert relaxed.unrecognized_present is (not relaxed.tally.would_clear)
+        if not relaxed.unrecognized_present:
+            assert relaxed.unclear_faces == unmatched
+            cleared_by_the_option += legacy
+    # Not vacuous: plenty of clips really were cleared by the option.
+    assert cleared_by_the_option > 20
 
 
 def test_match_enrollment_reports_name_and_similarity() -> None:

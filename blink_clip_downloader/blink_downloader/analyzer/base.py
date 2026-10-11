@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any
 import aiohttp
 
 from .. import frame_motion, prompt_segments
+from ..face_outcomes import classify_face_outcome
 from ..ffmpeg_output import ANALYSIS_FRAME_WIDTH, extract_jpeg_frames
 from ..protected_assets import assets_by_camera
 
@@ -402,6 +403,16 @@ class AnalysisResult:
     # detected_objects there are at most three of them and nothing joins
     # against them, so they ride along in a column instead of a table.
     audio_labels: str = ""
+    # What face recognition counted in this clip, and why it did or did not
+    # count as recognized (face_outcomes.py's FaceTally and FaceOutcome):
+    # numbers and a code, never who. Backs the Biometrics tab's Recognition
+    # results panel. face_outcome stays "" when recognition did not examine
+    # the clip -- it is off, or nobody is enrolled -- and the panel leaves
+    # such rows out.
+    faces_seen: int = 0
+    faces_matched: int = 0
+    faces_unclear: int = 0
+    face_outcome: str = ""
     # Structured events behind the score above. Excluded from to_dict()
     # like detected_objects: they are persisted to their own table (see
     # database.py's security_events) rather than into the analysis row.
@@ -436,6 +447,10 @@ class AnalysisResult:
             "evidence_quality": self.evidence_quality,
             "risk_override_applied": self.risk_override_applied,
             "audio_labels": self.audio_labels,
+            "faces_seen": self.faces_seen,
+            "faces_matched": self.faces_matched,
+            "faces_unclear": self.faces_unclear,
+            "face_outcome": self.face_outcome,
         }
 
 
@@ -884,6 +899,23 @@ class BaseAnalyzer(abc.ABC):
         return True
 
     @staticmethod
+    def _face_stats(
+        vision_hints: VisionHints | None, recognized: bool
+    ) -> tuple[int, int, int, str]:
+        """What face recognition counted in this clip and why it did or did not
+        count as recognized: ``(seen, matched, unclear, outcome)``, or zeros
+        and ``""`` when it examined nothing. Counts and a code, never who --
+        stored with the analysis for the Biometrics tab's panel, and, like
+        the bypass log line, never part of anything sent to an AI provider.
+        """
+        faces = vision_hints.face_recognition if vision_hints else None
+        if faces is None or faces.tally is None:
+            return 0, 0, 0, ""
+        tally = faces.tally
+        outcome = classify_face_outcome(faces, recognized=recognized)
+        return tally.seen, tally.matched, tally.unclear, outcome
+
+    @staticmethod
     def _personalization_names(vision_hints: VisionHints | None) -> list[str]:
         """Names to use when personalizing the AI's summary text — a purely
         cosmetic rewrite, safe regardless of ``is_suspicious`` (see
@@ -1297,6 +1329,11 @@ class BaseAnalyzer(abc.ABC):
             clip_id, camera, frames, vision_hints, security, is_suspicious
         )
 
+        recognized = self._face_match_is_unambiguous(vision_hints)
+        faces_seen, faces_matched, faces_unclear, face_outcome = self._face_stats(
+            vision_hints, recognized
+        )
+
         return AnalysisResult(
             clip_id=clip_id,
             camera=camera,
@@ -1318,7 +1355,7 @@ class BaseAnalyzer(abc.ABC):
             prompt_text=prompt if self._store_prompt_debug else "",
             face_bypass_applied=face_bypass_applied,
             face_bypass_names=face_bypass_names,
-            approved_faces_seen=self._face_match_is_unambiguous(vision_hints),
+            approved_faces_seen=recognized,
             detected_objects=(vision_hints.detections or []) if vision_hints else [],
             detection_interval=vision_hints.scan_interval if vision_hints else 0.0,
             detection_frame_size=vision_hints.frame_size if vision_hints else None,
@@ -1328,6 +1365,10 @@ class BaseAnalyzer(abc.ABC):
             evidence_quality=security.evidence.score if security else 0.0,
             risk_override_applied=risk_override_applied,
             audio_labels=_audio_labels_json(vision_hints),
+            faces_seen=faces_seen,
+            faces_matched=faces_matched,
+            faces_unclear=faces_unclear,
+            face_outcome=face_outcome,
             security_events=security.events if security else [],
         )
 

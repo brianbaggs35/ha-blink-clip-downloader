@@ -16,6 +16,7 @@ import FaceFinder from './FaceFinder.vue'
 import { groupPeople, isResolutionMismatch, type Person } from './people'
 import PersonCard from './PersonCard.vue'
 import PersonPhotosDialog from './PersonPhotosDialog.vue'
+import RecognitionResultsCard from './RecognitionResultsCard.vue'
 
 const toast = useToastStore()
 const confirm = useConfirm()
@@ -242,6 +243,8 @@ function scanReportedClip(clipId: string) {
     <FaceFinder ref="finder" :available="available" :people="people" @enrolled="load" />
 
     <FaceBypassActivityCard @scan-clip="scanReportedClip" />
+
+    <RecognitionResultsCard />
 
     <PersonPhotosDialog
       :visible="managing !== null"

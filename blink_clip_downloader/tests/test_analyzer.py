@@ -6674,6 +6674,79 @@ async def test_analyze_clip_approved_faces_seen_even_when_not_suspicious() -> No
     assert result.approved_faces_seen is True
 
 
+async def test_analyze_clip_records_what_face_recognition_counted() -> None:
+    """The counts and the reason behind the Biometrics tab's Recognition
+    results panel ride on the stored result -- numbers and a code, never who."""
+    from blink_downloader.face_outcomes import FaceTally
+    from blink_downloader.vision import FaceRecognitionResult, VisionHints
+
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    fake_pipeline = MagicMock()
+    fake_pipeline.process_clip = AsyncMock(
+        return_value=VisionHints(
+            face_recognition=FaceRecognitionResult(
+                approved_names=["Amy", "Brian"],
+                unclear_faces=1,
+                tally=FaceTally(seen=9, matched=8, unclear=1, would_clear=True),
+            )
+        )
+    )
+    a.attach_vision_pipeline(fake_pipeline)
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(_real_jpeg(100) * 3, b""))
+    mock_proc.returncode = 0
+    a._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value=(
+            '{"suspicious": false, "confidence": 0.9, '
+            '"description": "People are standing at the front door."}'
+        )
+    )
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        result = await a.analyze_clip("/clips/test.mp4", "c1", "Front Door")
+
+    assert result.faces_seen == 9
+    assert result.faces_matched == 8
+    assert result.faces_unclear == 1
+    assert result.face_outcome == "set_aside"
+    row = result.to_dict()
+    assert row["faces_seen"] == 9
+    assert row["face_outcome"] == "set_aside"
+    # Nothing about who was recognized rides along with it.
+    assert "Brian" not in str(
+        {k: v for k, v in row.items() if k.startswith(("face", "approved"))}
+    )
+
+
+def test_a_clip_recognition_did_not_examine_records_no_outcome() -> None:
+    from blink_downloader.vision import FaceRecognitionResult, VisionHints
+
+    nothing = (0, 0, 0, "")
+    assert ClipAnalyzer._face_stats(None, False) == nothing
+    assert ClipAnalyzer._face_stats(VisionHints(), False) == nothing
+    # Recognition ran but looked at nothing (nobody enrolled, or it failed).
+    unexamined = VisionHints(face_recognition=FaceRecognitionResult())
+    assert ClipAnalyzer._face_stats(unexamined, False) == nothing
+
+
+def test_the_people_count_is_the_reason_when_every_face_checks_out() -> None:
+    """Every face is accounted for and still the clip did not count: the only
+    thing left that can hold it back is object detection seeing more people
+    than faces were recognized."""
+    from blink_downloader.face_outcomes import FaceTally
+    from blink_downloader.vision import FaceRecognitionResult, VisionHints
+
+    hints = VisionHints(
+        face_recognition=FaceRecognitionResult(
+            approved_names=["Brian"], tally=FaceTally(seen=3, matched=3)
+        ),
+        detections=_people(1, 2, 1),
+    )
+    recognized = ClipAnalyzer._face_match_is_unambiguous(hints)
+    assert recognized is False
+    assert ClipAnalyzer._face_stats(hints, recognized) == (3, 3, 0, "extra_people")
+
+
 async def test_analyze_clip_populates_detected_objects_from_vision_hints() -> None:
     """AnalysisResult.detected_objects must carry through the vision
     pipeline's raw per-object detections (for database.py's

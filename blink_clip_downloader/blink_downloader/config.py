@@ -361,6 +361,14 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     # regardless of which ai_provider is configured. Off by default; enroll
     # household members via the web UI's Biometrics tab.
     ai_face_recognition_enabled: bool = False
+    # Whether a face too poor to identify (blurred by motion, cut off, turned
+    # away or half hidden) still counts as a possible stranger. Off by
+    # default, which keeps the all-or-nothing rule exactly as strict as it
+    # was; on, such a face is set aside when a different recognized household
+    # member can account for it, one seen in that frame or the one before or
+    # after and not already shown by another face in that frame (see
+    # vision/faces.py's FaceRecognizer.recognize for the conditions).
+    ai_face_recognition_ignore_unclear_faces: bool = False
     # How much detail faces are matched with: "standard" matches in the
     # 640px-wide frames analysis already extracts, "high"/"very_high"
     # re-extract the same moments at 960/1280px (vision/faces.py's
@@ -370,13 +378,6 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     # Enrollment scans follow it, so photos enrolled before a change match
     # best after being re-scanned.
     ai_face_recognition_resolution: str = "standard"
-    # Whether a face too poor to identify (blurred by motion, cut off, turned
-    # away or half hidden) still counts as a possible stranger. Off by
-    # default, which keeps the all-or-nothing rule exactly as strict as it
-    # was; on, such a face is set aside when it can be accounted for as one of
-    # the household members recognized elsewhere in the same clip (see
-    # vision/faces.py's FaceRecognizer.recognize for the conditions).
-    ai_face_recognition_ignore_unclear_faces: bool = False
     # Body-keypoint estimation (Ultralytics YOLO-pose) for the subject
     # nearest a protected asset, on the single frame the depth/contact
     # stages already examine. Its own toggle and its own small checkpoint:
@@ -829,10 +830,10 @@ def _parse_ai_detection_kwargs(data: dict) -> dict[str, Any]:
         "ai_face_recognition_enabled": bool(
             data.get("ai_face_recognition_enabled", False)
         ),
-        "ai_face_recognition_resolution": _parse_face_recognition_resolution(data),
         "ai_face_recognition_ignore_unclear_faces": bool(
             data.get("ai_face_recognition_ignore_unclear_faces", False)
         ),
+        "ai_face_recognition_resolution": _parse_face_recognition_resolution(data),
         "ai_pose_estimation_enabled": bool(
             data.get("ai_pose_estimation_enabled", False)
         ),
