@@ -234,6 +234,10 @@ recognized without reading logs.
   overran the border by 26-80px), which is the only place a cut-off face can
   be told apart: its quality score had a median of 0.91.
 
+### Updated Dependencies
+
+- Updated aiohttp to 3.14.5
+
 ## 6.1.0
 
 ### HTTPS for the direct-access port
