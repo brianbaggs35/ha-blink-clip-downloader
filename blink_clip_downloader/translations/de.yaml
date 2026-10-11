@@ -631,6 +631,23 @@ configuration:
       auch wenn das KI-Modell ihn als unauffällig eingestuft hat. Der
       Standardwert 75 deckt nur den kritischen Bereich ab. 0 lässt das Urteil
       des Modells endgültig sein.
+  ai_routine_door_use_enabled:
+    name: Normale Türnutzung als unauffällig behandeln
+    description: >-
+      Hebt die Markierung eines Clips auf, den das KI-Modell unsicher als
+      verdächtig eingestuft hat, wenn der ganze Clip nur der kurze Gang einer
+      einzelnen Person durch eine im Tab „Assets“ markierte Tür ist -- hinter
+      ihr aus dem Blick oder innerhalb weniger Sekunden von ihr entfernt --,
+      ohne weitere Person, ohne weitere Vorkommnisse und ohne klar erkennbares
+      Gesicht, das zu niemandem passt. Gedacht für die Haustür, an der die
+      aufschließende Person der Kamera den Rücken zukehrt und die
+      Gesichtserkennung nichts ausrichten kann. Eine sichere Einstufung, eine
+      zweite Person, Herumstehen, eine Uhrzeit mit selten erkannter Aktivität
+      oder eine erkannte, nicht freigegebene Person verhindern das. Standardmäßig
+      aus, weil sie anders als die Gesichtserkennungs-Freigabe nicht weiß, wer
+      die Person war. Benötigt „Erweiterte Erkennung & Tracking“,
+      „Strukturierte Sicherheitsanalyse“ und „Bilder für die
+      Verhaltensanalyse“ über 0.
   mobile_app_target:
     name: Ziel-Entität der Mobil-App
     description: >-

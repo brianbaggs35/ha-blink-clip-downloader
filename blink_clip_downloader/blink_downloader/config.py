@@ -438,6 +438,16 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     # design: this can raise a verdict the model missed but never lower one
     # it made.
     ai_risk_alert_threshold: int = 75
+    # Lets a clip the AI model flagged while unsure of itself be cleared when
+    # the whole clip is one person's brief trip through a door marked on the
+    # Assets tab (security/routine.py): the case a face-recognition bypass
+    # cannot help with, because whoever it was had their back to the camera.
+    # Off by default -- unlike every other local adjustment that lowers a
+    # verdict, it does not know who the person was -- and a clear look at a
+    # face that matches nobody, a second person, lingering, an unusual hour
+    # or a confident model each withhold it. Needs object detection, the
+    # security layer and the temporal scan, and does nothing without them.
+    ai_routine_door_use_enabled: bool = False
 
     # --- Extended Notifications (AI alerts) ---
     mobile_app_target: str = ""
@@ -853,6 +863,9 @@ def _parse_ai_detection_kwargs(data: dict) -> dict[str, Any]:
         ),
         "ai_risk_alert_threshold": _bounded_int(
             data, "ai_risk_alert_threshold", default=75, low=0, high=100
+        ),
+        "ai_routine_door_use_enabled": bool(
+            data.get("ai_routine_door_use_enabled", False)
         ),
     }
 

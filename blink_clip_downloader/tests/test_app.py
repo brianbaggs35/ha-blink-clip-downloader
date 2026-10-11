@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import time as _time
 from pathlib import Path
@@ -2459,6 +2460,65 @@ def test_face_recognition_resolution_reaches_recognition_and_enrollment(
     assert pipeline._config.face_frame_width == 1280
     assert app._media_server._face_frame_width == 1280
     assert app._media_server._face_recognition_enabled is True
+
+
+@pytest.mark.parametrize(
+    ("overrides", "active", "named"),
+    [
+        ({"ai_routine_door_use_enabled": False}, False, None),
+        ({"ai_routine_door_use_enabled": True}, False, "ai_enhanced_detection_enabled"),
+        (
+            {
+                "ai_routine_door_use_enabled": True,
+                "ai_enhanced_detection_enabled": True,
+                "ai_security_events_enabled": False,
+            },
+            False,
+            "ai_security_events_enabled",
+        ),
+        (
+            {
+                "ai_routine_door_use_enabled": True,
+                "ai_enhanced_detection_enabled": True,
+                "ai_temporal_scan_frames": 0,
+            },
+            False,
+            "ai_temporal_scan_frames above 0",
+        ),
+        (
+            {
+                "ai_routine_door_use_enabled": True,
+                "ai_enhanced_detection_enabled": True,
+            },
+            True,
+            None,
+        ),
+    ],
+    ids=["off", "no-detection", "no-security-layer", "no-scan", "on"],
+)
+def test_routine_door_use_reaches_the_analyzer_only_when_it_can_work(
+    base_config,
+    tmp_path,
+    caplog: pytest.LogCaptureFixture,
+    overrides: dict,
+    active: bool,
+    named: str | None,
+) -> None:
+    """It reads tracked people off the evenly spaced scan, so turned on
+    without those it must do nothing -- and say why, because a switch that
+    silently does nothing looks like a feature that does not work."""
+    with caplog.at_level(logging.WARNING, logger="blink_downloader.app"):
+        _app, mock_create_analyzer = _build_app_with_camera_configs(
+            base_config, tmp_path, None, **overrides
+        )
+
+    settings = mock_create_analyzer.call_args.kwargs["settings"].security_settings
+    assert settings.routine_door_use is active
+    if named is None:
+        assert "ai_routine_door_use_enabled is on but" not in caplog.text
+    else:
+        assert "ai_routine_door_use_enabled is on but will do nothing" in caplog.text
+        assert named in caplog.text
 
 
 @pytest.mark.parametrize("ignore_unclear", [False, True])

@@ -4272,6 +4272,52 @@ async def test_ai_test_success(db: ClipDatabase, tmp_path: Path) -> None:
         await tc.close()
 
 
+@pytest.mark.parametrize(
+    ("route", "clip_id"), [("/api/ai/analyze/ctx1", "ctx1"), ("/api/ai/test", "ctx1")]
+)
+async def test_an_analysis_run_by_hand_gets_the_context_the_queue_gives(
+    db: ClipDatabase, route: str, clip_id: str
+) -> None:
+    """Re-analyze and the AI tab's Test used to hand the analyzer nothing but
+    the file. The hour a clip was recorded at, how unusual it is for that
+    camera and the corrections people have made decide what the prompt says
+    -- and whether ``ai_routine_door_use_enabled`` may clear a flag -- so a
+    manual run that skipped them could clear what the queue would keep."""
+    await db.add_clip(
+        _make_clip(clip_id, duration=12, timestamp="2024-06-01T03:30:00+00:00")
+    )
+    analyzer = _make_analyzer(analyze_result=_make_analysis_result(clip_id))
+    corrections = [{"original_suspicious": True, "correction_note": "my own dog"}]
+    server = MediaServer(db=db, port=0, analyzer=analyzer)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        with (
+            patch(
+                "blink_downloader.media_server.ai.compute_anomaly_score",
+                new=AsyncMock(return_value=0.5),
+            ) as score,
+            patch.object(
+                db, "get_prompt_corrections", AsyncMock(return_value=corrections)
+            ),
+        ):
+            assert (await tc.post(route)).status == 200
+    finally:
+        await tc.close()
+
+    kwargs = analyzer.analyze_clip.call_args.kwargs
+    assert kwargs["anomaly_score"] == 0.5
+    assert kwargs["clip_timestamp"] == "2024-06-01T03:30:00+00:00"
+    assert kwargs["clip_duration"] == 12.0
+    assert kwargs["recent_corrections"] == corrections
+    assert score.await_args is not None
+    assert score.await_args.args[1:] == (
+        "Front Door",
+        "2024-06-01T03:30:00+00:00",
+        12.0,
+    )
+
+
 async def test_ai_test_saves_detected_objects(db: ClipDatabase, tmp_path: Path) -> None:
     from blink_downloader.vision import DetectedObject
 
@@ -10520,6 +10566,39 @@ async def test_ai_clip_result_includes_security_events(
     assert data["risk_score"] == 80.0
     assert data["severity"] == "critical"
     assert len(data["security_events"]) == 1
+
+
+async def test_ai_clip_result_says_when_a_flag_was_cleared_as_routine_door_use(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    """The clip modal's AI panel reads this to show why a flag the model
+    raised is missing, so it has to arrive on the row as stored -- and be
+    false, not absent, for every analysis that never needed it."""
+    await db.add_clip(_make_clip("door"))
+    await db.add_clip(_make_clip("plain"))
+    await db.add_analysis_result(
+        {
+            "clip_id": "door",
+            "camera": "Front Door",
+            "model": "llava",
+            "analyzed_at": "2024-06-01T09:00:00+00:00",
+            "routine_visit_applied": True,
+            "face_outcome": "no_faces",
+        }
+    )
+    await db.add_analysis_result(
+        {
+            "clip_id": "plain",
+            "camera": "Front Door",
+            "model": "llava",
+            "analyzed_at": "2024-06-01T09:00:00+00:00",
+        }
+    )
+    door = await (await client.get("/api/ai/results/door")).json()
+    plain = await (await client.get("/api/ai/results/plain")).json()
+    assert door["routine_visit_applied"] is True
+    assert door["face_outcome"] == "no_faces"
+    assert plain["routine_visit_applied"] is False
 
 
 # ---------------------------------------------------------------------------

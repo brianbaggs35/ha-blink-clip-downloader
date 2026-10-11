@@ -22,6 +22,30 @@ _LOGGER = logging.getLogger(__name__)
 _MAX_ANALYSIS_RETRIES = 3
 
 
+async def compute_anomaly_score(
+    db: ClipDatabase, camera: str, clip_timestamp: str, clip_duration: float
+) -> float:
+    """Compute anomaly score before analysis so the prompt can reference it.
+
+    Shared by the queue and the on-demand "Re-analyze"/Test routes: the score
+    also gates ``ai_routine_door_use_enabled`` (a visit at an hour the camera
+    rarely sees stays flagged), so an analysis run by hand must not skip it
+    and clear what the queue would have kept.
+    """
+    try:
+        hour = (
+            datetime.fromisoformat(clip_timestamp).hour
+            if clip_timestamp
+            else datetime.now(UTC).hour
+        )
+        return await db.get_anomaly_score(
+            camera=camera, hour=hour, duration=clip_duration
+        )
+    except Exception as exc:  # noqa: BLE001
+        _LOGGER.debug("Could not compute anomaly score for camera %s: %s", camera, exc)
+        return 0.0
+
+
 class AnalysisQueue:
     """Manages a queue of clips awaiting AI analysis.
 
@@ -164,8 +188,8 @@ class AnalysisQueue:
             clip = await self._db.get_clip(clip_id)
             clip_timestamp = str(clip.get("timestamp", "")) if clip else ""
             clip_duration = float((clip or {}).get("duration") or 0)
-            anomaly_score = await self._compute_anomaly_score(
-                item["camera"], clip_timestamp, clip_duration
+            anomaly_score = await compute_anomaly_score(
+                self._db, item["camera"], clip_timestamp, clip_duration
             )
             recent_corrections = await self._db.get_prompt_corrections(item["camera"])
 
@@ -249,27 +273,6 @@ class AnalysisQueue:
                 _LOGGER.warning(
                     "Could not fire the analyzed event for clip %s: %s", clip_id, exc
                 )
-
-    async def _compute_anomaly_score(
-        self, camera: str, clip_timestamp: str, clip_duration: float
-    ) -> float:
-        """Compute anomaly score before analysis so the prompt can reference it."""
-        try:
-            from datetime import datetime as _dt
-
-            hour = (
-                _dt.fromisoformat(clip_timestamp).hour
-                if clip_timestamp
-                else _dt.now(UTC).hour
-            )
-            return await self._db.get_anomaly_score(
-                camera=camera, hour=hour, duration=clip_duration
-            )
-        except Exception as exc:  # noqa: BLE001
-            _LOGGER.debug(
-                "Could not compute anomaly score for camera %s: %s", camera, exc
-            )
-            return 0.0
 
     @staticmethod
     def _log_result(clip_id: str, result: Any) -> None:

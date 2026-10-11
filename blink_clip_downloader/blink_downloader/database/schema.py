@@ -81,7 +81,11 @@ CREATE TABLE IF NOT EXISTS analysis_results (
     faces_seen                   INTEGER DEFAULT 0,
     faces_matched                INTEGER DEFAULT 0,
     faces_unclear                INTEGER DEFAULT 0,
-    face_outcome                 TEXT    DEFAULT ''
+    face_outcome                 TEXT    DEFAULT '',
+    -- Set when ai_routine_door_use_enabled cleared the model's suspicious flag
+    -- because the clip was one person's brief trip through a marked door
+    -- (see security/routine.py). False on every row written before it existed.
+    routine_visit_applied        BOOLEAN DEFAULT FALSE
 );
 CREATE INDEX IF NOT EXISTS idx_analysis_clip   ON analysis_results (clip_id);
 CREATE INDEX IF NOT EXISTS idx_analysis_suspicious ON analysis_results (is_suspicious);
@@ -418,4 +422,5 @@ ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS faces_seen INTEGER DEFAULT
 ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS faces_matched INTEGER DEFAULT 0;
 ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS faces_unclear INTEGER DEFAULT 0;
 ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS face_outcome TEXT DEFAULT '';
+ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS routine_visit_applied BOOLEAN DEFAULT FALSE;
 """

@@ -7,9 +7,11 @@ import pytest
 
 from blink_downloader.face_outcomes import (
     HELD_BACK_OUTCOMES,
+    FaceEvidence,
     FaceOutcome,
     FaceTally,
     classify_face_outcome,
+    face_evidence,
     summarize_face_outcomes,
 )
 from blink_downloader.vision import FaceRecognitionResult
@@ -183,3 +185,96 @@ def test_summary_adds_clips_and_faces_up() -> None:
     assert summary["faces_seen"] == 50
     assert summary["faces_matched"] == 37
     assert summary["faces_unclear"] == 7
+
+
+# ----------------------------------------------------------------------
+# face_evidence: what the faces say about whether the person lives here
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("result", "expected"),
+    [
+        pytest.param(None, FaceEvidence.NONE, id="recognition did not run"),
+        pytest.param(
+            _outcome_result(None),
+            FaceEvidence.NONE,
+            id="nobody enrolled, or the lookup failed",
+        ),
+        pytest.param(
+            _outcome_result(FaceTally()), FaceEvidence.NONE, id="no face in the clip"
+        ),
+        pytest.param(
+            _outcome_result(FaceTally(seen=2, matched=0, unclear=2)),
+            FaceEvidence.NONE,
+            id="only faces too hard to read, matching nobody",
+        ),
+        pytest.param(
+            _outcome_result(FaceTally(seen=1, matched=1), approved=("Amy",)),
+            FaceEvidence.CONFIRMS,
+            id="an approved member matched",
+        ),
+        pytest.param(
+            _outcome_result(FaceTally(seen=3, matched=1, unclear=2), approved=("Amy",)),
+            FaceEvidence.CONFIRMS,
+            id="matched, with the blurrier frames of the same person unread",
+        ),
+        pytest.param(
+            _outcome_result(FaceTally(seen=2, matched=1), approved=("Amy",)),
+            FaceEvidence.CONTRADICTS,
+            id="a clear face matched nobody beside an approved member",
+        ),
+        pytest.param(
+            _outcome_result(FaceTally(seen=1)),
+            FaceEvidence.CONTRADICTS,
+            id="a clear face matched nobody at all",
+        ),
+        pytest.param(
+            _outcome_result(
+                FaceTally(seen=1, matched=1), approved=("Amy",), other=("Nanny",)
+            ),
+            FaceEvidence.CONTRADICTS,
+            id="a recognized person who is not approved",
+        ),
+        pytest.param(
+            _outcome_result(
+                FaceTally(seen=1, matched=1, unexamined=1), approved=("Amy",)
+            ),
+            FaceEvidence.CONTRADICTS,
+            id="a frame that could not be examined",
+        ),
+        pytest.param(
+            _outcome_result(FaceTally(unexamined=3)),
+            FaceEvidence.CONTRADICTS,
+            id="nothing could be examined",
+        ),
+    ],
+)
+def test_face_evidence(
+    result: FaceRecognitionResult | None, expected: FaceEvidence
+) -> None:
+    assert face_evidence(result) is expected
+
+
+def test_a_face_the_bypass_would_count_but_is_hard_to_read_is_not_evidence() -> None:
+    """The strict bypass counts any face that matched nobody; evidence does
+    not, because someone at a lock with their back half turned produces
+    exactly such faces and they say nothing either way."""
+    result = _outcome_result(
+        FaceTally(seen=3, matched=1, unclear=2), approved=("Amy",), unrecognized=True
+    )
+    assert result.unrecognized_present is True
+    assert face_evidence(result) is FaceEvidence.CONFIRMS
+
+
+def test_what_counts_as_a_stranger_agrees_with_the_recognition_panel() -> None:
+    """Both read 'seen less matched less unclear' as a clear look at somebody
+    unfamiliar, so the panel and the door rule cannot disagree about it."""
+    for tally in (
+        FaceTally(seen=2, matched=1),
+        FaceTally(seen=1),
+        FaceTally(seen=3, matched=1, unclear=1),
+    ):
+        result = _outcome_result(tally, approved=("Amy",), unrecognized=True)
+        assert classify_face_outcome(result, recognized=False) == FaceOutcome.UNFAMILIAR
+        assert face_evidence(result) is FaceEvidence.CONTRADICTS

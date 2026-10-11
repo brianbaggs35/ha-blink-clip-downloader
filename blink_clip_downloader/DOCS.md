@@ -1124,6 +1124,7 @@ detection off, it simply produces nothing.
 | `ai_security_events_enabled` | `true` | Turns the whole layer on. Produces the security events, the risk score, the evidence-quality score, the **SECURITY EVIDENCE** and **WHICH VEHICLE IS PROTECTED** prompt sections, and the Security Events tab's timeline. |
 | `ai_temporal_scan_frames` | `12` | How many evenly-spaced frames object detection runs over. This is the one knob that trades detection cost against how much of a clip's *behaviour* can be seen. It does **not** change how many frames the AI model itself receives (that is still `ai_max_frames`). `0` disables the wider scan — detection then runs only over the frames the model itself sees, which are chosen by motion rather than evenly spaced, so every reported duration becomes unreliable. |
 | `ai_risk_alert_threshold` | `75` | Risk score at or above which a clip is flagged suspicious **even when the AI model judged it unremarkable**. The default covers the "critical" band only. `0` disables the override and leaves the model's verdict final. |
+| `ai_routine_door_use_enabled` | `false` | Lets a clip the model flagged *while unsure of itself* be cleared when the whole clip is one person's brief trip through a door marked on the Assets tab. Aimed at a front door whose owner unlocks it with their back to the camera. **Off by default** — unlike the face bypass it does not know who the person was. Needs `ai_enhanced_detection_enabled`, `ai_security_events_enabled` and `ai_temporal_scan_frames` above `0`. See [Routine door use](#routine-door-use--coming-and-going-through-a-marked-door). |
 
 #### Why the frames it scans are different from the frames the AI sees
 
@@ -1140,13 +1141,15 @@ temporal scan therefore takes its own evenly-spaced sample (capped at
 `loitering`, `retreat`, `asset_reach`, `contact_candidate`,
 `impact_candidate`, `retreat_after_contact`, `object_removed`,
 `object_added`, `animal_asset_interaction`, `asset_disturbed`,
-`multiple_subjects`, `camera_obstruction`.
+`door_used`, `multiple_subjects`, `camera_obstruction`.
 
 `asset_reach` requires `ai_pose_estimation_enabled`; everything else works
 from object detection alone. The asset events apply to the protected
 vehicle and to each asset marked on the Assets tab, except
-`impact_candidate` (vehicle only) and `asset_disturbed` (marked assets
-only).
+`impact_candidate` (vehicle only), `asset_disturbed` (marked assets only)
+and `door_used` (marked doors only, and only with
+`ai_routine_door_use_enabled` on — see
+[Routine door use](#routine-door-use--coming-and-going-through-a-marked-door)).
 
 Every rule under-claims on purpose. Sampled frames are seconds apart, boxes are
 approximations, and a 2D overlap is not contact — so where the evidence only
@@ -1364,6 +1367,124 @@ opened should not pay for them.
 Boxes only appear for clips analyzed with object detection enabled *after*
 6.0.0: placing a box needs the frame size and sampling interval it came
 from, which earlier rows did not record.
+
+#### Routine door use — coming and going through a marked door
+
+A front door is the camera that cries wolf. Its owner walks up, unlocks the
+door with their back to the lens and goes in; the face is never seen, so the
+[face bypass](#biometrics-tab--face-recognition-enrollment-and-the-suspicious-flag-bypass)
+has nothing to work with, and an AI model told to prefer a low-confidence
+"suspicious" over saying nothing obliges. What the owner means by suspicious is
+different and describable: someone hanging around, working at the lock for a
+long time, trying the handle and leaving.
+
+`ai_routine_door_use_enabled` (**off by default**) tells the add-on the
+difference. It does not identify anybody — from behind it cannot — so it is
+built to be *harder* to satisfy than the face bypass. **To use it:** mark the
+door on the [Assets tab](#assets-tab--marking-the-things-you-want-protected)
+(type *Door*), keep Enhanced Detection and the security layer on, and turn the
+option on. If it is on and something it needs is off, the add-on log says which
+option, rather than leaving it to look as if it did not work.
+
+It needs a camera that can **see the door itself**. A doorbell on the door frame
+does not see anyone go through the door: people leave its picture at the edges,
+which the rule deliberately does not read as going indoors, so on such a camera
+it will almost never apply.
+
+**What counts as a visit.** For each person the add-on looks at how they used
+the marked door:
+
+- *In*: they were at the door, and were then **not seen again for the rest of
+  the clip** — at least two sampled frames and three seconds — with their last
+  sighting clear of the left, right and bottom edges of the picture. (A zone
+  drawn over the whole porch would otherwise turn walking off the side of the
+  frame into going indoors.)
+- *Out*: their first sighting is at the door and they then **moved clear of
+  it**, with that first sighting likewise clear of the picture's edges.
+- In either direction it must be **one** continuous stay at the door, by a
+  **tracked person** seen at least three times, and the depth stage must not
+  have placed them somewhere else. Leaving the door and coming back is trying
+  a handle, not using a door.
+- And it must be **provably brief.** Frames are seconds apart, so the time
+  seen at the door is a lower bound: they may have arrived just after one
+  frame and left just before the next. A visit counts as brief only when the
+  time seen *plus one frame interval at each end* is still under 12 seconds —
+  the same limit that makes lingering a flag. This is how the rule copes with
+  frames far apart: the wider the spacing, the less it will vouch for. At a
+  1 s spacing (a typical 10 s clip) a visit seen over ten frames still
+  qualifies; at 4 s only a stay of one or two sightings does; at 6 s (a clip of
+  a minute) only a single sighting does. Raise `ai_temporal_scan_frames` if
+  your clips are long and you want it to work on them. Time spent at the door *before the clip began* cannot be seen
+  at all.
+
+A visit shows up as a `door_used` event (routine severity, worth no points)
+in the clip's security evidence and on the Security Events tab, worded as
+"consistent with going through it" — a statement about the shape of the
+movement, never about who it was or what their hands did.
+
+**What it can do with a visit.** Three things, and the first two only when the
+clip is *nothing but* the visit — the same asset throughout, no other person
+(tracked or not), no lingering, nothing at or above the suspicious band, and
+evidence quality that is not "weak":
+
+1. **The AI is told** the only person in the clip went through the door and
+   was not there for long, that a turned-away face or a few seconds with a key
+   is not by itself suspicious, what *would* still count (the lock worked at
+   repeatedly or for a long time, forcing or prying, peering in, someone
+   waiting or watching, something carried off), and to answer not suspicious
+   rather than a low-confidence guess when none of that is visible.
+2. **A flag the model raised while unsure of itself is cleared.** Only below a
+   confidence of **0.70** (the prompt reserves 0.8 and above for the plainest
+   cases). The clip is recorded as *cleared as routine door use*, with the
+   visit on its timeline, and the log line says why; a visit that was found but
+   not cleared is logged with the reason, so "why does my front door still
+   alert" has an answer.
+3. **A flag the risk score forces is never cleared**, and nothing it does can
+   raise a flag or hide a sound: breaking glass, a gunshot or an alarm in the
+   clip's audio, and every event that is not part of a visit, stand in its way.
+
+**When it stands down entirely.** Two things are decided *before* the model is
+asked, because the visit also reaches the prompt — telling the model a trip
+through the door is ordinary beside a stranger's face, or at an hour nobody comes
+home, would soften its own verdict on exactly the clip that most needs it left
+alone. So in either case no visit is recorded for the clip, the AI is not told
+anything about ordinary door use, and nothing is cleared:
+
+- **A face that contradicts it** (see the table below).
+- **An hour this camera rarely sees activity in** — the Smart Security Brain's
+  anomaly score for the clip is **0.35 or more**: a rarely used hour, or one it
+  has never seen — unless a household member was positively matched. (A new
+  install with under 30 events of history has no such score yet, so the hour is
+  not held against it.) This is "coming and going regularly" made literal: the
+  camera's own history has to say that a visit at this hour is ordinary.
+
+The log says so when it stands down on a camera that has a door marked.
+
+**What faces add.** If a face was visible it is compared against the enrolled
+faces exactly as before, and it is one factor among several rather than the
+only one:
+
+| What recognition found | Effect |
+|---|---|
+| An approved household member matched | Counts as *confirmed*: the model may have been up to **0.85** confident, and the unusual-hour condition is waived (the face bypass has never cared when someone comes home). |
+| A face too hard to read — turned away, blurred, cut off, too small to judge — that matched nobody | Nothing either way. This is what someone at a lock with their back half turned produces. |
+| A **clear** face that matched nobody, a recognized person who is **not approved**, or a frame that could not be examined | **Always stops it** — no visit is recorded for that clip, the AI is not told it was ordinary use of a door, and nothing is cleared. A clear look at someone who is not a household member is the one thing here that is evidence about *who*, and it points the wrong way. |
+| No face at all | Nothing either way: the rule rests on behaviour alone, with the stricter limits above. |
+
+The face bypass itself is unchanged and still comes first: a clip a recognized
+household member has cleared is recorded as that, never credited to this rule.
+
+**What it cannot do — read this before turning it on.** A stranger who walks
+straight through an unlocked door looks, from behind, exactly like you with a
+key. If the model was unsure about that clip, with nobody recognized, at an hour
+the camera is used to, and nothing else was going on, this rule will clear it.
+That is the trade, and it is why the rule is off by default, why it only ever
+lowers a flag the model itself was unsure of, and why it stops at a clear
+stranger's face. Two people tailgating through the door in quick succession can
+also be tracked as one if the frames are far apart. The numbers above (12 s,
+0.70, 0.35) are judgement calls, not measurements from real front-door clips:
+watch the Security Events tab for a while after turning it on, and turn it off
+again if a clip is ever cleared that should not have been.
 
 #### The risk override, and what it can't do
 

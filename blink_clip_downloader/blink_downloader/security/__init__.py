@@ -52,6 +52,14 @@ from .narrative import (
     summarize_assessment,
 )
 from .pipeline import ClipMeasurements, SecurityOutcome, assess_clip
+from .routine import (
+    ROUTINE_VISIT_MAX_ANOMALY,
+    ROUTINE_VISIT_MAX_CONFIDENCE,
+    ROUTINE_VISIT_MAX_CONFIDENCE_CONFIRMED,
+    door_use_allowed,
+    flag_can_be_cleared,
+    routine_door_visit,
+)
 from .scoring import (
     RiskAssessment,
     RiskFactor,
@@ -90,6 +98,9 @@ __all__ = [
     "CARRYABLE_LABELS",
     "MARKABLE_ASSET_TYPES",
     "PERSON_LABEL",
+    "ROUTINE_VISIT_MAX_ANOMALY",
+    "ROUTINE_VISIT_MAX_CONFIDENCE",
+    "ROUTINE_VISIT_MAX_CONFIDENCE_CONFIRMED",
     "SUBJECT_LABELS",
     "VEHICLE_LABELS",
     "AssetLocation",
@@ -127,6 +138,8 @@ __all__ = [
     "build_vehicle_identity_segment",
     "describe_region",
     "detect_audio_events",
+    "door_use_allowed",
+    "flag_can_be_cleared",
     "identify_protected_vehicle",
     "max_severity",
     "nearest_vehicle_for_subjects",
@@ -135,6 +148,7 @@ __all__ = [
     "point_in_polygon",
     "relative_side",
     "resolve_vehicle_asset",
+    "routine_door_visit",
     "severity_rank",
     "subject_tracks",
     "summarize_assessment",

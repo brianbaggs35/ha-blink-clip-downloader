@@ -61,6 +61,10 @@ DEFAULT_EVENT_POINTS: dict[SecurityEventType, float] = {
     # their own, and a door left ajar all produce it too, so on its own it
     # directs the model's attention without deciding anything.
     SecurityEventType.ASSET_DISTURBED: 16.0,
+    # Using a door is what a door is for. The visit's own zone, approach and
+    # proximity events already carry the (small) weight of someone being
+    # there; this one only records how it ended, for :mod:`.routine`.
+    SecurityEventType.DOOR_USED: 0.0,
     SecurityEventType.CAMERA_OBSTRUCTION: 40.0,
     # Heard, not seen (see .sounds). Glass and gunfire are weighted so
     # that clearing .sounds' own 50% confidence gate is on its own enough

@@ -569,6 +569,16 @@ options:
   # and leave the model's verdict final. This can only ever raise a flag the
   # model missed, never clear one it raised.
   ai_risk_alert_threshold: 75
+  # Clear a clip the AI model flagged while unsure of itself when the whole
+  # clip is one person's brief trip through a door marked on the Assets tab:
+  # out of sight on the far side of it or clear of it, within a few seconds,
+  # with nobody else, nothing else happening, and no clear look at a face
+  # that matches nobody. For the front door, where the person unlocking it
+  # has their back to the camera and the face bypass has nothing to work
+  # with. Off by default because, unlike the face bypass, it does not know who
+  # the person was. Needs Enhanced Detection, Structured Security Analysis
+  # and Behaviour Scan Frames above 0, and a door marked on the Assets tab.
+  ai_routine_door_use_enabled: false
 
   # --- Extended Notifications (AI alerts) ---
   # HA mobile app entity to push AI suspicious-activity alerts to.
@@ -710,6 +720,7 @@ schema:
   ai_temporal_scan_frames: "int(0,60)"
   ai_cv_concurrency: "int(1,8)"
   ai_risk_alert_threshold: "int(0,100)"
+  ai_routine_door_use_enabled: "bool"
   mobile_app_target: "str?"
   mobile_app_enabled: "bool"
   smtp_host: "str?"

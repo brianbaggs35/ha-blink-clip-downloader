@@ -123,6 +123,15 @@ class SecurityEventType(StrEnum):
     #: frames for that. Deliberately not in BYPASS_BLOCKING_EVENTS: a
     #: resident collecting their own parcel produces exactly this.
     ASSET_DISTURBED = "asset_disturbed"
+    #: A person went through a marked door, or came out of one: one visit,
+    #: brief enough to prove from the sampled frames, ending with them out of
+    #: sight on the far side of it or clear of it. The benign explanation for
+    #: the zone, approach and proximity events a visit also produces, and the
+    #: only event that exists to be read as reassurance -- it is what
+    #: :mod:`.routine` weighs. Routine severity and worth no points; and
+    #: deliberately not in BYPASS_BLOCKING_EVENTS, which is for things a
+    #: household member's face cannot explain.
+    DOOR_USED = "door_used"
     #: More than one distinct person tracked in the same clip.
     MULTIPLE_SUBJECTS = "multiple_subjects"
     #: The scene changed drastically with nothing detected in it — the

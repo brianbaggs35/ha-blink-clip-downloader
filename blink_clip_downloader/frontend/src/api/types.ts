@@ -174,6 +174,14 @@ export interface AnalysisResultDict {
   prompt_text?: string
   face_bypass_applied: boolean
   face_bypass_names: string
+  /** What recognition counted in this clip and why it did or did not count as
+   *  recognized (face_outcomes.py). Counts and a code, never who. Absent or
+   *  empty on an analysis recognition examined nothing for, and on every one
+   *  written before 6.1.1. */
+  faces_seen?: number
+  faces_matched?: number
+  faces_unclear?: number
+  face_outcome?: string
   detected_objects?: DetectedObjectSummary[]
   audio_labels?: AudioLabel[]
   // Deterministic security assessment (see blink_downloader/security).
@@ -185,6 +193,10 @@ export interface AnalysisResultDict {
   event_type?: string
   evidence_quality?: number
   risk_override_applied?: boolean
+  /** The model flagged the clip, and the backend cleared it because the whole
+   *  clip was one person's brief trip through a marked door
+   *  (`ai_routine_door_use_enabled`; security/routine.py). */
+  routine_visit_applied?: boolean
   security_events?: SecurityEventRow[]
 }
 

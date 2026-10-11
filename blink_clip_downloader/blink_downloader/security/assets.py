@@ -209,6 +209,14 @@ class ProtectedAsset:
         return self.asset_type in _HANDLED_ROUTINELY
 
     @property
+    def entered_through(self) -> bool:
+        """True when people go in and out through this asset, so a visit can
+        end with them out of sight on its far side (or begin with them
+        coming out of it). Only a door: someone who walks through a gate
+        carries on across the picture, and a garage door is a vehicle's."""
+        return self.asset_type is AssetType.DOOR
+
+    @property
     def fixed(self) -> bool:
         """True when this asset cannot move, so where it was marked is where
         it is — a closeness measured against it is not a guess."""

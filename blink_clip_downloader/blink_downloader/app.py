@@ -643,6 +643,36 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         await self._db.reset_battery_history(camera_name)
         await self._db.reset_camera_baselines(camera_name)
 
+    @staticmethod
+    def _routine_door_use_active(config: AppConfig) -> bool:
+        """Whether ``ai_routine_door_use_enabled`` can do anything, saying so
+        in the log when it is on and cannot.
+
+        It reads people's tracks off the temporal scan, so it needs object
+        detection, the security layer that builds the tracks, and a scan
+        that is evenly spaced -- ``ai_temporal_scan_frames`` of 0 reports
+        durations that are not real, which this rule's whole test is. Left
+        silently inert, turning it on would look like it had not worked.
+        """
+        if not config.ai_routine_door_use_enabled:
+            return False
+        missing = [
+            name
+            for name, on in (
+                ("ai_enhanced_detection_enabled", config.ai_enhanced_detection_enabled),
+                ("ai_security_events_enabled", config.ai_security_events_enabled),
+                ("ai_temporal_scan_frames above 0", config.ai_temporal_scan_frames > 0),
+            )
+            if not on
+        ]
+        if missing:
+            _LOGGER.warning(
+                "ai_routine_door_use_enabled is on but will do nothing until "
+                "%s is set: it needs tracked people and an evenly spaced scan.",
+                ", ".join(missing),
+            )
+        return not missing
+
     def _setup_ai_analysis(self, config: AppConfig) -> None:
         (
             camera_descriptions,
@@ -689,6 +719,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
                 security_settings=SecurityLayerSettings(
                     enabled=config.ai_security_events_enabled,
                     risk_alert_threshold=config.ai_risk_alert_threshold,
+                    routine_door_use=self._routine_door_use_active(config),
                 ),
             ),
             credentials=ProviderCredentials(
