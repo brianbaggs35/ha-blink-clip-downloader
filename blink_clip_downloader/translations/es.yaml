@@ -530,7 +530,9 @@ configuration:
       persona reconocida: una vista en ese fotograma o justo al lado y que
       no aparece ya en ese fotograma con otro rostro. Un rostro nítido que
       no coincide con nadie, o un desconocido junto a un miembro del hogar,
-      sigue contando. Lee la documentación antes de activarlo.
+      sigue contando. Necesita suficientes píxeles en el rostro, así que
+      sube también la resolución del reconocimiento facial a "high" o
+      "very_high". Lee la documentación antes de activarlo.
   ai_face_recognition_resolution:
     name: Resolución del reconocimiento facial
     description: >-

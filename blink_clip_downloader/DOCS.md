@@ -962,7 +962,7 @@ you'll see them report unavailable there.
 | `ai_object_detection_model` | `yolo26n.pt` | Which Ultralytics model the detection stage above runs. YOLO26 (`yolo26n/s/m/l/x.pt`) is the current generation — end-to-end inference, lighter and more accurate than YOLO11 at every size — and is the default; `yolo11n/s/m/l/x.pt` remain selectable for compatibility with existing configurations. "n" (nano) is fastest/lightest and the recommended starting point on CPU-only hardware; "s"/"m"/"l"/"x" trade speed for accuracy, with "x" (extra-large) the most accurate and much slower. Small subjects are where the sizes differ most: measured on 75 real dogs rendered into camera clips, a dog about 100px tall in a 1080p frame was found at night 2 times with `yolo26n`, 16 with `yolo26s` and 21 with `yolo26m` (13, 29 and 39 by day), at roughly 2× and 5× nano's detection time, with no more phantom animals in scenes that had none. If a pet or other small animal keeps going unnoticed, try `yolo26s` first. |
 | `ai_depth_estimation_model` | `depth-anything/Depth-Anything-V2-Small-hf` | Which Depth Anything V2 checkpoint the depth-estimation stage above runs. "Small" (default) is fastest/lightest and Apache-2.0 licensed; "Base"/"Large" are more accurate but slower/heavier, and are licensed CC-BY-NC-4.0 (**non-commercial use only**) by their publisher, unlike Small's Apache-2.0 — fine for this add-on's typical personal home-security use, but confirm that licensing fits your own situation before choosing either. |
 | `ai_face_recognition_enabled` | `false` | Local-only face recognition (facenet-pytorch) to suppress alerts for enrolled household members — see below. Kept as its own toggle since it's privacy-sensitive rather than just heavier compute. |
-| `ai_face_recognition_ignore_unclear_faces` | `false` | Whether a face too poor to identify still counts as a possible stranger. Off keeps the suspicious-flag bypass exactly as strict as it has always been: every face that matches nobody blocks it, so one blurred frame of a household member can stop a whole clip being marked recognized. On, such a face is set aside instead — only when it is a poor look or a clear likeness of someone recognized in the clip, and a different recognized person nearby can account for each one. See **Unclear faces** under the Biometrics tab below for exactly when, what it measured, and what it costs, and the **Recognition results** panel for how many of your own clips it would change. Face data stays on the device either way, and the hint sent to the AI provider stays nameless. |
+| `ai_face_recognition_ignore_unclear_faces` | `false` | Whether a face too poor to identify still counts as a possible stranger. Off keeps the suspicious-flag bypass exactly as strict as it has always been: every face that matches nobody blocks it, so one blurred frame of a household member can stop a whole clip being marked recognized. On, such a face is set aside instead — only when it is a poor look or a clear likeness of someone recognized in the clip, and a different recognized person nearby can account for each one. See **Unclear faces** under the Biometrics tab below for exactly when, what it measured, and what it costs, and the **Recognition results** panel for how many of your own clips it would change. It needs enough pixels on a face, so raise `ai_face_recognition_resolution` to `high` or `very_high` with it. Face data stays on the device either way, and the hint sent to the AI provider stays nameless. |
 | `ai_face_recognition_resolution` | `standard` | How much detail faces are matched with — face recognition's equivalent of the other stages' model size, since it has one recognition network and what there is to trade is pixels per face. `standard` uses the 640px-wide frames analysis already extracts; `high` (960px) and `very_high` (1280px) look again at the same moments in more detail. Measured on a face about 60px wide in a 1080p frame (someone a few metres from the camera), standard recognized it 11 times in 30, high 27 and very high 30, with no wrong-person match at any setting, at roughly 1.2× and 1.7× the face stage's CPU time. The Biometrics tab's clip scans use the same resolution, and a face matches best against photos enrolled at the same one — after changing it, scan a clip of each person again (the tab points out which photos were captured at the old one). |
 | `ai_pose_estimation_enabled` | `false` | Body-keypoint (pose) estimation for whoever is nearest the protected vehicle, on the one frame the depth and contact stages already examine. Adds three facts a bounding box cannot give: an arm extended toward the vehicle (trying a handle, reaching through a window), an arm raised above shoulder height, and a crouched or bent-over posture. Its own small model, downloaded on first use. |
 | `ai_pose_model` | `yolo26n-pose.pt` | Which Ultralytics pose checkpoint the stage above runs. YOLO26-pose is the current generation, matching the object detector's own default; `yolo11n/s/m/l/x-pose.pt` remain selectable for anyone already using them. "n" (nano) is fastest/lightest and the recommended starting point on CPU-only hardware; larger sizes are more accurate and much slower. All output the same 17 COCO keypoints. |
@@ -1493,15 +1493,22 @@ discount follow the same decision, so they agree with the bypass.
 H.264 and this add-on's own face detection and recognition — two residents,
 one resident, and seven ways for a stranger to appear (beside both residents
 or just one, in one resident's place, after they have gone, or far behind
-them, with a clear or a poor look at the face) — the share of residents-only clips that cleared the bypass depended on how many
-pixels the faces had, which is what `ai_face_recognition_resolution` sets. Matched at
-`very_high` (1280px) it went from 7% with the option off to 62% on (10% to 79% for
-residents enrolled from the same camera); matched at the default `standard` (640px) it
-went from 9% to only 16%, because most faces in those clips are then narrower than the
-50px the rule needs to judge one, and a narrower face is never set aside. (`high` has not
-been measured yet.) Of the 336 clips with a stranger in them, none cleared it at either
-width, with the option off or on. So if you turn it on, raise the resolution as well, and
-let the **Recognition results** panel show what it would change on your own clips. Those are synthetic daytime
+them, with a clear or a poor look at the face) — how many residents-only
+clips cleared the bypass depended on how many pixels the faces had, which is
+what `ai_face_recognition_resolution` sets:
+
+| Faces matched at | Option off | Option on | Clips with a stranger cleared |
+|---|---|---|---|
+| `standard` (640px, the default) | 9% | 16% | 0 of 336 |
+| `high` (960px) | 9% | 49% | 0 of 336 |
+| `very_high` (1280px) | 7% | 62% | 0 of 336 |
+
+(For residents enrolled from the same camera as the clips: 12% to 23% at
+`standard`, 12% to 62% at `high` and 10% to 79% at `very_high`.) The gap is the
+50px the rule needs to judge a face: at 640px most faces in those clips are
+narrower than that, and a narrower face is never set aside. So if you turn the
+option on, raise the resolution as well, and let the **Recognition results**
+panel show what it would change on your own clips. Those are synthetic daytime
 clips, not your camera, and a stranger who deliberately keeps their face
 hidden is the case the option is weakest against: right after a resident has
 left the picture they can pass for that resident for a moment. That is why it
