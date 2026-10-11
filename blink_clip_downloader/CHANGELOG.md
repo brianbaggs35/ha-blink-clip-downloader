@@ -253,6 +253,7 @@ recognized without reading logs.
 - Updated typescript-eslint to 8.71.1
 - Updated vite to 8.3.4
 - Updated vue-tsc to 3.3.13
+- Updated playwright in e2e/ to 1.64.0
 
 ## 6.1.0
 
