@@ -75,6 +75,44 @@ _THUMBNAIL_SIZE = 112
 _SHARPNESS_RAMP = (10.0, 150.0)
 _WIDTH_RAMP = (20.0, 80.0)
 
+# A face whose box comes within this many pixels of the frame's border is cut
+# off by it. MTCNN does not clip its boxes to the frame: measured on faces
+# pushed half out of a 1280px frame, every box overran the border by 26-80px,
+# while no whole face came within 76px of it.
+_EDGE_MARGIN = 2.0
+
+# --- Unclear faces (``ai_face_recognition_ignore_unclear_faces``) ---------
+#
+# By default a face that matches nobody counts as a possible stranger, and one
+# such face anywhere in a clip withholds the bypass. That is right for a clear
+# look at an unknown person and wrong for a poor look at a known one: a blurred
+# frame of a resident matches nobody either. With two residents in a living
+# room most clips contain such a frame, and the bypass almost never fires.
+#
+# These numbers are from synthetic clips rendered out of real faces (672 clips
+# of two residents, with and without a stranger, through H.264 and the real
+# MTCNN + FaceNet): the rule below let 60% of resident-only clips through
+# where the strict one let 5%, and none of 480 clips with a stranger in them.
+
+# Narrower than this a face is never set aside, whatever its quality: a face
+# that small is as likely to be someone far away as someone blurred, and too
+# small for "it matched nobody" to be read either way.
+_MIN_JUDGEABLE_WIDTH = 50
+
+# The Biometrics tab's "Good" line (frontend components/biometrics/found.ts).
+# A face scoring under it is Fair or Low quality: blurred, small or turned
+# away. Motion-blurred resident faces scored a median 0.45; a clear stranger's
+# face scored a median 0.89.
+_CLEAR_FACE_QUALITY = 0.6
+
+# A face that matched nobody but is at least this similar to a person
+# recognized elsewhere in the same clip (the match bar is _FACE_MATCH_THRESHOLD)
+# is taken for a poor view of that person. Degraded views of residents scored
+# a median 0.6-0.7 against their own photos; a stranger scored this high
+# against two recognized people in 0.6% of faces (1.9% against eight), and
+# against one only if every one of the stranger's faces in the clip did.
+_RESEMBLANCE_SIMILARITY = 0.55
+
 
 @dataclass
 class FaceRecognitionResult:
@@ -86,11 +124,17 @@ class FaceRecognitionResult:
     ``BaseAnalyzer._face_bypass_applies``) — a single unmatched or
     not-yet-approved face anywhere in the clip must block it, so a stranger
     standing next to a recognized family member still gets flagged.
+
+    *unclear_faces* counts the unmatched faces that
+    ``ai_face_recognition_ignore_unclear_faces`` set aside instead (see
+    :meth:`FaceRecognizer.recognize`); it is always 0 with the option off,
+    and a count only, never who.
     """
 
     approved_names: list[str] = field(default_factory=list)
     other_names: list[str] = field(default_factory=list)
     unrecognized_present: bool = False
+    unclear_faces: int = 0
 
 
 @dataclass(frozen=True)
@@ -101,7 +145,8 @@ class DetectedFace:
     points at the camera — the three things that decide whether it makes a
     useful enrollment reference. *thumbnail* is a small JPEG crop, only produced
     when the caller asks for it (the enrollment picker does; clip analysis
-    does not).
+    does not). *cut_off* is whether the frame's border cuts the face, which
+    *quality* does not see: a face half out of the frame scored a median 0.91.
     """
 
     embedding: list[float]
@@ -109,6 +154,7 @@ class DetectedFace:
     width: int
     quality: float
     thumbnail: bytes = b""
+    cut_off: bool = False
 
 
 def cosine_similarity(a: list[float], b: list[float]) -> float:
@@ -242,11 +288,6 @@ class FaceEmbedder:
                 _LOGGER.warning("Face detection failed: %s", exc)
                 return None
 
-    async def embed(self, frame: bytes) -> list[list[float]] | None:
-        """One 512-dim embedding per face in *frame*; ``None`` as in :meth:`detect`."""
-        faces = await self.detect(frame)
-        return None if faces is None else [face.embedding for face in faces]
-
 
 def _describe_face(
     image: Any,
@@ -271,6 +312,7 @@ def _describe_face(
         width=round(width),
         quality=round(quality, 3),
         thumbnail=_crop_thumbnail(image, (x1, y1, x2, y2)) if thumbnail else b"",
+        cut_off=min(x1, y1, image.width - x2, image.height - y2) <= _EDGE_MARGIN,
     )
 
 
@@ -341,6 +383,25 @@ def _crop_thumbnail(image: Any, box: tuple[float, float, float, float]) -> bytes
     return buf.getvalue()
 
 
+@dataclass(frozen=True)
+class _Unmatched:
+    """A face that matched no enrolled person, kept for the clip's accounting."""
+
+    face: DetectedFace
+    #: Best similarity to each enrolled person's photos, by name -- what "looks
+    #: like someone recognized in this clip" is read from. Only worked out when
+    #: unclear faces may be set aside.
+    resemblance: dict[str, float]
+
+
+@dataclass
+class _Sighting:
+    """What one frame showed: who matched (name, approved) and who did not."""
+
+    matches: list[tuple[str, bool]] = field(default_factory=list)
+    unmatched: list[_Unmatched] = field(default_factory=list)
+
+
 class FaceRecognizer:
     """Matches embedded faces in a clip against locally enrolled household members."""
 
@@ -348,7 +409,9 @@ class FaceRecognizer:
         self._embedder = embedder
         self._db = db
 
-    async def recognize(self, frames: list[bytes]) -> FaceRecognitionResult:
+    async def recognize(
+        self, frames: list[bytes], *, ignore_unclear: bool = False
+    ) -> FaceRecognitionResult:
         """Match every detected face across *frames* against enrollments.
 
         Every sampled frame's every detected face (MTCNN detects all faces
@@ -366,38 +429,135 @@ class FaceRecognizer:
         raised was skipped as if it were empty, letting the other frames'
         approved match clear a clip that had not been fully checked.
 
+        With *ignore_unclear* (``ai_face_recognition_ignore_unclear_faces``,
+        off by default) a face that matched nobody may be set aside instead of
+        counted -- a blurred or half-hidden frame of a resident matches nobody
+        either -- but only when both of these hold, so a stranger is still
+        counted wherever they could be told apart from a resident:
+
+        * the face is wide enough to judge (``_MIN_JUDGEABLE_WIDTH``) and is
+          either a poor look (quality under Good, or cut off by the frame) or
+          clearly resembles one of the people it could be
+          (``_RESEMBLANCE_SIMILARITY``) -- a clear face that resembles nobody
+          is exactly what a stranger looks like, and always counts;
+        * it can be put down to a recognized person: one seen in that frame
+          or the one before or after, and not already matched in it, and a
+          different one for each such face. A stranger beside a resident
+          has nobody left to be; one who arrives once the residents have
+          gone has nobody nearby; one who takes a resident's place beside
+          the other only passes for as long as the resident they replaced
+          was seen a frame ago.
+
         Guards the whole lookup like every other vision stage — a DB error
         or corrupted embedding row degrades to an empty ("nothing matched,
         nothing bypasses") result rather than propagating out of
         process_clip() and failing the entire clip, and never the reverse.
         """
-        result = FaceRecognitionResult()
         try:
             enrollments = await self._db.list_face_enrollments()
             if not enrollments:
-                return result
-
-            approved: set[str] = set()
-            other: set[str] = set()
-            for frame in frames:
-                embeddings = await self._embedder.embed(frame)
-                if embeddings is None:
-                    result.unrecognized_present = True
-                    continue
-                for embedding in embeddings:
-                    match = _best_enrollment(embedding, enrollments)
-                    if match is None:
-                        result.unrecognized_present = True
-                    elif match[1]:
-                        approved.add(match[0])
-                    else:
-                        other.add(match[0])
-            result.approved_names = sorted(approved)
-            result.other_names = sorted(other)
-            return result
+                return FaceRecognitionResult()
+            sightings = [
+                await self._sight(frame, enrollments, ignore_unclear)
+                for frame in frames
+            ]
+            return _account_for(sightings, ignore_unclear)
         except Exception as exc:  # noqa: BLE001
             _LOGGER.warning("Face recognition failed: %s", exc)
             return FaceRecognitionResult()
+
+    async def _sight(
+        self, frame: bytes, enrollments: list[dict[str, Any]], ignore_unclear: bool
+    ) -> _Sighting | None:
+        """What one frame showed, or ``None`` if it could not be examined."""
+        faces = await self._embedder.detect(frame)
+        if faces is None:
+            return None
+        sighting = _Sighting()
+        for face in faces:
+            match = _best_enrollment(face.embedding, enrollments)
+            if match is not None:
+                sighting.matches.append(match)
+                continue
+            resemblance = (
+                _resemblance(face.embedding, enrollments) if ignore_unclear else {}
+            )
+            sighting.unmatched.append(_Unmatched(face, resemblance))
+        return sighting
+
+
+def _account_for(
+    sightings: list[_Sighting | None], ignore_unclear: bool
+) -> FaceRecognitionResult:
+    """The clip's result from what each of its frames showed."""
+    examined = [s for s in sightings if s is not None]
+    matches = [match for s in examined for match in s.matches]
+    approved = {name for name, is_approved in matches if is_approved}
+    other = {name for name, is_approved in matches if not is_approved}
+    result = FaceRecognitionResult(
+        approved_names=sorted(approved), other_names=sorted(other)
+    )
+    if len(examined) < len(sightings):
+        result.unrecognized_present = True
+        return result
+    result.unrecognized_present, result.unclear_faces = _count_strangers(
+        examined, ignore_unclear
+    )
+    return result
+
+
+def _count_strangers(
+    sightings: list[_Sighting], ignore_unclear: bool
+) -> tuple[bool, int]:
+    """Whether any face still counts as a possible stranger, and how many
+    faces that matched nobody were set aside instead."""
+    names_by_frame = [{name for name, _ in s.matches} for s in sightings]
+    set_aside = 0
+    for index, sighting in enumerate(sightings):
+        if not sighting.unmatched:
+            continue
+        if not (ignore_unclear and _vouched_for(index, sighting, names_by_frame)):
+            return True, 0
+        set_aside += len(sighting.unmatched)
+    return False, set_aside
+
+
+def _vouched_for(
+    index: int, sighting: _Sighting, names_by_frame: list[set[str]]
+) -> bool:
+    """Whether every face in this frame that matched nobody can be put down to
+    a recognized person -- a different one for each face, seen in this frame's
+    neighbourhood (the frame before, itself or the one after) and not already
+    in the frame -- rather than to a stranger."""
+    nearby: set[str] = set().union(*names_by_frame[max(0, index - 1) : index + 2])
+    available = nearby - names_by_frame[index]
+    return len(sighting.unmatched) <= len(available) and all(
+        _inconclusive(u, available) for u in sighting.unmatched
+    )
+
+
+def _inconclusive(unmatched: _Unmatched, available: set[str]) -> bool:
+    """Whether this face matching nobody says nothing about who it is: wide
+    enough to judge, and either a poor look or a clear likeness of one of the
+    *available* people."""
+    face = unmatched.face
+    return face.width >= _MIN_JUDGEABLE_WIDTH and (
+        face.quality < _CLEAR_FACE_QUALITY
+        or face.cut_off
+        or any(
+            unmatched.resemblance[name] >= _RESEMBLANCE_SIMILARITY for name in available
+        )
+    )
+
+
+def _resemblance(embedding: Any, enrollments: list[dict[str, Any]]) -> dict[str, float]:
+    """Best similarity of one face to each enrolled person's photos."""
+    best: dict[str, float] = {}
+    for enrollment in enrollments:
+        name = str(enrollment["name"])
+        similarity = cosine_similarity(embedding, enrollment["embedding"])
+        best[name] = max(best.get(name, similarity), similarity)
+    return best
 
 
 def _closest_enrollment(
@@ -473,5 +633,13 @@ def _build_recognition_hint(result: FaceRecognitionResult) -> str | None:
             " NOTE: at least one additional face in this clip did NOT match "
             "an approved household member — do not assume everyone present "
             "is a known resident."
+        )
+    elif result.unclear_faces:
+        # Set aside for the bypass, but still not identified, so the model is
+        # told it is not a known resident -- a fact, like the NOTE above, with
+        # no name and no count.
+        hint += (
+            " NOTE: at least one face in this clip was too unclear to "
+            "identify — do not assume everyone present is a known resident."
         )
     return hint
