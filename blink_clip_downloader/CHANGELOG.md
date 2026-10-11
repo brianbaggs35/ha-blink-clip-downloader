@@ -250,6 +250,7 @@ recognized without reading logs.
 - Updated js-yaml to 5.4.3
 - Updated jsdom to 30.1.2
 - Updated prettier to 3.9.10
+- Updated typescript-eslint to 8.71.1
 
 ## 6.1.0
 
