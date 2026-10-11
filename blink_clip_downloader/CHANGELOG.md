@@ -240,6 +240,7 @@ recognized without reading logs.
 - Updated asyncpg to 0.32.0
 - Updated python-slugify to 9.1.3
 - Updated anthropic to 1.13.0
+- Updated openai to 3.29.0
 
 ## 6.1.0
 
