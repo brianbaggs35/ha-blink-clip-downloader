@@ -248,6 +248,7 @@ recognized without reading logs.
 - Updated @types/node to 26.6.5
 - Updated @vitejs/plugin-vue to 6.0.10
 - Updated js-yaml to 5.4.3
+- Updated jsdom to 30.1.2
 
 ## 6.1.0
 
