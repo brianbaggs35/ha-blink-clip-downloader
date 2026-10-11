@@ -919,10 +919,10 @@ beside a resident cleared 6-12% of such clips; without the neighbourhood, one
 arriving after the residents left 3%; a global head count instead of the
 local assignment, one taking a resident's place beside the other 4%; without
 the width floor a distant stranger beside residents is waved through. As shipped: 0 of 336 stranger clips cleared through the production code path at
-both 1280px and 640px frames (and 0 of 672 more during design, at 1280px), against
-7% -> 62% of resident-only clips at 1280px but only 9% -> 16% at the default 640px:
-the median resident face is 84px wide at 1280 and about 42px at 640, so 74% fall under
-`_MIN_JUDGEABLE_WIDTH` there. 960px (`high`) was not yet measured. The docs say so and
+each of 640, 960 and 1280px frames (and 0 of 672 more during design, at 1280px),
+against resident-only clips going 9% -> 16% at the default 640px, 9% -> 49% at 960px
+and 7% -> 62% at 1280px: the median resident face is 84px wide at 1280 and about
+42px at 640, so 74% fall under `_MIN_JUDGEABLE_WIDTH` there. The docs say so and
 tell users to raise `ai_face_recognition_resolution` with the option. **Re-measure
 before changing a threshold or dropping a clause**; `tests/test_vision.py`'s
 adversarial cases pin each clause, and a mutation run of the helpers found

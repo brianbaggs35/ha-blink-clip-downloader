@@ -465,7 +465,8 @@ configuration:
       recognized person: one seen in that frame or right next to it who is
       not already shown by another face in that frame. A clear face that
       matches nobody, or a stranger beside a household member, still counts.
-      Read the documentation before enabling.
+      It needs enough pixels on a face, so raise Face Recognition Resolution
+      to high or very_high too. Read the documentation before enabling.
   ai_face_recognition_resolution:
     name: Face Recognition Resolution
     description: >-

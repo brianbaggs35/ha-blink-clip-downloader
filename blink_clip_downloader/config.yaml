@@ -486,8 +486,9 @@ options:
   # it -- one seen in that frame or the one before or after, and not already
   # shown by another face in that frame -- so a clip of two residents is no
   # longer lost to one blurred frame of either, while a clear face that
-  # matches nobody still blocks it. See DOCS.md for the details and the
-  # trade-off.
+  # matches nobody still blocks it. It needs enough pixels on a face, so raise
+  # ai_face_recognition_resolution to high or very_high with it. See DOCS.md
+  # for the details and the trade-off.
   ai_face_recognition_ignore_unclear_faces: false
   # How much detail faces are matched with: "standard" uses the 640px-wide
   # frames analysis already extracts; "high" (960px) and "very_high"

@@ -540,7 +540,9 @@ configuration:
       autre personne reconnue : une personne vue sur cette image ou juste à
       côté et qui n'y est pas déjà montrée par un autre visage. Un visage
       net qui ne correspond à personne, ou un inconnu à côté d'un membre du
-      foyer, compte toujours. Lisez la documentation avant de l'activer.
+      foyer, compte toujours. Il faut assez de pixels sur un visage :
+      passez aussi la résolution de la reconnaissance faciale sur « high »
+      ou « very_high ». Lisez la documentation avant de l'activer.
   ai_face_recognition_resolution:
     name: Résolution de la reconnaissance faciale
     description: >-

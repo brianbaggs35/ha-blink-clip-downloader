@@ -93,11 +93,15 @@ _EDGE_MARGIN = 2.0
 # The numbers below are from clips rendered out of real (LFW) faces -- two
 # residents, one resident, and seven ways for a stranger to appear (beside
 # both or one, in a resident's place, after they left, far behind; clear or
-# poor look at the face) -- through H.264 and the real MTCNN + FaceNet. Through
-# this code, resident-only clips eligible for the bypass went from 7% to 63%
-# (two residents enrolled from the same camera: 0% to 83%), and none of 336
-# clips with a stranger were, option off or on. Re-measure before changing a
-# constant or dropping a clause of ``_available``: each closes a leak.
+# poor look at the face) -- through H.264 and the real MTCNN + FaceNet, matched
+# at each ``FACE_RESOLUTION_WIDTHS`` width. Through this code, resident-only
+# clips eligible for the bypass went from 9% to 16% at 640px, 9% to 49% at
+# 960px and 7% to 62% at 1280px, and none of 336 clips with a stranger were at
+# any of them, option off or on. The gain tracks pixels because the width
+# floor below is in pixels: 74% of those residents' faces are under it at
+# 640px, 1% at 1280px. Re-measure before changing a constant or dropping a
+# clause of ``_could_be``, ``_available`` or ``_each_has_their_own``: each
+# closes a leak.
 
 # Narrower than this a face is never set aside, whatever its quality: a face
 # that small is as likely to be someone far away as someone blurred, and too
