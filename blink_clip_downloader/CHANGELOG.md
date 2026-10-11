@@ -238,6 +238,7 @@ recognized without reading logs.
 
 - Updated aiohttp to 3.14.5
 - Updated asyncpg to 0.32.0
+- Updated python-slugify to 9.1.3
 
 ## 6.1.0
 
