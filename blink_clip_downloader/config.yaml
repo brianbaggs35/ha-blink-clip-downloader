@@ -1,6 +1,6 @@
 ---
 name: Blink Clip Downloader
-version: "v6.1.1"
+version: "v6.1.2"
 slug: blink_clip_downloader
 image: "ghcr.io/brianbaggs35/blink_clip_downloader"
 description: >-
@@ -205,6 +205,11 @@ options:
   #   "moondream_local" – Moondream 0.5B INT8 model, run on this device (free, requires an NVIDIA/Apple Silicon GPU)
   #   "anthropic"       – Anthropic Claude API (needs anthropic_api_key, billed per token)
   #   "openai"          – OpenAI API, e.g. GPT-4o / GPT-5 (needs openai_api_key, billed per token)
+  #   "huggingface"     – Hugging Face Inference Providers, any vision model it serves (needs
+  #                       huggingface_api_key or hf_token, billed per token to your Hugging Face
+  #                       account — see DOCS.md)
+  #   "replicate"       – Replicate's official vision models (needs replicate_api_key, billed to
+  #                       your Replicate account — see DOCS.md)
   ai_provider: "ollama"
   # [Ollama / Ollama Cloud] URL of your Ollama server, e.g. http://192.168.1.10:11434
   ollama_url: ""
@@ -233,6 +238,25 @@ options:
   # [OpenAI] GPT model to use. Use "Fetch Models" in the web UI to see available
   # models. gpt-4o-mini is the most cost-effective vision option.
   openai_model: "gpt-4o-mini"
+  # [Hugging Face] Token for the "huggingface" AI provider and the "huggingface"
+  # object-detection backend: a fine-grained token with "Make calls to Inference
+  # Providers" from https://huggingface.co/settings/tokens. Requests are billed to
+  # the account it belongs to; free accounts have no monthly credit (see DOCS.md).
+  # Leave empty to use hf_token below instead. Keep this secret.
+  huggingface_api_key: ""
+  # [Hugging Face] Vision model to use, as org/name — optionally with a routing
+  # suffix: ":cheapest" (least expensive backend), ":fastest" (the default) or a
+  # backend's name such as ":novita". Use "Fetch Models" in the web UI to see
+  # the vision models available right now, cheapest first, with their price.
+  # Leave empty for the default.
+  huggingface_model: "google/gemma-4-26B-A4B-it"
+  # [Replicate] API token from replicate.com/account/api-tokens. Keep this secret.
+  replicate_api_key: ""
+  # [Replicate] Official model to use, written owner/name, that accepts an image
+  # and a prompt, e.g. openai/gpt-4o-mini, google/gemini-2.5-flash or
+  # anthropic/claude-4.5-sonnet. Community models are not supported. Use "Fetch
+  # Models" in the web UI to see the official vision models.
+  replicate_model: "openai/gpt-4o-mini"
   # Deprecated — superseded by ai_escalation_enabled/ai_escalation_provider/
   # ai_escalation_model below, which work for every provider, not just
   # OpenAI. Leave blank on any new configuration. Kept in the schema (rather
@@ -454,6 +478,25 @@ options:
   # code-computed OBJECT DETECTION / TRACKING / DEPTH ESTIMATE / CONTACT
   # ANALYSIS hint instead of relying on motion-diff heuristics alone.
   ai_enhanced_detection_enabled: false
+  # Where the object-detection stage above runs:
+  #   "local"       – on this device (Ultralytics YOLO). The default, and the only
+  #                   behaviour before 6.1.2.
+  #   "huggingface" – on Hugging Face's servers, for hardware that cannot run the
+  #                   model (a Raspberry Pi 4, a low-memory board). The sampled
+  #                   clip frames are UPLOADED to Hugging Face for this. Needs
+  #                   hf_token below, and the account is billed for the requests.
+  # Only detection can move. Hugging Face's serverless inference serves no
+  # depth-estimation or segmentation model, so in "huggingface" mode depth
+  # estimation and contact segmentation are not run (the AI is told that
+  # evidence was unavailable); pose estimation, face recognition and audio
+  # analysis keep running on this device under their own switches. Face
+  # recognition is never remote: enrolled photos, face data and names do not
+  # leave this device in either mode. See DOCS.md.
+  ai_vision_backend: "local"
+  # Hugging Face object-detection model used when ai_vision_backend is
+  # "huggingface". The serverless tier currently serves facebook/detr-resnet-50
+  # (default) and facebook/detr-resnet-101. Leave empty for the default.
+  ai_remote_detection_model: "facebook/detr-resnet-50"
   # Ultralytics model the object-detection stage above runs. YOLO26
   # (yolo26n/s/m/l/x.pt) is the current generation — end-to-end inference,
   # lighter and more accurate than YOLO11 at every size — and is the
@@ -512,9 +555,12 @@ options:
   # hardware; larger sizes are more accurate and much slower. Downloaded
   # automatically on first use.
   ai_pose_model: "yolo26n-pose.pt"
-  # Hugging Face Token (HF_TOKEN) for authenticated model downloads and higher
-  # rate limits. Optional; create one at https://huggingface.co/settings/tokens.
-  # Shared by every stage above and by audio analysis below.
+  # Hugging Face Token (HF_TOKEN). Optional: it authenticates model downloads and
+  # raises rate limits (shared by every stage above and by audio analysis below).
+  # When huggingface_api_key above is empty it is also the credential for
+  # ai_provider "huggingface" and ai_vision_backend "huggingface", and must then
+  # allow "Make calls to Inference Providers". Create one at
+  # https://huggingface.co/settings/tokens.
   hf_token: ""
 
   # --- Audio analysis (optional) ---
@@ -666,7 +712,9 @@ schema:
   gdrive_check_interval: "int(30,3600)"
   download_local_storage: "bool"
   ai_analysis_enabled: "bool"
-  ai_provider: "list(ollama|ollama_cloud|moondream_cloud|moondream_local|anthropic|openai)"
+  # yamllint disable rule:line-length
+  ai_provider: "list(ollama|ollama_cloud|moondream_cloud|moondream_local|anthropic|openai|huggingface|replicate)"
+  # yamllint enable rule:line-length
   ollama_url: "str?"
   ollama_model: "str?"
   ollama_cloud_api_key: "password?"
@@ -676,9 +724,15 @@ schema:
   anthropic_model: "str?"
   openai_api_key: "password?"
   openai_model: "str?"
+  huggingface_api_key: "password?"
+  huggingface_model: "str?"
+  replicate_api_key: "password?"
+  replicate_model: "str?"
   openai_escalation_model: "str?"
   ai_escalation_enabled: "bool"
-  ai_escalation_provider: "list(ollama|ollama_cloud|moondream_cloud|moondream_local|anthropic|openai)"
+  # yamllint disable rule:line-length
+  ai_escalation_provider: "list(ollama|ollama_cloud|moondream_cloud|moondream_local|anthropic|openai|huggingface|replicate)"
+  # yamllint enable rule:line-length
   ai_escalation_model: "str?"
   ai_prompt: "str?"
   ai_car_description: "str?"
@@ -702,6 +756,8 @@ schema:
     - "str?"
   ai_prompt_debug_enabled: "bool"
   ai_enhanced_detection_enabled: "bool"
+  ai_vision_backend: "list(local|huggingface)"
+  ai_remote_detection_model: "str?"
   # yamllint disable rule:line-length
   ai_object_detection_model: "list(yolo26n.pt|yolo26s.pt|yolo26m.pt|yolo26l.pt|yolo26x.pt|yolo11n.pt|yolo11s.pt|yolo11m.pt|yolo11l.pt|yolo11x.pt)"
   ai_depth_estimation_model: "list(depth-anything/Depth-Anything-V2-Small-hf|depth-anything/Depth-Anything-V2-Base-hf|depth-anything/Depth-Anything-V2-Large-hf)"

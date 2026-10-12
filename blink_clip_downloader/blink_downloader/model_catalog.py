@@ -18,6 +18,7 @@ been reachable that way, and should be imported from here directly.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from typing import Any
 
 # Ollama model-name fragments that indicate vision capability.
@@ -371,6 +372,239 @@ def _anthropic_supports_structured_output(model: str) -> bool:
     return any(prefix in lower for prefix in _ANTHROPIC_MODEL_PRICING)
 
 
+#: Where Hugging Face's Inference Providers router lives. It speaks the
+#: OpenAI Chat Completions dialect, and its public ``/models`` listing is
+#: the only authoritative source for which models take an image and what
+#: each backend charges for them — see :func:`huggingface_vision_entries`.
+HUGGINGFACE_ROUTER_URL = "https://router.huggingface.co/v1"
+
+#: The vision model used when ``huggingface_model`` is left empty. Picked from
+#: the router's live catalog rather than from a benchmark: a mixture-of-experts
+#: model with few active parameters, served by several backends (so one
+#: backend being down does not take analysis with it) at a low per-token
+#: price. The catalog changes weekly, so this is a starting point — the AI
+#: tab's *Fetch Models* shows what is actually available and what it costs.
+DEFAULT_HUGGINGFACE_MODEL = "google/gemma-4-26B-A4B-it"
+
+#: Replicate's HTTP API. Official models are called at
+#: ``/models/{owner}/{name}/predictions``; community models need a version id
+#: this add-on does not ask for, so only official models are supported.
+REPLICATE_API_URL = "https://api.replicate.com/v1"
+
+#: The model used when ``replicate_model`` is left empty: the same model the
+#: OpenAI provider defaults to, cheap and with a long-stable schema.
+DEFAULT_REPLICATE_MODEL = "openai/gpt-4o-mini"
+
+#: Official Replicate models that take an image and a prompt and answer in
+#: text — the "Vision models" collection's official entries, cheapest-class
+#: first. A list rather than a query because Replicate's API says nothing
+#: about what a model *does*; whether one fits is decided at call time from
+#: its own input schema (:func:`replicate_input_plan`).
+REPLICATE_VISION_MODELS: tuple[str, ...] = (
+    "openai/gpt-4o-mini",
+    "openai/gpt-4.1-mini",
+    "google/gemini-2.5-flash",
+    "google/gemini-3-flash",
+    "openai/gpt-5.6-luna",
+    "openai/gpt-4o",
+    "openai/gpt-5.6-terra",
+    "anthropic/claude-4.5-sonnet",
+    "openai/gpt-5",
+    "openai/gpt-5.4",
+    "openai/gpt-5.6-sol",
+)
+
+#: The input names Replicate's official language models use for the same
+#: four things, in the order they are tried. Read off the models' published
+#: schemas: Gemini takes ``images``/``system_instruction``/
+#: ``max_output_tokens``, the GPT models ``image_input``/``system_prompt``/
+#: ``max_completion_tokens``, Claude a single ``image`` with ``system_prompt``
+#: and ``max_tokens``.
+_REPLICATE_IMAGE_LIST_FIELDS: tuple[str, ...] = ("images", "image_input")
+_REPLICATE_IMAGE_FIELDS: tuple[str, ...] = ("image", "media")
+_REPLICATE_SYSTEM_FIELDS: tuple[str, ...] = (
+    "system_prompt",
+    "system_instruction",
+    "system",
+)
+_REPLICATE_MAX_TOKEN_FIELDS: tuple[str, ...] = (
+    "max_completion_tokens",
+    "max_output_tokens",
+    "max_tokens",
+)
+
+
+@dataclass(frozen=True)
+class ReplicateInputPlan:
+    """Which of a Replicate model's inputs carry what this add-on sends.
+
+    ``images_field`` takes the frames; ``images_are_list`` says whether it
+    takes all of them in one request (a list) or one (a single file, which
+    means one request per frame). The two optional fields are ``None`` when
+    the model has no such input, and nothing is sent for them.
+    """
+
+    prompt_field: str
+    images_field: str
+    images_are_list: bool
+    system_field: str | None
+    max_tokens_field: str | None
+
+
+def replicate_input_plan(properties: dict[str, Any]) -> ReplicateInputPlan | None:
+    """Work out how to call a Replicate model from its ``Input`` schema.
+
+    *properties* is the schema's ``properties`` mapping. ``None`` when the
+    model cannot be used here: no ``prompt`` input, or no input a picture
+    can go in. Models differ in all of these names, so a fixed set would
+    break on the first model that spells one differently; reading them off
+    the model's own schema is what lets a newly published model work.
+    """
+    if "prompt" not in properties:
+        return None
+
+    def first_of(names: tuple[str, ...]) -> str | None:
+        return next((name for name in names if name in properties), None)
+
+    def takes_files(name: str) -> bool:
+        spec = properties[name]
+        items = spec.get("items") or {}
+        return spec.get("format") == "uri" or items.get("format") == "uri"
+
+    list_field = next(
+        (
+            name
+            for name in _REPLICATE_IMAGE_LIST_FIELDS
+            if name in properties
+            and properties[name].get("type") == "array"
+            and takes_files(name)
+        ),
+        None,
+    )
+    single_field = next(
+        (
+            name
+            for name in _REPLICATE_IMAGE_FIELDS
+            if name in properties and takes_files(name)
+        ),
+        None,
+    )
+    images_field = list_field or single_field
+    if images_field is None:
+        return None
+    return ReplicateInputPlan(
+        prompt_field="prompt",
+        images_field=images_field,
+        images_are_list=list_field is not None,
+        system_field=first_of(_REPLICATE_SYSTEM_FIELDS),
+        max_tokens_field=first_of(_REPLICATE_MAX_TOKEN_FIELDS),
+    )
+
+
+#: Suffixes the router reads as a routing *policy* rather than a backend name
+#: (``model:cheapest``). Anything else after the colon names a backend
+#: (``model:novita``).
+_HUGGINGFACE_POLICIES: frozenset[str] = frozenset({"fastest", "cheapest", "preferred"})
+
+#: Model-id substrings that mean "takes an image but does not answer the
+#: question" — safety classifiers return a verdict on the content of the
+#: picture rather than a description of it, so offering one would produce an
+#: analyzer that can never say what happened.
+_HUGGINGFACE_NON_ANALYST_SUBSTRINGS: frozenset[str] = frozenset({"guard"})
+
+
+def split_huggingface_model(model: str) -> tuple[str, str]:
+    """Split ``org/name:selector`` into ``("org/name", "selector")``.
+
+    The selector is what follows the first colon — a routing policy
+    (``fastest``, ``cheapest``, ``preferred``) or the name of one backend —
+    and is ``""`` when absent. Repository ids never contain a colon, so the
+    first one is always the selector's.
+    """
+    base, _, selector = (model or "").strip().partition(":")
+    return base, selector.strip().lower()
+
+
+def is_huggingface_vision_entry(entry: dict[str, Any]) -> bool:
+    """Whether a router catalog row takes an image and answers in text."""
+    architecture = entry.get("architecture") or {}
+    if "image" not in (architecture.get("input_modalities") or []):
+        return False
+    if "text" not in (architecture.get("output_modalities") or []):
+        return False
+    lower = str(entry.get("id", "")).lower()
+    return not any(s in lower for s in _HUGGINGFACE_NON_ANALYST_SUBSTRINGS)
+
+
+#: The two keys of a price, in the order they are stored and shown.
+_RATE_KEYS = ("input", "output")
+
+
+def _rate(provider: dict[str, Any]) -> tuple[float, float] | None:
+    """A backend row's (input, output) $/1M tokens, or ``None`` when it
+    publishes no complete price for the model."""
+    pricing = provider.get("pricing")
+    if not isinstance(pricing, dict) or not all(key in pricing for key in _RATE_KEYS):
+        return None
+    return float(pricing[_RATE_KEYS[0]]), float(pricing[_RATE_KEYS[1]])
+
+
+def _priced_live_providers(
+    entry: dict[str, Any],
+) -> list[tuple[dict[str, Any], tuple[float, float]]]:
+    """Backends currently serving this model that publish a price for it,
+    each with that price."""
+    priced = []
+    for provider in entry.get("providers") or []:
+        rate = _rate(provider)
+        if provider.get("status", "live") == "live" and rate is not None:
+            priced.append((provider, rate))
+    return priced
+
+
+def huggingface_price(
+    entry: dict[str, Any], selector: str = ""
+) -> tuple[float, float] | None:
+    """Estimated (input, output) $/1M-token price of one router catalog row.
+
+    Which backend serves a request is the router's choice — by default the
+    one with the highest throughput, which is the backend this estimate
+    prices — unless *selector* narrows it: ``cheapest`` prices the cheapest
+    backend, and a backend name prices that backend. ``None`` when nothing
+    in the catalog prices it (a backend that publishes no price, or a name
+    the model is not served by), so a caller can show "N/A" instead of a
+    number that was never established.
+    """
+    priced = _priced_live_providers(entry)
+    if selector and selector not in _HUGGINGFACE_POLICIES:
+        priced = [(p, r) for p, r in priced if str(p.get("provider", "")) == selector]
+    if not priced:
+        return None
+    if selector == "cheapest":
+        return min((rate for _, rate in priced), key=sum)
+    # Highest throughput; between equals, the cheaper backend.
+    return max(priced, key=lambda pr: (float(pr[0].get("throughput") or 0.0), -sum(pr[1])))[1]
+
+
+def huggingface_vision_entries(catalog: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The vision-capable rows of the router catalog, shaped for the Models tab.
+
+    Cheapest first, with models nothing prices last: this add-on analyzes
+    every clip, so what a model costs is the deciding axis, and unlike
+    Ollama's list there is no single "best" for the first row to be. The
+    ``pricing`` field carries the estimate from :func:`huggingface_price`.
+    """
+    ranked: list[tuple[tuple[bool, float, str], dict[str, Any]]] = []
+    for row in catalog:
+        if not is_huggingface_vision_entry(row):
+            continue
+        entry: dict[str, Any] = model_entry(str(row["id"]))
+        price = huggingface_price(row)
+        entry["pricing"] = dict(zip(_RATE_KEYS, price)) if price is not None else None
+        ranked.append(((price is None, sum(price or ()), entry["name"]), entry))
+    return [entry for _, entry in sorted(ranked, key=lambda pair: pair[0])]
+
+
 def lookup_model_pricing(model: str) -> tuple[float, float] | None:
     """Best-effort (input, output) $/1M-token pricing lookup for *model*.
 
@@ -379,8 +613,16 @@ def lookup_model_pricing(model: str) -> tuple[float, float] | None:
     models this add-on can't price per-token (Ollama, Moondream, or an
     unrecognized/fine-tuned id) so callers can render an explicit "N/A"
     instead of guessing at a price.
+
+    An id with a ``/`` in it (``org/name``, how Hugging Face and the Ollama
+    registry spell a model) is never one of those two providers' — neither
+    publishes such an id — and the substring match below would otherwise
+    price it as one: ``Sao10K/L3-8B-Stheno-v3.2`` contains ``o1`` and came
+    out at OpenAI o1's $15/$60.
     """
     lower = (model or "").lower()
+    if "/" in lower:
+        return None
     for table in (_OPENAI_MODEL_PRICING, _ANTHROPIC_MODEL_PRICING):
         for prefix, pricing in table.items():
             if lower.startswith(prefix) or prefix in lower:

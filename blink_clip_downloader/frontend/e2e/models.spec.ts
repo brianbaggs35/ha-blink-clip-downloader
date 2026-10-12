@@ -12,7 +12,14 @@ test('renders the AI providers reference content', async ({ page }) => {
   // Not { exact: true }: each provider name renders inside an <h3> next to
   // a sibling <code> tag (e.g. "Ollama (Local/LAN) ollama"), so the
   // element's full text content is never *exactly* just the provider name.
-  for (const provider of ['Ollama (Local/LAN)', 'Ollama Cloud', 'Anthropic (Claude)', 'OpenAI (GPT)']) {
+  for (const provider of [
+    'Ollama (Local/LAN)',
+    'Ollama Cloud',
+    'Anthropic (Claude)',
+    'OpenAI (GPT)',
+    'Hugging Face',
+    'Replicate',
+  ]) {
     await expect(page.getByText(provider).first()).toBeVisible()
   }
 })

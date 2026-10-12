@@ -235,13 +235,17 @@ configuration:
     name: KI-Anbieter
     description: >-
       Welches KI-Backend verwendet werden soll. „ollama“ = lokaler
-      Ollama-Server in deinem Netzwerk (kostenlos, privat).
-      „ollama_cloud“ = Ollama Cloud API (kostenpflichtig).
-      „moondream_cloud“ = Moondream Cloud API (kostenpflichtig, nutzt
-      Objekterkennung + Schlussfolgerung für bessere Genauigkeit).
-      „moondream_local“ = Moondream 0.5B lokal auf dem Gerät (kostenlos,
-      nur x86_64). „anthropic“ = Claude API (kostenpflichtig).
-      „openai“ = OpenAI GPT API (kostenpflichtig).
+      Ollama-Server in deinem Netzwerk (kostenlos, privat). „ollama_cloud“ =
+      Ollama Cloud API (kostenpflichtig). „moondream_cloud“ = Moondream Cloud
+      API (kostenpflichtig, nutzt Objekterkennung + Schlussfolgerung für
+      bessere Genauigkeit). „moondream_local“ = Moondream 0.5B lokal auf dem
+      Gerät (kostenlos, nur x86_64). „anthropic“ = Claude API
+      (kostenpflichtig). „openai“ = OpenAI GPT API (kostenpflichtig).
+      „huggingface“ = Hugging Face Inference Providers, jedes dort angebotene
+      Vision-Modell (kostenpflichtig pro Token; verwendet das Hugging
+      Face-API-Token, ersatzweise das Hugging Face-Token). „replicate“ =
+      offizielle Vision-Modelle von Replicate (kostenpflichtig; verwendet das
+      Replicate-API-Token).
   ollama_url:
     name: Ollama-Server-URL
     description: >-
@@ -297,6 +301,41 @@ configuration:
     description: >-
       Zu verwendendes GPT-Modell. gpt-4o-mini ist die kostengünstigste
       Vision-Option. Nutze „Fetch Models“ im KI-Tab der Web-UI.
+  huggingface_api_key:
+    name: Hugging Face-API-Token
+    description: >-
+      Hugging Face-Token für den KI-Anbieter „huggingface“ und das
+      Objekterkennungs-Backend „huggingface“. Erstelle unter
+      https://huggingface.co/settings/tokens ein fein abgestuftes Token mit
+      „Make calls to Inference Providers“. Anfragen werden dem Konto belastet,
+      zu dem es gehört (kostenlose Konten haben kein monatliches Guthaben —
+      siehe Dokumentation). Leer lassen, um stattdessen das Hugging Face-Token
+      weiter unten zu verwenden. Geheim halten.
+  huggingface_model:
+    name: Hugging Face-Modell
+    description: >-
+      Zu verwendendes Vision-Modell, wenn der KI-Anbieter „huggingface“ ist,
+      als org/name, optional mit einem Routing-Suffix: „:cheapest“, „:fastest“
+      (Standard) oder ein Backend wie „:novita“. Nutze „Fetch Models“ im
+      KI-Tab der Web-UI, um zu sehen, was gerade verfügbar ist — günstigste
+      zuerst, mit Preisen. Authentifiziert wird mit dem Hugging Face-API-Token
+      oben (oder, wenn dieses leer ist, dem Hugging Face-Token unten).
+  replicate_api_key:
+    name: Replicate-API-Token
+    description: >-
+      API-Token von replicate.com/account/api-tokens. Erforderlich, wenn der
+      KI-Anbieter „replicate“ ist. Anfragen werden dem Konto belastet, zu dem
+      es gehört. Geheim halten.
+  replicate_model:
+    name: Replicate-Modell
+    description: >-
+      Offizielles Replicate-Modell, das verwendet wird, wenn der KI-Anbieter
+      „replicate“ ist, geschrieben als owner/name — zum Beispiel
+      openai/gpt-4o-mini (Standard) oder google/gemini-2.5-flash. Es muss ein
+      Bild und einen Prompt akzeptieren; Community-Modelle werden nicht
+      unterstützt. Nutze „Fetch Models“ im KI-Tab der Web-UI, um die
+      offiziellen Vision-Modelle zu sehen. Modelle, die nur ein Bild pro
+      Anfrage annehmen, werden einmal pro Frame angefragt.
   openai_escalation_model:
     name: OpenAI-Eskalationsmodell (veraltet)
     description: >-
@@ -494,6 +533,27 @@ configuration:
       der Rest dieses Add-ons. Läuft komfortabel auf einem Raspberry Pi
       5 (8 GB) oder besser. Standardmäßig deaktiviert; die Analyse
       funktioniert ohne diese Option genauso.
+  ai_vision_backend:
+    name: Objekterkennungs-Backend
+    description: >-
+      Wo die Objekterkennungsstufe der erweiterten Erkennung läuft. „local“ =
+      auf diesem Gerät (Standard). „huggingface“ = auf den Servern von Hugging
+      Face, für Hardware, die das Modell nicht ausführen kann — die
+      ausgewählten Clip-Frames werden dabei zu Hugging Face HOCHGELADEN, und
+      das Konto hinter dem Hugging Face-API-Token (oder Hugging Face-Token)
+      wird belastet. Nur die Erkennung kann ausgelagert werden: Hugging Face
+      hat kein Modell für Tiefenschätzung oder Segmentierung, daher laufen
+      Tiefen- und Kontaktanalyse in diesem Modus nicht; Posenschätzung,
+      Gesichtserkennung und Audioanalyse bleiben auf diesem Gerät, und
+      Gesichtserkennungsdaten verlassen es in keinem der beiden Modi. Lies vor
+      dem Aktivieren die Dokumentation.
+  ai_remote_detection_model:
+    name: Hugging Face-Erkennungsmodell
+    description: >-
+      Objekterkennungsmodell von Hugging Face, das verwendet wird, wenn das
+      Objekterkennungs-Backend „huggingface“ ist. Die serverlose Inferenz
+      bietet derzeit facebook/detr-resnet-50 (Standard) und
+      facebook/detr-resnet-101 an. Leer lassen für den Standard.
   ai_object_detection_model:
     name: Objekterkennungsmodell
     description: >-
@@ -557,12 +617,15 @@ configuration:
       einen Clip im Biometrie-Tab erneut — Gesichter werden am besten
       mit Fotos derselben Auflösung abgeglichen.
   hf_token:
-    name: Hugging Face-Token (optional)
+    name: Hugging Face-Token
     description: >-
-      Optionales Hugging Face-Zugriffstoken zur Authentifizierung von
-      Computer-Vision-Modell-Downloads und zur Erhöhung der
-      Hugging Face Hub-Ratenlimits. Erstelle eines unter
-      https://huggingface.co/settings/tokens. Geheim halten.
+      Hugging Face-Zugriffstoken. Optional, solange alles auf diesem Gerät
+      läuft; dann authentifiziert es Downloads von Computer-Vision-Modellen
+      und erhöht die Ratenlimits des Hugging Face Hub. Ist das Hugging
+      Face-API-Token oben leer, dient es auch als Zugangsdaten für den
+      KI-Anbieter „huggingface“ und das Objekterkennungs-Backend „huggingface“
+      und muss dann „Make calls to Inference Providers“ erlauben. Geheim
+      halten.
   ai_pose_estimation_enabled:
     name: Posenerkennung aktivieren
     description: >-

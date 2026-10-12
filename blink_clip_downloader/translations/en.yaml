@@ -207,11 +207,15 @@ configuration:
   ai_provider:
     name: AI Provider
     description: >-
-      Which AI backend to use. "ollama" = local Ollama server on your LAN (free,
-      private). "ollama_cloud" = Ollama Cloud API (paid). "moondream_cloud" =
-      Moondream Cloud API (paid, uses object-detect + reasoning for better
-      accuracy). "moondream_local" = Moondream 0.5B on-device (free, x86_64
-      only). "anthropic" = Claude API (paid). "openai" = OpenAI GPT API (paid).
+      Which AI backend to use. "ollama" = local Ollama server on your LAN
+      (free, private). "ollama_cloud" = Ollama Cloud API (paid).
+      "moondream_cloud" = Moondream Cloud API (paid, uses object-detect +
+      reasoning for better accuracy). "moondream_local" = Moondream 0.5B
+      on-device (free, x86_64 only). "anthropic" = Claude API (paid). "openai"
+      = OpenAI GPT API (paid). "huggingface" = Hugging Face Inference
+      Providers, any vision model it serves (paid per token; uses the Hugging
+      Face API Token, or the Hugging Face Token if that is blank). "replicate"
+      = Replicate official vision models (paid; uses the Replicate API Token).
   ollama_url:
     name: Ollama Server URL
     description: >-
@@ -258,6 +262,40 @@ configuration:
     description: >-
       GPT model to use. gpt-4o-mini is the most cost-effective vision option.
       Use "Fetch Models" in the web UI AI tab.
+  huggingface_api_key:
+    name: Hugging Face API Token
+    description: >-
+      Hugging Face token used for the "huggingface" AI Provider and the
+      "huggingface" Object Detection Backend. Create a fine-grained token with
+      "Make calls to Inference Providers" at
+      https://huggingface.co/settings/tokens. Requests are billed to the
+      account it belongs to (free accounts have no monthly credit — see the
+      documentation). Leave blank to use the Hugging Face Token below instead.
+      Keep this secret.
+  huggingface_model:
+    name: Hugging Face Model
+    description: >-
+      Vision model to use when AI Provider is "huggingface", as org/name,
+      optionally with a routing suffix: ":cheapest", ":fastest" (the default)
+      or a backend such as ":novita". Use "Fetch Models" in the web UI AI tab
+      to see what is available right now, cheapest first, with prices.
+      Authenticated by the Hugging Face API Token above (or, if that is blank,
+      the Hugging Face Token below).
+  replicate_api_key:
+    name: Replicate API Token
+    description: >-
+      API token from replicate.com/account/api-tokens. Required when AI
+      Provider is "replicate". Requests are billed to the account it belongs
+      to. Keep this secret.
+  replicate_model:
+    name: Replicate Model
+    description: >-
+      Official Replicate model to use when AI Provider is "replicate", written
+      owner/name — for example openai/gpt-4o-mini (the default) or
+      google/gemini-2.5-flash. It must accept an image and a prompt; community
+      models are not supported. Use "Fetch Models" in the web UI AI tab to see
+      the official vision models. Models that take one image per request are
+      asked once per frame.
   openai_escalation_model:
     name: OpenAI Escalation Model (deprecated)
     description: >-
@@ -422,6 +460,25 @@ configuration:
       substantially more CPU/RAM than the rest of this add-on. Comfortable on
       a Raspberry Pi 5 (8GB) or better. Off by default; analysis works
       exactly the same without it.
+  ai_vision_backend:
+    name: Object Detection Backend
+    description: >-
+      Where the object-detection stage of Enhanced Detection runs. "local" =
+      on this device (default). "huggingface" = on Hugging Face's servers, for
+      hardware that cannot run the model: the sampled clip frames are UPLOADED
+      to Hugging Face, and the account behind the Hugging Face API Token (or
+      Hugging Face Token) is billed. Only detection can move: Hugging Face has
+      no depth-estimation or segmentation model, so depth and contact analysis
+      are not run in that mode; pose estimation, face recognition and audio
+      analysis stay on this device, and face recognition data never leaves it
+      in either mode. Read the documentation before enabling.
+  ai_remote_detection_model:
+    name: Hugging Face Detection Model
+    description: >-
+      Hugging Face object-detection model used when the Object Detection
+      Backend is "huggingface". Its serverless inference currently serves
+      facebook/detr-resnet-50 (default) and facebook/detr-resnet-101. Leave
+      empty for the default.
   ai_object_detection_model:
     name: Object Detection Model
     description: >-
@@ -477,11 +534,14 @@ configuration:
       cost. After changing it, re-scan a clip on the Biometrics tab —
       faces match best against photos enrolled at the same resolution.
   hf_token:
-    name: Hugging Face Token (optional)
+    name: Hugging Face Token
     description: >-
-      Optional Hugging Face access token used to authenticate computer-vision
-      model downloads and increase Hugging Face Hub rate limits. Create one at
-      https://huggingface.co/settings/tokens. Keep this secret.
+      Hugging Face access token. Optional while everything runs on this
+      device, where it authenticates computer-vision model downloads and
+      raises Hugging Face Hub rate limits. When the Hugging Face API Token
+      above is blank, it also serves as the credential for the "huggingface"
+      AI Provider and Object Detection Backend, and must then allow "Make
+      calls to Inference Providers". Keep this secret.
   ai_pose_estimation_enabled:
     name: Enable Pose Estimation
     description: >-

@@ -10,7 +10,8 @@ Add-ons → Repositories*). It currently contains a single add-on:
 - `blink_clip_downloader/` — "Blink Clip Downloader": polls the Blink API
   (via [blinkpy](https://github.com/fronzbot/blinkpy)) and downloads camera
   clips to local storage, with retention/quota management, HA notifications,
-  a bundled-PostgreSQL clip library, a Vue 3 + PrimeVue web UI (Video.js
+  a bundled-PostgreSQL clip library, eight selectable AI providers (two of
+  them, Hugging Face and Replicate, added in 6.1.2), a Vue 3 + PrimeVue web UI (Video.js
   player) including a one-camera-at-a-time Live View tab (blinkpy's
   live-view session, bridged through ffmpeg into HLS — see `live_view.py`),
   and optional AI-based suspicious-activity analysis of clips, including
@@ -70,10 +71,11 @@ architecture.
     extraction/down-selection, prompt assembly, the vision and security
     layers, prompt-cache/token accounting, verdict parsing, the risk
     override and the face bypass. `ollama_provider.py`,
-    `moondream_provider.py`, `anthropic_provider.py` and
-    `openai_provider.py` hold only what differs about talking to one API;
+    `moondream_provider.py`, `anthropic_provider.py`,
+    `openai_provider.py`, `huggingface_provider.py` and
+    `replicate_provider.py` hold only what differs about talking to one API;
     `factory.py` holds `create_analyzer()`, the only module that knows all
-    six at once. Every provider module carries the `_provider` suffix for
+    eight at once. Every provider module carries the `_provider` suffix for
     a concrete reason: **pyright resolves a bare `import <x>` to a
     same-named file in the importing file's own directory** when the real
     package isn't installed, so `moondream.py` doing `import moondream`
@@ -100,11 +102,38 @@ architecture.
     selection in `vision/pipeline.py`. A camera with nothing marked must
     get byte-for-byte the prompt it got before this existed —
     `tests/test_analyzer_marked_assets.py` holds that.
+  - `analyzer/huggingface_provider.py` / `replicate_provider.py` (6.1.2) —
+    the two providers whose model list and prices come from the *service*,
+    not from this repo. **Hugging Face** is the OpenAI SDK pointed at
+    `router.huggingface.co/v1` (the OpenAI-compatible router; `base_url` and
+    `hub_url` are constructor arguments precisely so tests run the real SDK
+    against a local aiohttp stand-in instead of mocks). Its credential is
+    `huggingface_api_key`, falling back to `hf_token`
+    (`AppConfig.huggingface_inference_key()`); its model is `org/name` with an
+    optional `:cheapest`/`:fastest`/`:<backend>` suffix; prices and the model
+    picker come from the router's *public* `/v1/models` catalog
+    (`model_catalog.huggingface_*`), consulted by the usage page through the
+    optional `BaseAnalyzer.price_for_model()`/`refresh_pricing()` hooks
+    *before* the static tables. A 400 about `response_format` is retried once
+    without it and never asked again. **Replicate** is plain `aiohttp` against
+    its prediction API (no `replicate` package): only *official* models
+    (`owner/name`), and every model names its inputs differently (Gemini
+    `images`, GPT `image_input`, Claude one `image`), so the model's own
+    published `Input` schema is read once (`model_catalog.replicate_input_plan`)
+    and the clip arranged to fit it; a one-image model gets one request per
+    frame. The poll URL is built from the prediction *id* and the configured
+    base URL, never taken from the response — the request carries the token.
+    Replicate publishes no readable rate, so its usage rows have tokens (when
+    `metrics` reports them) and no cost; that is deliberate N/A, not a gap.
   - `model_catalog.py` — per-provider model reference data: which ids can
     see images, which accept a structured-output schema, and per-token
     pricing, plus the small pure functions that read it. Split out of
     `analyzer` because it changes on the providers' schedule, not this
     add-on's; it imports nothing from `analyzer`.
+    `lookup_model_pricing` is a *substring* match against the OpenAI and
+    Anthropic tables, so it returns `None` for any id containing `/`
+    (Hugging Face `org/name`, an Ollama registry path): `Sao10K/L3-8B-Stheno-v3.2`
+    contains `o1` and was priced as OpenAI o1 ($15/$60 per 1M) until 6.1.2.
   - `prompt_segments.py` — the individual blocks a clip-analysis prompt is
     assembled from (time of day, anomaly alert, scene baseline, motion
     trajectory, recent corrections, zone motion, vision hints, output
@@ -133,6 +162,28 @@ architecture.
     behind them. Both modules used to carry their own identical copy for
     exactly that reason; same fix as `frame_motion.py` taking
     `point_in_polygon` from `security/geometry.py`.
+  - `vision/remote_detection.py` (6.1.2) — `RemoteObjectDetector`, the object-
+    detection stage run on Hugging Face's serverless inference
+    (`ai_vision_backend: huggingface`) for hardware that cannot run YOLO. Rules
+    that must not erode: **it is the only stage that can go remote** (the
+    serverless tier serves DETR object detection and *no* depth, box-prompted
+    segmentation, pose or audio model — verified against the live Hub API, not
+    assumed), so in that mode `VisionPipeline._run_depth_and_contact` neither
+    runs nor loads depth/contact and reports both as `unavailable_sources`;
+    **it returns `track_id=None`** and nothing mints ids, because
+    `security/tracks.py` already treats that as "tracking unavailable" and flags
+    the tracks `tracked=False`, which is what keeps the TRACKING hint, "N
+    separate people" and routine door use (`_routine_door_use_active` warns)
+    from firing on an inferred track; **one failed frame fails the clip's
+    detection (`None`), never a partial list** — a frame that was not examined
+    reads as an empty driveway otherwise; and **face recognition, enrollment
+    data, names and audio are never remote** under any backend. The frames *are*
+    uploaded, so `app._remote_vision_active` announces it at start-up, the AI
+    tab shows it, and the Biometrics tab's privacy banner says so while it is
+    on (`remote_vision` on `/api/ai/status` and `/api/ai/faces`) — keep that
+    promise and implementation in step. Its 0.5 confidence floor is Hugging
+    Face's own default for the task, not a measurement; say so rather than
+    presenting it as one.
   - `moondream_finetune.py` — `MoondreamFineTuneManager`, an async wrapper
     over Moondream Cloud's fine-tuning REST API. **Not an analyzer** — no
     clip, prompt or verdict is involved; it backs the AI tab's Fine-Tuning
@@ -522,7 +573,7 @@ tools can be invoked from the root the same way CI does.
 
 ## AI provider architecture
 
-`analyzer/base.py` defines `BaseAnalyzer` (ABC); six concrete analyzers
+`analyzer/base.py` defines `BaseAnalyzer` (ABC); eight concrete analyzers
 live one provider-family per module, selected via `analyzer/factory.py`'s
 `create_analyzer()` keyed on `ai_provider`:
 
@@ -534,6 +585,8 @@ live one provider-family per module, selected via `analyzer/factory.py`'s
 | `moondream_local` | `MoondreamLocalAnalyzer` | `moondream_provider.py`  | Local moondream package, requires an **NVIDIA/Apple Silicon GPU** (any arch since the 4.1.0 Debian base image switch) |
 | `anthropic`       | `AnthropicAnalyzer`      | `anthropic_provider.py`  | Claude vision models                      |
 | `openai`          | `OpenAIAnalyzer`         | `openai_provider.py`     | GPT vision models                         |
+| `huggingface`     | `HuggingFaceAnalyzer`    | `huggingface_provider.py`| Inference Providers router (OpenAI-compatible); token = `huggingface_api_key` or `hf_token` |
+| `replicate`       | `ReplicateAnalyzer`      | `replicate_provider.py`  | Replicate official models over HTTP; input names read from each model's schema |
 
 `MoondreamFineTuneManager` is a separate helper class (not an analyzer) that
 wraps the Moondream Cloud fine-tuning API — it lives in

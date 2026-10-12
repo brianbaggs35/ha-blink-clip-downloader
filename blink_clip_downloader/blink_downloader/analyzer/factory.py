@@ -13,9 +13,11 @@ from typing import Any
 
 from .anthropic_provider import AnthropicAnalyzer
 from .base import BaseAnalyzer, SecurityLayerSettings
+from .huggingface_provider import HuggingFaceAnalyzer
 from .moondream_provider import MoondreamCloudAnalyzer, MoondreamLocalAnalyzer
 from .ollama_provider import ClipAnalyzer, OllamaCloudAnalyzer
 from .openai_provider import OpenAIAnalyzer
+from .replicate_provider import ReplicateAnalyzer
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -32,6 +34,8 @@ _ESCALATION_MODEL_KWARG: dict[str, str] = {
     "moondream_cloud": "moondream_finetune_model",
     "anthropic": "anthropic_model",
     "openai": "openai_model",
+    "huggingface": "huggingface_model",
+    "replicate": "replicate_model",
 }
 
 
@@ -62,7 +66,7 @@ class AnalyzerSettings:
 class ProviderCredentials:
     """Every provider's keys and model ids, in one object.
 
-    All nine together because ``create_analyzer`` cannot know which pair
+    All thirteen together because ``create_analyzer`` cannot know which pair
     it needs until it has looked at ``ai_provider`` — and because tier-2
     escalation may pick a *different* provider, so the whole set has to
     survive as far as the second analyzer is built.
@@ -77,6 +81,10 @@ class ProviderCredentials:
     anthropic_model: str = ""
     openai_api_key: str = ""
     openai_model: str = ""
+    huggingface_api_key: str = ""
+    huggingface_model: str = ""
+    replicate_api_key: str = ""
+    replicate_model: str = ""
 
 
 def _build_single_analyzer(
@@ -104,6 +112,10 @@ def _build_single_analyzer(
     anthropic_model = credentials.get("anthropic_model", "")
     openai_api_key = credentials.get("openai_api_key", "")
     openai_model = credentials.get("openai_model", "")
+    huggingface_api_key = credentials.get("huggingface_api_key", "")
+    huggingface_model = credentials.get("huggingface_model", "")
+    replicate_api_key = credentials.get("replicate_api_key", "")
+    replicate_model = credentials.get("replicate_model", "")
 
     common: dict[str, Any] = {
         "prompt": prompt,
@@ -133,11 +145,17 @@ def _build_single_analyzer(
         return _build_anthropic_analyzer(common, anthropic_api_key, anthropic_model)
     if ai_provider == "openai":
         return _build_openai_analyzer(common, openai_api_key, openai_model)
+    if ai_provider == "huggingface":
+        return _build_huggingface_analyzer(
+            common, huggingface_api_key, huggingface_model
+        )
+    if ai_provider == "replicate":
+        return _build_replicate_analyzer(common, replicate_api_key, replicate_model)
 
     _LOGGER.warning(
         "Unknown ai_provider %r; expected 'ollama', 'ollama_cloud', "
-        "'moondream_cloud', 'moondream_local', 'anthropic', or 'openai'. "
-        "AI analysis disabled.",
+        "'moondream_cloud', 'moondream_local', 'anthropic', 'openai', "
+        "'huggingface', or 'replicate'. AI analysis disabled.",
         ai_provider,
     )
     return None
@@ -212,6 +230,32 @@ def _build_openai_analyzer(
     )
 
 
+def _build_huggingface_analyzer(
+    common: dict[str, Any], huggingface_api_key: str, huggingface_model: str
+) -> BaseAnalyzer | None:
+    if not huggingface_api_key:
+        _LOGGER.warning(
+            "ai_provider='huggingface' requires huggingface_api_key (or hf_token) "
+            "to be set; AI analysis disabled"
+        )
+        return None
+    return HuggingFaceAnalyzer(
+        api_key=huggingface_api_key, model=huggingface_model, **common
+    )
+
+
+def _build_replicate_analyzer(
+    common: dict[str, Any], replicate_api_key: str, replicate_model: str
+) -> BaseAnalyzer | None:
+    if not replicate_api_key:
+        _LOGGER.warning(
+            "ai_provider='replicate' requires replicate_api_key to be set; "
+            "AI analysis disabled"
+        )
+        return None
+    return ReplicateAnalyzer(api_key=replicate_api_key, model=replicate_model, **common)
+
+
 def create_analyzer(
     ai_provider: str,
     prompt: str,
@@ -231,7 +275,7 @@ def create_analyzer(
     suspicious tier-1 verdict is re-checked by tier 2 before being trusted
     (see :meth:`BaseAnalyzer._maybe_escalate`). Tier 2 reuses tier 1's own
     already-loaded provider credentials (``ollama_url``, ``moondream_api_key``,
-    ``anthropic_api_key``, ``openai_api_key``, ...) passed to this same call —
+    ``anthropic_api_key``, ``openai_api_key``, ``huggingface_api_key``, ...) passed to this same call —
     no separate credential fields are needed for escalation.
     """
     settings = settings or AnalyzerSettings()

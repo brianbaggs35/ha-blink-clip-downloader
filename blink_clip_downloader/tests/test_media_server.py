@@ -101,6 +101,10 @@ def _make_analyzer(provider: str = "ollama", **overrides) -> MagicMock:
         return_value=overrides.get("analyze_result", _make_analysis_result())
     )
     analyzer.model_pricing.return_value = overrides.get("pricing", (3.0, 15.0))
+    # BaseAnalyzer's pricing hooks: no provider-specific rates, so the usage
+    # page falls through to the static tables, which is what these tests mean.
+    analyzer.refresh_pricing = AsyncMock(return_value=None)
+    analyzer.price_for_model.return_value = None
     analyzer.car_protection_active = overrides.get("car_protection_active", False)
     # A bare MagicMock auto-vivifies any attribute access (including this
     # one) as a non-None child mock, which would make _handle_ai_status
@@ -10939,3 +10943,185 @@ async def test_ha_config_create_tolerates_a_body_with_nothing_in_it(
         assert resp.status == 200
         assert (await resp.json())["created"] is False
         writer.create.assert_awaited_once_with("", "", "")
+
+
+# ---------------------------------------------------------------------------
+# Where object detection runs (ai_vision_backend) -- reported, never acted on
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "expected"),
+    [({}, False), ({"remote_vision": False}, False), ({"remote_vision": True}, True)],
+)
+async def test_ai_status_reports_whether_detection_runs_remotely(
+    db: ClipDatabase, kwargs: dict, expected: bool
+) -> None:
+    server = MediaServer(db=db, port=0, analyzer=_make_analyzer(), **kwargs)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        data = await (await tc.get("/api/ai/status")).json()
+        assert data["remote_vision"] is expected
+    finally:
+        await tc.close()
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "expected"),
+    [({}, False), ({"remote_vision": True}, True)],
+)
+async def test_faces_status_reports_whether_detection_runs_remotely(
+    db: ClipDatabase, kwargs: dict, expected: bool
+) -> None:
+    """The Biometrics tab promises face data stays on the device; the frames
+    detection runs on can contain faces, so the tab has to be told when they
+    are uploaded."""
+    server = MediaServer(db=db, port=0, analyzer=_make_analyzer(), **kwargs)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        data = await (await tc.get("/api/ai/faces")).json()
+        assert data["remote_vision"] is expected
+    finally:
+        await tc.close()
+
+
+# ---------------------------------------------------------------------------
+# Usage cost for providers that learn their own rates (Hugging Face)
+# ---------------------------------------------------------------------------
+
+_HF_CATALOG = [
+    {
+        "id": "Qwen/Qwen3.5-9B",
+        "architecture": {
+            "input_modalities": ["text", "image"],
+            "output_modalities": ["text"],
+        },
+        "providers": [
+            {
+                "provider": "together",
+                "status": "live",
+                "throughput": 70.0,
+                "pricing": {"input": 0.17, "output": 0.25},
+            }
+        ],
+    },
+    {
+        "id": "Sao10K/L3-8B-Stheno-v3.2",
+        "architecture": {
+            "input_modalities": ["text", "image"],
+            "output_modalities": ["text"],
+        },
+        "providers": [
+            {
+                "provider": "novita",
+                "status": "live",
+                "throughput": 10.0,
+                "pricing": {"input": 0.1, "output": 0.1},
+            }
+        ],
+    },
+]
+
+
+def _huggingface_analyzer_with_prices(model: str = "Qwen/Qwen3.5-9B"):
+    """A real analyzer whose catalog is already loaded (so no network)."""
+    import time
+
+    from blink_downloader.analyzer import HuggingFaceAnalyzer
+
+    analyzer = HuggingFaceAnalyzer(api_key="hf_x", model=model, prompt="p")
+    analyzer._catalog = _HF_CATALOG
+    analyzer._catalog_fetched_at = time.monotonic()
+    return analyzer
+
+
+async def _add_usage_row(
+    db: ClipDatabase,
+    clip_id: str,
+    model: str,
+    analyzed_at: str = "2024-06-01T09:00:00+00:00",
+) -> None:
+    await db.add_clip(_make_clip(clip_id))
+    await db.add_analysis_result(
+        {
+            "clip_id": clip_id,
+            "camera": "Front Door",
+            "model": model,
+            "response_text": "",
+            "is_suspicious": False,
+            "confidence": 0.1,
+            "summary": "ok",
+            "frame_count": 1,
+            "analysis_duration": 1.0,
+            "analyzed_at": analyzed_at,
+            "tokens_prompt": 1_000_000,
+            "tokens_completion": 1_000_000,
+        }
+    )
+
+
+async def test_ai_usage_prices_huggingface_rows_from_the_routers_catalog(
+    db: ClipDatabase,
+) -> None:
+    await _add_usage_row(db, "h1", "Qwen/Qwen3.5-9B")
+    await _add_usage_row(db, "h2", "gpt-4o-mini")
+    server = MediaServer(db=db, port=0, analyzer=_huggingface_analyzer_with_prices())
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        data = await (await tc.get("/api/ai/usage")).json()
+    finally:
+        await tc.close()
+    by_model = {row["model"]: row for row in data["by_model"]}
+    # The catalog prices the Hugging Face row; the static tables still price
+    # the OpenAI row left over from before the provider was switched.
+    assert by_model["Qwen/Qwen3.5-9B"]["cost"] == pytest.approx(0.17 + 0.25)
+    assert by_model["gpt-4o-mini"]["cost"] == pytest.approx(0.15 + 0.60)
+    # No per-token rate on the page itself: it is a catalog estimate per model.
+    assert "cost_per_1m_input" not in data
+
+
+async def test_ai_usage_does_not_price_a_huggingface_id_as_an_openai_model(
+    db: ClipDatabase,
+) -> None:
+    """With the row's model absent from the catalog there is nothing to price
+    it by, and "Sao10K" contains "o1" -- it used to come out at OpenAI o1's
+    $15/$60 per million tokens."""
+    await _add_usage_row(db, "h3", "Sao10K/L3-8B-Stheno-v3.2")
+    analyzer = _huggingface_analyzer_with_prices()
+    analyzer._catalog = []
+    server = MediaServer(db=db, port=0, analyzer=analyzer)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        data = await (await tc.get("/api/ai/usage")).json()
+    finally:
+        await tc.close()
+    assert data["by_model"][0]["cost"] is None
+
+
+async def test_ai_usage_asks_the_escalation_analyzer_for_its_own_rate(
+    db: ClipDatabase,
+) -> None:
+    # The periods endpoint looks back a year from today, so the row is dated today.
+    await _add_usage_row(
+        db,
+        "h4",
+        "Sao10K/L3-8B-Stheno-v3.2",
+        analyzed_at=datetime.now(UTC).isoformat(),
+    )
+    tier1 = _make_analyzer(
+        escalation_analyzer=_huggingface_analyzer_with_prices(
+            "Sao10K/L3-8B-Stheno-v3.2"
+        )
+    )
+    server = MediaServer(db=db, port=0, analyzer=tier1)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        data = await (await tc.get("/api/ai/usage/periods")).json()
+    finally:
+        await tc.close()
+    assert data["monthly"][0]["cost"] == pytest.approx(0.2)

@@ -58,6 +58,7 @@ from .faces import (
     _build_recognition_hint,
 )
 from .pose import PoseEstimator, PostureResult, _build_posture_hint
+from .remote_detection import RemoteObjectDetector
 
 if TYPE_CHECKING:
     from ..database import ClipDatabase
@@ -140,6 +141,19 @@ class VisionConfig:
     audio_analysis_enabled: bool = False
     audio_model: str = ""
     hf_token: str = ""
+    #: Where object detection runs: ``"local"`` (this device, Ultralytics) or
+    #: ``"huggingface"`` (the scan frames are uploaded to Hugging Face's
+    #: serverless inference — see :mod:`.remote_detection`). In the remote
+    #: mode depth estimation and contact segmentation are not run at all:
+    #: Hugging Face serves no model for either, and loading the local ones
+    #: would defeat the point of a mode meant for hardware that cannot.
+    vision_backend: str = "local"
+    remote_detection_model: str = "facebook/detr-resnet-50"
+    #: The credential for ``vision_backend="huggingface"``. Separate from
+    #: ``hf_token`` (which only downloads local models) because the two are
+    #: allowed to differ: ``AppConfig.huggingface_inference_key`` falls back
+    #: to ``hf_token`` when no dedicated key is set.
+    remote_detection_token: str = ""
     #: How many evenly-spaced frames the temporal scan runs detection over
     #: (see :func:`imaging._select_scan_frames`). This is the single knob that trades
     #: detection cost against how much of the clip's *behaviour* — dwell,
@@ -262,7 +276,14 @@ class VisionPipeline:
     def __init__(self, config: VisionConfig, db: ClipDatabase | None = None) -> None:
         self._config = config
         self._db = db
-        self._detector = ObjectDetector(config.object_detection_model)
+        self._remote = config.vision_backend == "huggingface"
+        self._detector: ObjectDetector | RemoteObjectDetector = (
+            RemoteObjectDetector(
+                config.remote_detection_model, config.remote_detection_token
+            )
+            if self._remote
+            else ObjectDetector(config.object_detection_model)
+        )
         self._depth = DepthEstimator(config.hf_token, config.depth_estimation_model)
         self._segmenter = ContactSegmenter(config.hf_token)
         self._pose = PoseEstimator(config.pose_model)
@@ -754,25 +775,9 @@ class VisionPipeline:
         hints.examined_asset_key = asset_key
         target = self._pair_target(hints, asset_key)
 
-        depth_result = await self._depth.compare(
-            scan_frames[frame_idx], subject.box, asset_box
+        await self._run_depth_and_contact(
+            hints, scan_frames[frame_idx], subject, asset_box, target
         )
-        if depth_result is None:
-            hints.unavailable_sources.append(SOURCE_DEPTH_ESTIMATION)
-        else:
-            hints.depth_similar = depth_result.similar_depth
-            hints.depth_hint = _build_depth_hint(depth_result, subject.label, target)
-
-        contact_result = await self._segmenter.check_contact(
-            scan_frames[frame_idx], subject.box, asset_box
-        )
-        if contact_result is None:
-            hints.unavailable_sources.append(SOURCE_CONTACT_SEGMENTATION)
-        else:
-            hints.contact_touching = contact_result.touching
-            hints.contact_hint = _build_contact_hint(
-                contact_result, subject.label, target
-            )
 
         if self._config.pose_estimation_enabled:
             posture = await self._pose.analyze(
@@ -794,6 +799,44 @@ class VisionPipeline:
         if asset_key is None:
             hints.asset_appearance_change = self._asset_change(
                 scan_frames, asset_box, detections
+            )
+
+    async def _run_depth_and_contact(
+        self,
+        hints: VisionHints,
+        frame: bytes,
+        subject: DetectedObject,
+        asset_box: Box,
+        target: str,
+    ) -> None:
+        """The two stages that need a model Hugging Face does not serve.
+
+        With remote detection neither runs — and neither loads: they would
+        pull torch and two multi-hundred-megabyte models onto exactly the
+        hardware the remote mode exists for. Both are recorded as unavailable
+        evidence, which is what they are, and the AI is told so.
+        """
+        if self._remote:
+            hints.unavailable_sources.append(SOURCE_DEPTH_ESTIMATION)
+            hints.unavailable_sources.append(SOURCE_CONTACT_SEGMENTATION)
+            return
+
+        depth_result = await self._depth.compare(frame, subject.box, asset_box)
+        if depth_result is None:
+            hints.unavailable_sources.append(SOURCE_DEPTH_ESTIMATION)
+        else:
+            hints.depth_similar = depth_result.similar_depth
+            hints.depth_hint = _build_depth_hint(depth_result, subject.label, target)
+
+        contact_result = await self._segmenter.check_contact(
+            frame, subject.box, asset_box
+        )
+        if contact_result is None:
+            hints.unavailable_sources.append(SOURCE_CONTACT_SEGMENTATION)
+        else:
+            hints.contact_touching = contact_result.touching
+            hints.contact_hint = _build_contact_hint(
+                contact_result, subject.label, target
             )
 
     @staticmethod
