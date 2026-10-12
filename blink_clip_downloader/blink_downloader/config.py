@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .model_catalog import DEFAULT_HUGGINGFACE_MODEL, DEFAULT_REPLICATE_MODEL
+
 _LOGGER = logging.getLogger(__name__)
 
 #: The names Home Assistant's own certificate has in /ssl, which is also
@@ -26,8 +28,22 @@ _VALID_AI_PROVIDERS = frozenset(
         "moondream_local",
         "anthropic",
         "openai",
+        "huggingface",
+        "replicate",
     }
 )
+#: What ai_vision_backend is when it is unset or unrecognised: detection on
+#: this device, which is what every install before 6.1.2 does and never sends
+#: a frame anywhere.
+DEFAULT_VISION_BACKEND = "local"
+
+#: Every ai_vision_backend value.
+VISION_BACKENDS = (DEFAULT_VISION_BACKEND, "huggingface")
+
+#: The Hugging Face object-detection model used when none is configured: the
+#: smaller of the two the serverless tier serves, and the one its own docs
+#: recommend for the task.
+DEFAULT_REMOTE_DETECTION_MODEL = "facebook/detr-resnet-50"
 _DEFAULT_SUSPICIOUS_KEYWORDS = [
     "suspicious",
     "break-in",
@@ -141,7 +157,7 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
 
     # --- AI Video Analysis ---
     ai_analysis_enabled: bool = False
-    ai_provider: str = "ollama"  # "ollama" | "ollama_cloud" | "moondream_cloud" | "moondream_local" | "anthropic" | "openai"
+    ai_provider: str = "ollama"  # "ollama" | "ollama_cloud" | "moondream_cloud" | "moondream_local" | "anthropic" | "openai" | "huggingface" | "replicate"
     ollama_url: str = ""
     ollama_model: str = ""
     ollama_cloud_api_key: str = ""
@@ -154,6 +170,19 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     anthropic_model: str = "claude-haiku-4-5"
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
+    # Credential for Hugging Face's servers: the ai_provider="huggingface"
+    # provider and the ai_vision_backend="huggingface" detector. Blank falls
+    # back to hf_token (below), so a user who already has one token with
+    # the "Make calls to Inference Providers" permission does not have to
+    # enter it twice -- see huggingface_inference_key().
+    huggingface_api_key: str = ""
+    # Vision model for ai_provider="huggingface": org/name, optionally with a
+    # routing suffix (":cheapest", ":fastest" or a backend such as ":novita").
+    huggingface_model: str = DEFAULT_HUGGINGFACE_MODEL
+    # Replicate (ai_provider="replicate"): API token from replicate.com and an
+    # official model (owner/name) that takes an image and a prompt.
+    replicate_api_key: str = ""
+    replicate_model: str = DEFAULT_REPLICATE_MODEL
     # Deprecated as of 4.0.0, removed from config.yaml's options/schema in
     # 5.0.0 — use ai_escalation_provider="openai" and ai_escalation_model
     # instead, which support escalating to any provider, not just a second
@@ -351,6 +380,18 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     # this add-on's typical personal home-security use, but confirm that
     # licensing fits your own situation before choosing either.
     ai_depth_estimation_model: str = "depth-anything/Depth-Anything-V2-Small-hf"
+    # Where the object-detection stage runs: "local" (Ultralytics YOLO on
+    # this device, the only behaviour before 6.1.2) or "huggingface" (the
+    # sampled frames are sent to Hugging Face's serverless inference, for
+    # hardware that cannot run the model). Only detection can move: Hugging
+    # Face serves no depth-estimation, segmentation or pose model, so in
+    # "huggingface" mode depth and contact segmentation are not run (reported
+    # as unavailable evidence), and pose, face recognition and audio keep
+    # running here under their own switches. Needs hf_token.
+    ai_vision_backend: str = DEFAULT_VISION_BACKEND
+    # Hugging Face object-detection model for ai_vision_backend="huggingface".
+    # The serverless tier currently serves facebook/detr-resnet-50 and -101.
+    ai_remote_detection_model: str = DEFAULT_REMOTE_DETECTION_MODEL
     # Local-only face recognition to suppress alerts for enrolled household
     # members. Kept as its own toggle (rather than folded into
     # ai_enhanced_detection_enabled above) since it's a meaningfully
@@ -489,6 +530,17 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     # Set to a non-empty string when load_config() fails; the app starts the
     # web server in error-display mode rather than attempting Blink auth.
     startup_error: str = ""
+
+    def huggingface_inference_key(self) -> str:
+        """The credential used for anything that calls Hugging Face's servers.
+
+        ``huggingface_api_key`` when set, else ``hf_token``: the second is
+        the token this add-on already asked for to download models, and the
+        same token works for inference when it has the "Make calls to
+        Inference Providers" permission, so asking again would only invite
+        two copies of one secret to drift apart.
+        """
+        return self.huggingface_api_key or self.hf_token
 
 
 def load_config(options_path: Path | None = None) -> AppConfig:
@@ -709,6 +761,24 @@ def _parse_ai_frame_strategy(data: dict) -> str:
     return strategy if strategy in valid else default
 
 
+def _parse_vision_backend(data: dict) -> str:
+    """The configured vision backend; anything unrecognised is "local".
+
+    Local is the safe fallback in both directions that matter: it never
+    sends a frame anywhere, and it is what the install was running before
+    the option existed. A typo must not start uploading clips.
+    """
+    value = str(data.get("ai_vision_backend", "") or "").strip().lower()
+    if value and value not in VISION_BACKENDS:
+        _LOGGER.warning(
+            "Unknown ai_vision_backend %r; expected one of %s. Using %r.",
+            _sanitize_for_log(value),
+            ", ".join(VISION_BACKENDS),
+            DEFAULT_VISION_BACKEND,
+        )
+    return value if value in VISION_BACKENDS else DEFAULT_VISION_BACKEND
+
+
 #: Every ai_face_recognition_resolution value (vision/faces.py maps each to a
 #: width; tests/test_config.py keeps the two, and config.yaml, in step).
 FACE_RECOGNITION_RESOLUTIONS = ("standard", "high", "very_high")
@@ -745,6 +815,12 @@ def _parse_ai_provider_kwargs(
         "openai_api_key": str(data.get("openai_api_key", "") or "").strip(),
         "openai_model": str(data.get("openai_model", "") or "").strip()
         or "gpt-4o-mini",
+        "huggingface_api_key": str(data.get("huggingface_api_key", "") or "").strip(),
+        "huggingface_model": str(data.get("huggingface_model", "") or "").strip()
+        or DEFAULT_HUGGINGFACE_MODEL,
+        "replicate_api_key": str(data.get("replicate_api_key", "") or "").strip(),
+        "replicate_model": str(data.get("replicate_model", "") or "").strip()
+        or DEFAULT_REPLICATE_MODEL,
         "openai_escalation_model": legacy_openai_escalation_model,
         "ai_escalation_enabled": ai_escalation_enabled,
         "ai_escalation_provider": ai_escalation_provider,
@@ -837,6 +913,11 @@ def _parse_ai_detection_kwargs(data: dict) -> dict[str, Any]:
             data.get("ai_depth_estimation_model", "") or ""
         ).strip()
         or "depth-anything/Depth-Anything-V2-Small-hf",
+        "ai_vision_backend": _parse_vision_backend(data),
+        "ai_remote_detection_model": str(
+            data.get("ai_remote_detection_model", "") or ""
+        ).strip()
+        or DEFAULT_REMOTE_DETECTION_MODEL,
         "ai_face_recognition_enabled": bool(
             data.get("ai_face_recognition_enabled", False)
         ),

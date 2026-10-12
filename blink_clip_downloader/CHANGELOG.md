@@ -1,5 +1,88 @@
 # Changelog
 
+## 6.1.2
+
+### Two new AI providers: Hugging Face and Replicate
+
+Both are cloud providers, billed to your own account with them, and both are
+available as the main provider and as the tier-2 escalation provider.
+
+- **Hugging Face (`ai_provider: huggingface`).** Uses Hugging Face Inference
+  Providers: one token, and any vision model the providers behind it currently
+  serve (Qwen, Gemma, GLM and more). `huggingface_api_key` takes a token with the
+  *Make calls to Inference Providers* permission — left blank, the existing
+  `hf_token` is used, so one token can serve both. `huggingface_model` is
+  `org/name`, optionally with a routing suffix (`:cheapest`, `:fastest`, or a
+  provider such as `:novita`). **Fetch Models** lists the vision models available
+  right now, cheapest first, with their price per million tokens, and the AI Usage
+  tab prices the tokens from the same catalog (an estimate: which provider serves
+  a request is Hugging Face's choice). A provider that refuses a response schema is
+  asked again without it, and a model that takes only one image per request is
+  reported with the fix (`ai_frame_strategy: sequential`).
+- **Replicate (`ai_provider: replicate`).** Uses Replicate's official vision
+  models. `replicate_api_key` is the API token and `replicate_model` an official
+  model written `owner/name` (default `openai/gpt-4o-mini`). Replicate models name
+  their inputs differently — Gemini `images`, GPT `image_input`, Claude one
+  `image` — so the add-on reads the model's own input schema and arranges the clip
+  to fit it. A model that takes one image is asked once per frame and the most
+  alarming answer is kept. Replicate publishes no per-token rate the add-on can
+  read, so the usage tab shows token counts and no cost.
+- **Free is not free.** Hugging Face's own pricing page lists *no* monthly credit
+  for free accounts (PRO includes a small amount; everything else is
+  pay-as-you-go), and Replicate bills every account. An empty balance is reported
+  as exactly that, stops the batch, and leaves the clips queued so topping up
+  resumes them. The Models tab has the Hugging Face and Replicate cards with
+  documentation and pricing links.
+- **Not yet proven against live accounts.** Both providers were built from the
+  services' published APIs and catalogs and tested against stand-ins for them. The
+  default model for each was chosen from the live catalog, not benchmarked on
+  security footage — judge a model on your own clips.
+
+### Object detection can run on Hugging Face (opt-in)
+
+For hardware that cannot run the detector, **`ai_vision_backend: huggingface`**
+(with `ai_remote_detection_model`, default `facebook/detr-resnet-50`) sends the
+object-detection stage to Hugging Face's serverless inference. It is off
+(`local`) by default, and with it off nothing changes.
+
+- **Only detection can move.** Hugging Face's serverless tier serves object
+  detection (DETR) but no depth-estimation, segmentation or pose model. In this
+  mode depth estimation and contact segmentation are not run — and not loaded, so
+  they do not weigh on the hardware this is for; the AI is told that evidence was
+  unavailable. Pose estimation, face recognition and audio analysis stay on this
+  device under their own switches.
+- **It uploads the sampled clip frames.** Enrolled photos, face data, names and
+  audio never leave the device, and face recognition is never remote. But the
+  frames can show faces, so this is announced in the log at start-up, shown on the
+  AI tab, and stated on the Biometrics tab's privacy notice while it is on. If you
+  chose a local AI provider to keep footage at home, this sends detection frames
+  out again.
+- **Boxes without tracks.** The server returns no track ids, so continuity between
+  frames is inferred from box overlap and marked as inferred. The tracking hint is
+  not produced, "N separate people" is not raised, event confidences are lower, and
+  routine door use cannot clear a clip (a warning says so at start-up if it is on).
+  The 0.5 confidence floor is Hugging Face's default for the task, not a value
+  measured on footage like yours.
+- **A frame that cannot be examined fails the clip's detection** instead of
+  reading as an empty driveway. Transient failures are retried; a refused token or
+  an empty balance is not, and the log says which it was.
+
+### Bug fixes
+
+- **Hugging Face and Ollama-registry model ids were priced as OpenAI models.**
+  Pricing matched a model id by substring, so any `org/name` containing `o1`, `o3`
+  or `gpt-4o` took OpenAI's price — `Sao10K/L3-8B-Stheno-v3.2` came out at o1's
+  $15/$60 per million tokens. An id with a `/` in it is never an OpenAI or
+  Anthropic id and is no longer matched against their tables.
+
+### Other
+
+- The Models tab's provider count and the AI tab's model picker know the new
+  providers (no *Best* star for either: Hugging Face's list is sorted by price and
+  Replicate's is a roster, neither a ranking), and `hf_token`'s description now
+  says what else it does.
+- The option labels and descriptions are translated into every supported language.
+
 ## 6.1.1
 
 ### Front door: coming and going no longer alerts (opt-in)

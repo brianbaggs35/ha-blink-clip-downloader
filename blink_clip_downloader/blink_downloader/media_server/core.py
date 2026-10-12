@@ -59,6 +59,7 @@ class _MediaServerBase:
     _face_recognition_enabled: bool
     _face_ignore_unclear: bool
     _face_frame_width: int
+    _remote_vision: bool
 
     # Narrow callables from BlinkDownloader, so no route module has to
     # import blinkpy or reach through LiveViewManager to get at a camera.

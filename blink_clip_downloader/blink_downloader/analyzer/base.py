@@ -33,6 +33,7 @@ import aiohttp
 from .. import frame_motion, prompt_segments
 from ..face_outcomes import FaceEvidence, classify_face_outcome, face_evidence
 from ..ffmpeg_output import ANALYSIS_FRAME_WIDTH, extract_jpeg_frames
+from ..model_catalog import lookup_model_pricing
 from ..protected_assets import assets_by_camera
 
 # Imported eagerly, unlike vision below: the security package is pure
@@ -1135,6 +1136,32 @@ class BaseAnalyzer(abc.ABC):
     @abc.abstractmethod
     async def close(self) -> None:
         """Release resources (HTTP sessions, loaded models, etc.)."""
+
+    # ------------------------------------------------------------------
+    # Optional: provider-specific pricing
+    # ------------------------------------------------------------------
+
+    async def refresh_pricing(self) -> None:
+        """Load whatever :meth:`price_for_model` reads, if it is not loaded.
+
+        A provider whose prices live in the add-on's static tables
+        (``model_catalog``) has nothing to do; one that learns them from its
+        own API (Hugging Face's router publishes each backend's rate) loads
+        them here, because the usage page prices rows synchronously.
+        """
+
+    def price_for_model(self, model: str) -> tuple[float, float] | None:
+        """(input, output) $/1M tokens this provider charges for *model*, or
+        ``None`` when nobody here can price it.
+
+        By default that is the static OpenAI/Anthropic tables
+        (``model_catalog.lookup_model_pricing``); a provider that learns its
+        rates from its own API overrides it. The usage page asks this for
+        every model name in the stored usage rows — which is why it takes the
+        name rather than reading ``self``: rows from an earlier model, or
+        from a tier-2 analyzer, are priced at their own rate.
+        """
+        return lookup_model_pricing(model)
 
     # ------------------------------------------------------------------
     # Shared analysis pipeline

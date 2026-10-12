@@ -15,6 +15,10 @@ One module per stage, in the order a clip passes through them:
 - :mod:`.detection` — YOLO object detection + ByteTrack tracking
   (Ultralytics), for precise person/vehicle/animal boxes instead of raw
   pixel-diff motion.
+- :mod:`.remote_detection` — the same detection stage run on Hugging Face's
+  servers instead (``ai_vision_backend``), for hardware that cannot run the
+  local model. Boxes only: no tracking, and no depth or segmentation, which
+  Hugging Face's serverless tier does not offer.
 - :mod:`.depth` — monocular depth estimation (Depth Anything V2 via
   transformers), to tell "overlapping in the 2D frame" apart from
   "actually at the same distance from the camera".
@@ -76,6 +80,7 @@ from .pipeline import (
     VisionPipeline,
 )
 from .pose import PoseEstimator, PostureResult
+from .remote_detection import RemoteObjectDetector
 from .runtime import (
     CPUIncompatibleError,
     configure_cv_concurrency,
@@ -106,6 +111,7 @@ __all__ = [
     "ObjectDetector",
     "PoseEstimator",
     "PostureResult",
+    "RemoteObjectDetector",
     "VisionConfig",
     "VisionHints",
     "VisionPipeline",

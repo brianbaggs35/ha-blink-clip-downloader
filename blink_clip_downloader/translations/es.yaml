@@ -230,12 +230,16 @@ configuration:
     name: Proveedor de IA
     description: >-
       Qué motor de IA usar. «ollama» = servidor Ollama local en tu red
-      (gratis, privado). «ollama_cloud» = API de Ollama Cloud (de
-      pago). «moondream_cloud» = API de Moondream Cloud (de pago, usa
-      detección de objetos + razonamiento para mayor precisión).
-      «moondream_local» = Moondream 0.5B en el propio dispositivo
-      (gratis, solo x86_64). «anthropic» = API de Claude (de pago).
-      «openai» = API de OpenAI GPT (de pago).
+      (gratis, privado). «ollama_cloud» = API de Ollama Cloud (de pago).
+      «moondream_cloud» = API de Moondream Cloud (de pago, usa detección de
+      objetos + razonamiento para mayor precisión). «moondream_local» =
+      Moondream 0.5B en el propio dispositivo (gratis, solo x86_64).
+      «anthropic» = API de Claude (de pago). «openai» = API de OpenAI GPT (de
+      pago). «huggingface» = Hugging Face Inference Providers, cualquier
+      modelo de visión que ofrezca (de pago por token; usa el Token de API de
+      Hugging Face o, si está vacío, el Token de Hugging Face). «replicate» =
+      modelos oficiales de visión de Replicate (de pago; usa el token de API
+      de Replicate).
   ollama_url:
     name: URL del servidor Ollama
     description: >-
@@ -290,6 +294,42 @@ configuration:
       Modelo GPT a usar. gpt-4o-mini es la opción de visión más
       económica. Usa «Fetch Models» en la pestaña de IA de la interfaz
       web.
+  huggingface_api_key:
+    name: Token de API de Hugging Face
+    description: >-
+      Token de Hugging Face usado por el Proveedor de IA «huggingface» y el
+      backend de detección de objetos «huggingface». Crea en
+      https://huggingface.co/settings/tokens un token de permisos específicos
+      con «Make calls to Inference Providers». Las solicitudes se facturan a
+      la cuenta a la que pertenece (las cuentas gratuitas no tienen crédito
+      mensual: consulta la documentación). Déjalo vacío para usar en su lugar
+      el Token de Hugging Face de abajo. Mantenlo en secreto.
+  huggingface_model:
+    name: Modelo de Hugging Face
+    description: >-
+      Modelo de visión a usar cuando el Proveedor de IA es «huggingface», como
+      org/nombre, opcionalmente con un sufijo de enrutamiento: «:cheapest»,
+      «:fastest» (predeterminado) o un backend como «:novita». Usa «Fetch
+      Models» en la pestaña de IA de la interfaz web para ver lo que hay
+      disponible ahora, del más barato al más caro, con precios. Se autentica
+      con el Token de API de Hugging Face de arriba (o, si está vacío, con el
+      Token de Hugging Face de abajo).
+  replicate_api_key:
+    name: Token de API de Replicate
+    description: >-
+      Token de API de replicate.com/account/api-tokens. Obligatorio cuando el
+      Proveedor de IA es «replicate». Las solicitudes se facturan a la cuenta
+      a la que pertenece. Mantenlo en secreto.
+  replicate_model:
+    name: Modelo de Replicate
+    description: >-
+      Modelo oficial de Replicate a usar cuando el Proveedor de IA es
+      «replicate», escrito como owner/name — por ejemplo openai/gpt-4o-mini
+      (predeterminado) o google/gemini-2.5-flash. Debe aceptar una imagen y un
+      prompt; los modelos de la comunidad no son compatibles. Usa «Fetch
+      Models» en la pestaña de IA de la interfaz web para ver los modelos
+      oficiales de visión. A los modelos que aceptan una sola imagen por
+      solicitud se les consulta una vez por fotograma.
   openai_escalation_model:
     name: Modelo de escalado de OpenAI (obsoleto)
     description: >-
@@ -481,6 +521,28 @@ configuration:
       resto de este add-on. Va cómodo en una Raspberry Pi 5 (8 GB) o
       superior. Desactivado por defecto; el análisis funciona
       exactamente igual sin esta opción.
+  ai_vision_backend:
+    name: Backend de detección de objetos
+    description: >-
+      Dónde se ejecuta la etapa de detección de objetos de la detección
+      mejorada. «local» = en este dispositivo (predeterminado). «huggingface»
+      = en los servidores de Hugging Face, para hardware que no puede ejecutar
+      el modelo: los fotogramas muestreados del clip se SUBEN a Hugging Face y
+      se factura a la cuenta del Token de API de Hugging Face (o del Token de
+      Hugging Face). Solo la detección puede trasladarse: Hugging Face no
+      tiene modelos de estimación de profundidad ni de segmentación, así que
+      en ese modo no se ejecutan el análisis de profundidad ni el de contacto;
+      la estimación de postura, el reconocimiento facial y el análisis de
+      audio permanecen en este dispositivo, y los datos de reconocimiento
+      facial nunca salen de él en ninguno de los dos modos. Lee la
+      documentación antes de activarlo.
+  ai_remote_detection_model:
+    name: Modelo de detección de Hugging Face
+    description: >-
+      Modelo de detección de objetos de Hugging Face usado cuando el backend
+      de detección de objetos es «huggingface». Su inferencia sin servidor
+      ofrece actualmente facebook/detr-resnet-50 (predeterminado) y
+      facebook/detr-resnet-101. Déjalo vacío para usar el predeterminado.
   ai_object_detection_model:
     name: Modelo de detección de objetos
     description: >-
@@ -544,12 +606,15 @@ configuration:
       en la pestaña Biometría: los rostros coinciden mejor con fotos
       registradas a la misma resolución.
   hf_token:
-    name: Token de Hugging Face (opcional)
+    name: Token de Hugging Face
     description: >-
-      Token de acceso opcional de Hugging Face usado para autenticar las
-      descargas de modelos de visión por computador y aumentar los
-      límites de tasa del Hugging Face Hub. Crea uno en
-      https://huggingface.co/settings/tokens. Mantenlo en secreto.
+      Token de acceso de Hugging Face. Opcional mientras todo se ejecute en
+      este dispositivo, donde autentica las descargas de modelos de visión por
+      computador y aumenta los límites de tasa de Hugging Face Hub. Si el
+      Token de API de Hugging Face de arriba está vacío, también sirve como
+      credencial del Proveedor de IA «huggingface» y del backend de detección
+      de objetos «huggingface», y entonces debe permitir «Make calls to
+      Inference Providers». Mantenlo en secreto.
   ai_pose_estimation_enabled:
     name: Activar estimación de pose
     description: >-

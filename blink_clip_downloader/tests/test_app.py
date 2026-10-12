@@ -3387,3 +3387,180 @@ def test_a_bad_certificate_is_an_error_not_a_crash(app, caplog):
         assert app._load_ssl_context(config) is None
     assert "/ssl/fullchain.pem does not exist" in caplog.text
     assert "stays on plain HTTP" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Hugging Face and Replicate (6.1.2): credentials, and where detection runs
+# ---------------------------------------------------------------------------
+
+
+def test_new_provider_credentials_and_models_reach_create_analyzer(
+    base_config, tmp_path
+) -> None:
+    _app, mock_create_analyzer = _build_app_with_camera_configs(
+        base_config,
+        tmp_path,
+        None,
+        ai_provider="huggingface",
+        huggingface_api_key="hf_dedicated",
+        huggingface_model="Qwen/Qwen3.5-9B:cheapest",
+        replicate_api_key="r8_token",
+        replicate_model="google/gemini-2.5-flash",
+    )
+    credentials = mock_create_analyzer.call_args.kwargs["credentials"]
+    assert credentials.huggingface_api_key == "hf_dedicated"
+    assert credentials.huggingface_model == "Qwen/Qwen3.5-9B:cheapest"
+    assert credentials.replicate_api_key == "r8_token"
+    assert credentials.replicate_model == "google/gemini-2.5-flash"
+
+
+def test_hf_token_stands_in_for_a_blank_huggingface_api_key(
+    base_config, tmp_path
+) -> None:
+    """One token with the inference permission should not have to be typed
+    twice: the download token is the fallback."""
+    _app, mock_create_analyzer = _build_app_with_camera_configs(
+        base_config,
+        tmp_path,
+        None,
+        ai_provider="huggingface",
+        hf_token="hf_download",
+    )
+    credentials = mock_create_analyzer.call_args.kwargs["credentials"]
+    assert credentials.huggingface_api_key == "hf_download"
+
+
+def test_remote_detection_settings_reach_the_vision_pipeline(
+    base_config, tmp_path
+) -> None:
+    from blink_downloader.vision import RemoteObjectDetector
+
+    _app, mock_create_analyzer = _build_app_with_camera_configs(
+        base_config,
+        tmp_path,
+        None,
+        ai_enhanced_detection_enabled=True,
+        ai_vision_backend="huggingface",
+        ai_remote_detection_model="facebook/detr-resnet-101",
+        huggingface_api_key="hf_dedicated",
+        hf_token="hf_download",
+    )
+    pipeline = mock_create_analyzer.return_value.attach_vision_pipeline.call_args.args[
+        0
+    ]
+    assert pipeline._config.vision_backend == "huggingface"
+    assert pipeline._config.remote_detection_model == "facebook/detr-resnet-101"
+    # Model downloads keep using hf_token; the remote detector gets the key
+    # made for calling Hugging Face's servers.
+    assert pipeline._config.hf_token == "hf_download"
+    assert pipeline._config.remote_detection_token == "hf_dedicated"
+    assert isinstance(pipeline._detector, RemoteObjectDetector)
+
+
+def test_detection_stays_local_by_default(base_config, tmp_path) -> None:
+    from blink_downloader.vision import ObjectDetector
+
+    app, mock_create_analyzer = _build_app_with_camera_configs(
+        base_config, tmp_path, None, ai_enhanced_detection_enabled=True
+    )
+    pipeline = mock_create_analyzer.return_value.attach_vision_pipeline.call_args.args[
+        0
+    ]
+    assert isinstance(pipeline._detector, ObjectDetector)
+    assert app._remote_vision is False
+    assert app._media_server._remote_vision is False
+
+
+def test_remote_detection_is_announced_and_told_to_the_media_server(
+    base_config, tmp_path, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.INFO, logger="blink_downloader.app"):
+        app, _ = _build_app_with_camera_configs(
+            base_config,
+            tmp_path,
+            None,
+            ai_enhanced_detection_enabled=True,
+            ai_vision_backend="huggingface",
+            huggingface_api_key="hf_dedicated",
+        )
+    assert app._remote_vision is True
+    assert app._media_server._remote_vision is True
+    assert "object detection runs on Hugging Face" in caplog.text
+    assert "never leave this device" in caplog.text
+    assert "cannot run" not in caplog.text
+
+
+def test_remote_detection_without_a_token_warns_that_it_cannot_run(
+    base_config, tmp_path, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.INFO, logger="blink_downloader.app"):
+        app, _ = _build_app_with_camera_configs(
+            base_config,
+            tmp_path,
+            None,
+            ai_enhanced_detection_enabled=True,
+            ai_vision_backend="huggingface",
+        )
+    assert app._remote_vision is True
+    assert "neither huggingface_api_key nor hf_token is set" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"ai_vision_backend": "huggingface"},  # detection itself is off
+        {"ai_enhanced_detection_enabled": True},  # backend is local
+    ],
+    ids=["detection-off", "backend-local"],
+)
+def test_nothing_is_uploaded_unless_detection_is_on_and_set_to_huggingface(
+    base_config, tmp_path, caplog: pytest.LogCaptureFixture, overrides: dict
+) -> None:
+    with caplog.at_level(logging.INFO, logger="blink_downloader.app"):
+        app, _ = _build_app_with_camera_configs(
+            base_config, tmp_path, None, **overrides
+        )
+    assert app._remote_vision is False
+    assert "Hugging Face" not in caplog.text
+
+
+def test_routine_door_use_says_it_needs_local_detection(
+    base_config, tmp_path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Remote detection returns boxes without tracks, and a door visit is one
+    person's continuous track -- so the switch would do nothing, silently."""
+    with caplog.at_level(logging.WARNING, logger="blink_downloader.app"):
+        _app, mock_create_analyzer = _build_app_with_camera_configs(
+            base_config,
+            tmp_path,
+            None,
+            ai_routine_door_use_enabled=True,
+            ai_enhanced_detection_enabled=True,
+            ai_vision_backend="huggingface",
+        )
+    settings = mock_create_analyzer.call_args.kwargs["settings"].security_settings
+    assert settings.routine_door_use is False
+    assert "ai_vision_backend set to local" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("provider", "overrides", "expected"),
+    [
+        ("huggingface", {"huggingface_model": "Qwen/Qwen3.5-9B"}, "Qwen/Qwen3.5-9B"),
+        ("replicate", {"replicate_model": "openai/gpt-4o"}, "openai/gpt-4o"),
+    ],
+)
+async def test_finish_startup_logs_the_model_of_the_new_providers(
+    app, caplog, provider: str, overrides: dict, expected: str
+):
+    import dataclasses
+
+    app._config = dataclasses.replace(app._config, ai_provider=provider, **overrides)
+    app._analysis_queue = MagicMock()
+    app._analysis_queue.start = AsyncMock()
+
+    with caplog.at_level("INFO", logger="blink_downloader.app"):
+        await app._finish_startup()
+
+    assert f"provider={provider}, model={expected}" in caplog.text
+    assert "(auto)" not in caplog.text

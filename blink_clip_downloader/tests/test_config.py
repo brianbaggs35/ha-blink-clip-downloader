@@ -1034,3 +1034,159 @@ def test_a_blank_certificate_name_falls_back_to_the_default():
         {"username": "u", "password": "p", "certfile": "", "keyfile": None}
     )
     assert (config.certfile, config.keyfile) == ("fullchain.pem", "privkey.pem")
+
+
+# ---------------------------------------------------------------------------
+# Hugging Face and Replicate (6.1.2)
+# ---------------------------------------------------------------------------
+
+_MANIFEST = yaml.safe_load(
+    (Path(__file__).resolve().parent.parent / "config.yaml").read_text()
+)
+
+
+def _provider_choices(schema_entry: str) -> set[str]:
+    assert schema_entry.startswith("list(") and schema_entry.endswith(")")
+    return set(schema_entry[len("list(") : -1].split("|"))
+
+
+def test_the_provider_dropdowns_offer_exactly_the_providers_the_parser_accepts():
+    """The Configuration tab's dropdowns come from config.yaml and the
+    escalation check from _VALID_AI_PROVIDERS; a provider in one and not the
+    other is either unselectable or silently dropped."""
+    from blink_downloader.config import _VALID_AI_PROVIDERS
+
+    assert _provider_choices(_MANIFEST["schema"]["ai_provider"]) == _VALID_AI_PROVIDERS
+    assert (
+        _provider_choices(_MANIFEST["schema"]["ai_escalation_provider"])
+        == _VALID_AI_PROVIDERS
+    )
+    assert {"huggingface", "replicate"} <= _VALID_AI_PROVIDERS
+
+
+def test_the_new_options_are_declared_with_safe_defaults():
+    options, schema = _MANIFEST["options"], _MANIFEST["schema"]
+    # Secrets are masked in the Configuration tab and empty by default.
+    for key in ("huggingface_api_key", "replicate_api_key"):
+        assert options[key] == ""
+        assert schema[key] == "password?"
+    assert schema["huggingface_model"] == schema["replicate_model"] == "str?"
+    # Nothing is uploaded unless the user opts in.
+    assert options["ai_vision_backend"] == "local"
+    assert _provider_choices(schema["ai_vision_backend"]) == {"local", "huggingface"}
+    assert schema["ai_remote_detection_model"] == "str?"
+
+
+def test_huggingface_and_replicate_credentials_are_trimmed_and_models_defaulted():
+    cfg = _parse_config(
+        {
+            "username": "u",
+            "password": "p",
+            "huggingface_api_key": "  hf_abc  ",
+            "huggingface_model": "  Qwen/Qwen3.5-9B:cheapest ",
+            "replicate_api_key": " r8_abc ",
+            "replicate_model": " google/gemini-2.5-flash ",
+        }
+    )
+    assert cfg.huggingface_api_key == "hf_abc"
+    assert cfg.huggingface_model == "Qwen/Qwen3.5-9B:cheapest"
+    assert cfg.replicate_api_key == "r8_abc"
+    assert cfg.replicate_model == "google/gemini-2.5-flash"
+
+    blank = _parse_config({"username": "u", "password": "p"})
+    assert blank.huggingface_api_key == ""
+    assert blank.replicate_api_key == ""
+    assert blank.huggingface_model == "google/gemma-4-26B-A4B-it"
+    assert blank.replicate_model == "openai/gpt-4o-mini"
+
+
+@pytest.mark.parametrize("provider", ["huggingface", "replicate"])
+def test_the_new_providers_can_be_the_escalation_tier(provider: str):
+    cfg = _parse_config(
+        {
+            "username": "u",
+            "password": "p",
+            "ai_escalation_enabled": True,
+            "ai_escalation_provider": provider,
+            "ai_escalation_model": "org/model",
+        }
+    )
+    assert (cfg.ai_escalation_provider, cfg.ai_escalation_model) == (
+        provider,
+        "org/model",
+    )
+
+
+@pytest.mark.parametrize(
+    ("api_key", "hf_token", "expected"),
+    [
+        ("", "", ""),
+        ("", "hf_download", "hf_download"),
+        ("hf_dedicated", "", "hf_dedicated"),
+        ("hf_dedicated", "hf_download", "hf_dedicated"),
+    ],
+)
+def test_the_dedicated_huggingface_key_wins_and_hf_token_is_the_fallback(
+    api_key: str, hf_token: str, expected: str
+):
+    cfg = _parse_config(
+        {
+            "username": "u",
+            "password": "p",
+            "huggingface_api_key": api_key,
+            "hf_token": hf_token,
+        }
+    )
+    assert cfg.huggingface_inference_key() == expected
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("huggingface", "huggingface"),
+        (" HuggingFace ", "huggingface"),
+        ("local", "local"),
+        ("", "local"),
+        (None, "local"),
+    ],
+)
+def test_ai_vision_backend_is_read_case_insensitively(raw: object, expected: str):
+    cfg = _parse_config({"username": "u", "password": "p", "ai_vision_backend": raw})
+    assert cfg.ai_vision_backend == expected
+
+
+def test_an_unknown_ai_vision_backend_falls_back_to_local_and_says_so(
+    caplog: pytest.LogCaptureFixture,
+):
+    """A typo must never start uploading clips."""
+    with caplog.at_level(logging.WARNING, logger="blink_downloader.config"):
+        cfg = _parse_config(
+            {"username": "u", "password": "p", "ai_vision_backend": "hugginface"}
+        )
+    assert cfg.ai_vision_backend == "local"
+    assert "hugginface" in caplog.text
+    assert "Using 'local'" in caplog.text
+
+
+def test_an_empty_ai_vision_backend_is_local_without_a_warning(
+    caplog: pytest.LogCaptureFixture,
+):
+    with caplog.at_level(logging.WARNING, logger="blink_downloader.config"):
+        cfg = _parse_config({"username": "u", "password": "p"})
+    assert cfg.ai_vision_backend == "local"
+    assert "ai_vision_backend" not in caplog.text
+
+
+def test_ai_remote_detection_model_is_trimmed_and_defaulted():
+    cfg = _parse_config(
+        {
+            "username": "u",
+            "password": "p",
+            "ai_remote_detection_model": " facebook/detr-resnet-101 ",
+        }
+    )
+    assert cfg.ai_remote_detection_model == "facebook/detr-resnet-101"
+    blank = _parse_config(
+        {"username": "u", "password": "p", "ai_remote_detection_model": ""}
+    )
+    assert blank.ai_remote_detection_model == "facebook/detr-resnet-50"

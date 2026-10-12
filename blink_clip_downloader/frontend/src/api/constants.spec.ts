@@ -5,6 +5,8 @@ describe('providerLabel', () => {
   it('maps known providers to their display label', () => {
     expect(providerLabel('anthropic')).toBe('Anthropic (Claude)')
     expect(providerLabel('moondream_local')).toBe('Moondream Local (0.5B)')
+    expect(providerLabel('huggingface')).toBe('Hugging Face')
+    expect(providerLabel('replicate')).toBe('Replicate')
   })
 
   it('falls back to the raw provider string when unknown', () => {

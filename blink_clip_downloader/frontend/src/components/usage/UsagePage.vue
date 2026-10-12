@@ -18,7 +18,15 @@ const confirm = useConfirm()
 const usage = ref<AiUsage | null>(null)
 const loading = ref(true)
 
-const TOKEN_PROVIDERS = new Set(['ollama', 'ollama_cloud', 'anthropic', 'openai', 'moondream_cloud'])
+const TOKEN_PROVIDERS = new Set([
+  'ollama',
+  'ollama_cloud',
+  'anthropic',
+  'openai',
+  'moondream_cloud',
+  'huggingface',
+  'replicate',
+])
 const showTokens = computed(() => TOKEN_PROVIDERS.has(usage.value?.provider || ''))
 
 const showEscalationNote = computed(() => (usage.value?.total_escalations || 0) > 0)

@@ -307,14 +307,16 @@ test('Fetch Models shows recommended Ollama Cloud vision models', async ({ page 
 test('AI Usage tab shows the right explanatory note for each remaining provider', async ({ page }) => {
   // Every other provider's own AI Usage test (above, and in
   // mocked-integrations.spec.ts) mounts with provider 'ollama' or
-  // 'moondream_cloud' — this is the only place the other four providers'
+  // 'moondream_cloud' — this is the only place the other providers'
   // ProviderNote.vue text blocks get exercised at all.
-  const providers = ['ollama_cloud', 'anthropic', 'openai', 'moondream_local']
+  const providers = ['ollama_cloud', 'anthropic', 'openai', 'moondream_local', 'huggingface', 'replicate']
   const expectedText: Record<string, string> = {
     ollama_cloud: 'hosted Ollama service',
     anthropic: 'Anthropic (Claude) charges per token',
     openai: 'OpenAI charges per token',
     moondream_local: 'Moondream Local runs entirely on-device',
+    huggingface: 'Hugging Face Inference Providers charges per token',
+    replicate: 'publishes no rate this add-on can read',
   }
 
   for (const provider of providers) {

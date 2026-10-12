@@ -133,6 +133,7 @@ class AiRoutesMixin(_MediaServerBase):
             # enhanced-detection/face-recognition pipeline (the vision package), which
             # any provider can have layered on top. See torch_cpu_compatible().
             data["torch_cpu_compatible"] = torch_cpu_compatible()
+            data["remote_vision"] = self._remote_vision
             if self._analyzer.provider_name == "moondream_local":
                 data["moondream_installed"] = _is_moondream_installed()
                 data["moondream_arch_supported"] = _moondream_arch_supported()

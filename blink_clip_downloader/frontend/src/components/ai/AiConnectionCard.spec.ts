@@ -329,6 +329,71 @@ describe('AiConnectionCard', () => {
     wrapper.unmount()
   })
 
+  it('shows a Hugging Face model with its price and no Best star, even first in the list', async () => {
+    // The list is sorted cheapest-first, so index 0 is the cheapest rather
+    // than a recommendation -- and the add-on has no measurement to name one.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          jsonResponse({
+            enabled: true,
+            models: [
+              { name: 'org/cheap', pricing: { input: 0.07, output: 0.34 } },
+              { name: 'org/dear', pricing: { input: 15, output: 60 } },
+              { name: 'org/unpriced', pricing: null },
+            ],
+          }),
+        ),
+      ),
+    )
+    const wrapper = mount(AiConnectionCard, {
+      props: { status: baseStatus({ provider: 'huggingface', model: 'org/cheap' }) },
+    })
+    expect(wrapper.text()).toContain('Hugging Face')
+    await wrapper.find('button').trigger('click')
+    await flushPromises()
+    await wrapper.find('#ai-model-picker .p-select-label').trigger('click')
+    await flushPromises()
+    const options = [...document.body.querySelectorAll('[role="option"]')].map((o) => o.textContent ?? '')
+    expect(options.find((o) => o.includes('org/cheap'))).toContain('$0.07/$0.34 per 1M')
+    expect(options.find((o) => o.includes('org/dear'))).toContain('$15/$60 per 1M')
+    expect(options.find((o) => o.includes('org/unpriced'))).not.toContain('per 1M')
+    expect(options.join(' ')).not.toContain('Best')
+    wrapper.unmount()
+  })
+
+  it('offers the Replicate roster in the model picker without a Best star', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(jsonResponse({ enabled: true, models: [{ name: 'openai/gpt-4o-mini' }, { name: 'x/y' }] })),
+      ),
+    )
+    const wrapper = mount(AiConnectionCard, {
+      props: { status: baseStatus({ provider: 'replicate', model: 'openai/gpt-4o-mini' }) },
+    })
+    expect(wrapper.find('#ai-model-picker').exists()).toBe(true)
+    await wrapper.find('button').trigger('click')
+    await flushPromises()
+    await wrapper.find('#ai-model-picker .p-select-label').trigger('click')
+    await flushPromises()
+    const options = [...document.body.querySelectorAll('[role="option"]')].map((o) => o.textContent ?? '')
+    expect(options.some((o) => o.includes('openai/gpt-4o-mini'))).toBe(true)
+    expect(options.join(' ')).not.toContain('Best')
+    wrapper.unmount()
+  })
+
+  it('says when object detection runs on Hugging Face, and only then', () => {
+    const remote = mount(AiConnectionCard, { props: { status: baseStatus({ remote_vision: true }) } })
+    expect(remote.find('.remote-vision').text()).toContain('Hugging Face')
+    expect(remote.find('.remote-vision').text()).toContain('uploaded')
+    const local = mount(AiConnectionCard, { props: { status: baseStatus({ remote_vision: false }) } })
+    expect(local.find('.remote-vision').exists()).toBe(false)
+    const unset = mount(AiConnectionCard, { props: { status: baseStatus() } })
+    expect(unset.find('.remote-vision').exists()).toBe(false)
+  })
+
   it('marks the top two Ollama Cloud models as recommended', async () => {
     vi.stubGlobal(
       'fetch',
