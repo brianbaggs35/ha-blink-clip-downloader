@@ -316,7 +316,7 @@ test('AI Usage tab shows the right explanatory note for each remaining provider'
     openai: 'OpenAI charges per token',
     moondream_local: 'Moondream Local runs entirely on-device',
     huggingface: 'Hugging Face Inference Providers charges per token',
-    replicate: 'publishes no rate this add-on can read',
+    replicate: 'Its API carries no prices',
   }
 
   for (const provider of providers) {

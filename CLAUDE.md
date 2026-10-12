@@ -123,8 +123,17 @@ architecture.
     and the clip arranged to fit it; a one-image model gets one request per
     frame. The poll URL is built from the prediction *id* and the configured
     base URL, never taken from the response — the request carries the token.
-    Replicate publishes no readable rate, so its usage rows have tokens (when
-    `metrics` reports them) and no cost; that is deliberate N/A, not a gap.
+    Replicate's API carries no prices (checked against its OpenAPI spec), so
+    `model_catalog._REPLICATE_MODEL_PRICING` holds the per-1M-token rates read
+    off each official model's page billing data (`token_input_count` /
+    `token_output_count`) on 2026-10-12, matched by exact id ahead of the slash
+    rule; `gpt-5.6-sol` is deliberately absent (its page's promo text and billing
+    data disagree). Token counts come from the prediction's `metrics`, which
+    Replicate's own Go client lists as optional (`input_token_count`,
+    `output_token_count`) and its OpenAPI spec does not document — so they are
+    read defensively and never estimated; the first prediction that reports none
+    is logged once. Re-read those pages before trusting the table after a long
+    gap: Replicate does not promise prices are fixed.
   - `model_catalog.py` — per-provider model reference data: which ids can
     see images, which accept a structured-output schema, and per-token
     pricing, plus the small pure functions that read it. Split out of
@@ -134,6 +143,8 @@ architecture.
     Anthropic tables, so it returns `None` for any id containing `/`
     (Hugging Face `org/name`, an Ollama registry path): `Sao10K/L3-8B-Stheno-v3.2`
     contains `o1` and was priced as OpenAI o1 ($15/$60 per 1M) until 6.1.2.
+    Replicate's official model ids are the one exception, matched exactly
+    (case-insensitively) in `_REPLICATE_MODEL_PRICING` before that rule.
   - `prompt_segments.py` — the individual blocks a clip-analysis prompt is
     assembled from (time of day, anomaly alert, scene baseline, motion
     trajectory, recent corrections, zone motion, vision hints, output
@@ -181,9 +192,10 @@ architecture.
     uploaded, so `app._remote_vision_active` announces it at start-up, the AI
     tab shows it, and the Biometrics tab's privacy banner says so while it is
     on (`remote_vision` on `/api/ai/status` and `/api/ai/faces`) — keep that
-    promise and implementation in step. Its 0.5 confidence floor is Hugging
-    Face's own default for the task, not a measurement; say so rather than
-    presenting it as one.
+    promise and implementation in step. Its 0.5 confidence floor is this
+    add-on's own choice (sent as the task's documented `threshold` parameter in
+    the JSON request form, and applied again to the response), not a
+    measurement; say so rather than presenting it as one.
   - `moondream_finetune.py` — `MoondreamFineTuneManager`, an async wrapper
     over Moondream Cloud's fine-tuning REST API. **Not an analyzer** — no
     clip, prompt or verdict is involved; it backs the AI tab's Fine-Tuning

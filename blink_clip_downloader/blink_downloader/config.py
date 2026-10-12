@@ -384,8 +384,8 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     # this device, the only behaviour before 6.1.2) or "huggingface" (the
     # sampled frames are sent to Hugging Face's serverless inference, for
     # hardware that cannot run the model). Only detection can move: Hugging
-    # Face serves no depth-estimation, segmentation or pose model, so in
-    # "huggingface" mode depth and contact segmentation are not run (reported
+    # Face serves no depth-estimation, box-prompted segmentation or pose model,
+    # so in "huggingface" mode depth and contact segmentation are not run (reported
     # as unavailable evidence), and pose, face recognition and audio keep
     # running here under their own switches. Needs hf_token.
     ai_vision_backend: str = DEFAULT_VISION_BACKEND
@@ -791,6 +791,11 @@ def _parse_face_recognition_resolution(data: dict) -> str:
     return value if value in FACE_RECOGNITION_RESOLUTIONS else "standard"
 
 
+def _text_option(data: dict, key: str, default: str = "") -> str:
+    """A string option, trimmed; *default* when it is missing, null or blank."""
+    return str(data.get(key, "") or "").strip() or default
+
+
 def _parse_ai_provider_kwargs(
     data: dict,
     ai_provider: str,
@@ -815,12 +820,14 @@ def _parse_ai_provider_kwargs(
         "openai_api_key": str(data.get("openai_api_key", "") or "").strip(),
         "openai_model": str(data.get("openai_model", "") or "").strip()
         or "gpt-4o-mini",
-        "huggingface_api_key": str(data.get("huggingface_api_key", "") or "").strip(),
-        "huggingface_model": str(data.get("huggingface_model", "") or "").strip()
-        or DEFAULT_HUGGINGFACE_MODEL,
-        "replicate_api_key": str(data.get("replicate_api_key", "") or "").strip(),
-        "replicate_model": str(data.get("replicate_model", "") or "").strip()
-        or DEFAULT_REPLICATE_MODEL,
+        "huggingface_api_key": _text_option(data, "huggingface_api_key"),
+        "huggingface_model": _text_option(
+            data, "huggingface_model", DEFAULT_HUGGINGFACE_MODEL
+        ),
+        "replicate_api_key": _text_option(data, "replicate_api_key"),
+        "replicate_model": _text_option(
+            data, "replicate_model", DEFAULT_REPLICATE_MODEL
+        ),
         "openai_escalation_model": legacy_openai_escalation_model,
         "ai_escalation_enabled": ai_escalation_enabled,
         "ai_escalation_provider": ai_escalation_provider,
@@ -914,10 +921,9 @@ def _parse_ai_detection_kwargs(data: dict) -> dict[str, Any]:
         ).strip()
         or "depth-anything/Depth-Anything-V2-Small-hf",
         "ai_vision_backend": _parse_vision_backend(data),
-        "ai_remote_detection_model": str(
-            data.get("ai_remote_detection_model", "") or ""
-        ).strip()
-        or DEFAULT_REMOTE_DETECTION_MODEL,
+        "ai_remote_detection_model": _text_option(
+            data, "ai_remote_detection_model", DEFAULT_REMOTE_DETECTION_MODEL
+        ),
         "ai_face_recognition_enabled": bool(
             data.get("ai_face_recognition_enabled", False)
         ),

@@ -12,12 +12,16 @@ are neither run nor loaded.
 
 from __future__ import annotations
 
+import base64
 import io
 import logging
+import sys
 from collections.abc import AsyncGenerator, Callable
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
+import numpy as np
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer
@@ -62,13 +66,15 @@ class FakeInference:
         self.reply: Reply = lambda _frame: (200, [])
 
     async def detect(self, request: web.Request) -> web.Response:
-        frame = await request.read()
+        body = await request.json()
+        frame = base64.b64decode(body["inputs"])
         self.requests.append(
             {
                 "path": request.path,
                 "auth": request.headers.get("Authorization"),
                 "content_type": request.headers.get("Content-Type"),
                 "frame": frame,
+                "parameters": body.get("parameters"),
             }
         )
         status, body = self.reply(frame)
@@ -91,6 +97,25 @@ async def inference() -> AsyncGenerator[tuple[FakeInference, TestServer]]:
         yield fake, server
     finally:
         await server.close()
+
+
+@pytest.fixture(autouse=True)
+def _decodable_frames(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Let the pipeline read a frame's size without OpenCV installed.
+
+    ``imaging._frame_dimensions`` decodes with OpenCV, an optional
+    dependency that CI (and most dev machines) do not have. This stands in
+    for the one call it makes by actually decoding the JPEG, so the sizes the
+    security layer sees are real rather than invented.
+    """
+
+    def imdecode(buffer: Any, _flags: int) -> Any:
+        image = Image.open(io.BytesIO(buffer.tobytes())).convert("RGB")
+        return np.asarray(image)[:, :, ::-1]
+
+    monkeypatch.setitem(
+        sys.modules, "cv2", SimpleNamespace(IMREAD_COLOR=1, imdecode=imdecode)
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -152,17 +177,22 @@ async def test_each_detection_knows_which_frame_it_came_from_in_order(
     ]
 
 
-async def test_the_frame_goes_up_raw_with_the_token_to_the_models_url(
+async def test_the_frame_goes_up_in_the_documented_json_form_with_our_threshold(
     inference: tuple[FakeInference, TestServer],
 ) -> None:
+    """Raw image bytes are only accepted when no parameters are sent, so the
+    request is the task's JSON form -- base64 ``inputs`` plus a ``threshold``
+    -- which also makes the confidence floor ours rather than a server
+    default."""
     fake, server = inference
     frame = _jpeg()
     await _detector(server, model="facebook/detr-resnet-101").detect([frame])
     (sent,) = fake.requests
     assert sent["path"] == "/hf-inference/models/facebook/detr-resnet-101"
     assert sent["auth"] == "Bearer hf_good"
-    assert sent["content_type"] == "image/jpeg"
+    assert sent["content_type"].startswith("application/json")
     assert sent["frame"] == frame
+    assert sent["parameters"] == {"threshold": 0.5}
 
 
 async def test_only_what_the_security_layer_reads_is_kept(
@@ -321,15 +351,66 @@ async def test_a_rejected_request_is_not_retried(
     assert "HTTP 400" in caplog.text
 
 
-async def test_a_gateway_page_instead_of_json_is_a_transient_failure(
+async def test_a_gateway_page_where_the_answer_should_be_is_retried(
     inference: tuple[FakeInference, TestServer], caplog: pytest.LogCaptureFixture
 ) -> None:
     fake, server = inference
     fake.reply = lambda _f: (200, "<html>Bad gateway</html>")
     with caplog.at_level(logging.WARNING):
         assert await _detector(server).detect([_jpeg()]) is None
-    assert "could not reach Hugging Face" in caplog.text
+    assert "not JSON" in caplog.text
     assert len(fake.requests) == remote_detection._ATTEMPTS
+
+
+async def test_a_json_null_is_not_an_answer_either(
+    inference: tuple[FakeInference, TestServer],
+) -> None:
+    fake, server = inference
+    fake.reply = lambda _f: (200, None)
+    assert await _detector(server).detect([_jpeg()]) is None
+    assert len(fake.requests) == remote_detection._ATTEMPTS
+
+
+async def test_a_refused_token_is_recognised_even_when_the_body_is_a_web_page(
+    inference: tuple[FakeInference, TestServer], caplog: pytest.LogCaptureFixture
+) -> None:
+    """The router answers a *missing* token with a CDN's HTML page, and a
+    gateway can do the same to any error. Read as "could not reach Hugging
+    Face" it would be retried three times and blamed on the network; it is a
+    401, and the user needs to hear that."""
+    fake, server = inference
+    fake.reply = lambda _f: (401, "<html><body>Unauthorized</body></html>")
+    with caplog.at_level(logging.WARNING):
+        assert await _detector(server).detect([_jpeg()]) is None
+    assert "rejected the token" in caplog.text
+    assert len(fake.requests) == 1
+
+
+async def test_a_gateway_error_page_is_retried_as_a_server_failure(
+    inference: tuple[FakeInference, TestServer], caplog: pytest.LogCaptureFixture
+) -> None:
+    fake, server = inference
+    fake.reply = lambda _f: (502, "<html>Bad gateway</html>")
+    with caplog.at_level(logging.WARNING):
+        assert await _detector(server).detect([_jpeg()]) is None
+    assert "HTTP 502" in caplog.text
+    assert len(fake.requests) == remote_detection._ATTEMPTS
+
+
+async def test_anything_unexpected_fails_the_look_softly(
+    inference: tuple[FakeInference, TestServer], caplog: pytest.LogCaptureFixture
+) -> None:
+    """Like the local detector, a surprise is "could not look" -- the clip is
+    still analyzed -- and never an exception out of the pipeline."""
+    detector = _detector(inference[1])
+    with (
+        patch.object(
+            RemoteObjectDetector, "_post", AsyncMock(side_effect=RuntimeError("boom"))
+        ),
+        caplog.at_level(logging.WARNING),
+    ):
+        assert await detector.detect([_jpeg(), _jpeg(9)]) is None
+    assert "unexpected RuntimeError: boom" in caplog.text
 
 
 async def test_an_answer_that_is_not_a_list_of_boxes_is_not_an_answer(
@@ -431,6 +512,26 @@ async def test_remote_detection_runs_neither_depth_nor_contact_and_says_so() -> 
     assert SOURCE_DEPTH_ESTIMATION in hints.unavailable_sources
     assert SOURCE_CONTACT_SEGMENTATION in hints.unavailable_sources
     refuse.assert_not_called()
+
+
+async def test_pose_estimation_keeps_running_here_in_the_remote_mode() -> None:
+    """Only detection moves. Pose has its own switch and its own local model,
+    and the documentation says it stays on this device; a regression that
+    silently dropped it in the remote mode would take that evidence away."""
+    from blink_downloader.vision import PoseEstimator, PostureResult
+
+    pipeline = VisionPipeline(_remote_config(pose_estimation_enabled=True))
+    posture = PostureResult(reaching=True, confidence=0.9)
+    with (
+        patch.object(RemoteObjectDetector, "detect", AsyncMock(return_value=_PAIR)),
+        patch.object(PoseEstimator, "analyze", AsyncMock(return_value=posture)) as pose,
+    ):
+        hints = await pipeline.process_clip(
+            [_jpeg()], car_description="Silver Kia", car_protection_applies=True
+        )
+    pose.assert_awaited_once()
+    assert hints.posture is posture
+    assert hints.posture_hint is not None
 
 
 async def test_remote_tracks_are_inferred_not_measured() -> None:

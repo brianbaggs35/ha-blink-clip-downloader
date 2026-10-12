@@ -11,7 +11,7 @@ describe('ProviderNote', () => {
     ['anthropic', 'Claude Haiku 4.5'],
     ['openai', 'OpenAI charges per token'],
     ['huggingface', 'Hugging Face Inference Providers charges per token'],
-    ['replicate', 'publishes no rate this add-on can read'],
+    ['replicate', 'Its API carries no prices'],
   ])('renders the %s note', (provider, expected) => {
     const wrapper = mount(ProviderNote, { props: { provider, showEscalationNote: false } })
     expect(wrapper.text()).toContain(expected)

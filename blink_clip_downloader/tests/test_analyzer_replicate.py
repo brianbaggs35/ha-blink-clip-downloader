@@ -33,6 +33,7 @@ from blink_downloader.analyzer import (
 from blink_downloader.model_catalog import (
     DEFAULT_REPLICATE_MODEL,
     REPLICATE_VISION_MODELS,
+    lookup_model_pricing,
     replicate_input_plan,
 )
 
@@ -114,6 +115,8 @@ class FakeReplicate:
         self.create_replies: list[Callable[[dict[str, Any]], tuple[int, Any]]] = []
         self.poll_replies: list[Callable[[], tuple[int, Any]]] = []
         self.create_delay = 0.0
+        # Seconds to hold a request for, decided by what it carries.
+        self.delay_for: Callable[[dict[str, Any]], float] | None = None
 
     def authorized(self, request: web.Request) -> bool:
         return request.headers.get("Authorization") == f"Bearer {self.valid_token}"
@@ -142,6 +145,8 @@ class FakeReplicate:
         if self.create_delay:
             await asyncio.sleep(self.create_delay)
         body = await request.json()
+        if self.delay_for is not None:
+            await asyncio.sleep(self.delay_for(body["input"]))
         self.created.append(body["input"])
         self.create_headers.append(dict(request.headers))
         reply = self.create_replies.pop(0) if len(self.create_replies) > 1 else None
@@ -282,14 +287,6 @@ async def test_fetch_models_offers_the_official_vision_models() -> None:
     assert [m["name"] for m in models] == list(REPLICATE_VISION_MODELS)
     assert DEFAULT_REPLICATE_MODEL in [m["name"] for m in models]
     await a.close()
-
-
-async def test_replicate_has_no_pricing_to_offer() -> None:
-    """Replicate publishes no rate this add-on can read, so the usage page
-    says N/A rather than showing a cost nobody established."""
-    a = ReplicateAnalyzer(api_key="t", model="", prompt="p")
-    await a.refresh_pricing()
-    assert a.price_for_model(DEFAULT_REPLICATE_MODEL) is None
 
 
 async def test_no_frames_means_no_request(
@@ -556,13 +553,14 @@ async def test_a_rejected_token_is_permanent(
 @pytest.mark.parametrize(
     ("status", "body", "permanent", "rate_limited", "needle"),
     [
-        (402, {"detail": "Insufficient credit"}, False, True, "no credit left"),
+        (402, {"detail": "Insufficient credit"}, False, True, "payment required"),
         (404, {"detail": "Not found"}, True, False, "no such official model"),
         (422, {"detail": "image: not a uri"}, True, False, "image: not a uri"),
         (429, {"detail": "Request was throttled. ~30s"}, False, True, "throttled"),
         (500, {"title": "Internal"}, False, False, "HTTP 500"),
         (503, {"error": "overloaded"}, False, False, "overloaded"),
         (502, "<html>bad gateway</html>", False, False, "HTTP 502"),
+        (500, {}, False, False, "HTTP 500"),
     ],
 )
 async def test_each_failure_status_is_classified_by_what_to_do_about_it(
@@ -761,3 +759,193 @@ def test_replicate_can_be_the_escalation_tier_with_its_own_model() -> None:
     tier2 = tier1.escalation_analyzer
     assert isinstance(tier2, ReplicateAnalyzer)
     assert tier2.model_name() == "anthropic/claude-4.5-sonnet"
+
+
+# ---------------------------------------------------------------------------
+# Prices (Replicate's API has none; they come from the model pages)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("model", "expected"),
+    [
+        ("openai/gpt-4o-mini", (0.15, 0.60)),
+        ("openai/gpt-4.1-mini", (0.40, 1.60)),
+        ("google/gemini-2.5-flash", (0.30, 2.50)),
+        ("google/gemini-3-flash", (0.50, 3.00)),
+        ("openai/gpt-5.6-luna", (1.00, 6.00)),
+        # The page lists output per thousand tokens ($0.01 / $0.015); these
+        # are the same prices per million.
+        ("openai/gpt-4o", (2.50, 10.00)),
+        ("openai/gpt-5.6-terra", (2.50, 15.00)),
+        ("anthropic/claude-4.5-sonnet", (3.00, 15.00)),
+        ("openai/gpt-5", (1.25, 10.00)),
+        ("openai/gpt-5.4", (2.50, 15.00)),
+        ("OpenAI/GPT-4o-Mini", (0.15, 0.60)),
+    ],
+)
+def test_replicate_models_are_priced_from_their_pages(
+    model: str, expected: tuple[float, float]
+) -> None:
+    assert lookup_model_pricing(model) == expected
+
+
+def test_a_replicate_model_whose_price_cannot_be_established_is_not_priced() -> None:
+    """GPT-5.6 Sol's page describes a promotion that ended on Sept 18 and its
+    billing data disagrees with that text, so there is no figure to trust."""
+    assert "openai/gpt-5.6-sol" in REPLICATE_VISION_MODELS
+    assert lookup_model_pricing("openai/gpt-5.6-sol") is None
+
+
+def test_every_other_offered_replicate_model_has_a_price() -> None:
+    unpriced = [m for m in REPLICATE_VISION_MODELS if lookup_model_pricing(m) is None]
+    assert unpriced == ["openai/gpt-5.6-sol"]
+
+
+def test_replicate_prices_never_leak_onto_other_providers_models() -> None:
+    """A Replicate id is matched exactly; the slash rule that keeps Hugging
+    Face ids away from OpenAI's table still holds for everything else."""
+    assert lookup_model_pricing("openai/gpt-4o-mini-but-not-quite") is None
+    assert lookup_model_pricing("someone/gpt-4o-mini") is None
+    assert lookup_model_pricing("gpt-4o-mini") == (0.15, 0.60)
+
+
+async def test_the_analyzer_prices_its_own_model_through_the_base_hook() -> None:
+    a = ReplicateAnalyzer(api_key="t", model="google/gemini-2.5-flash", prompt="p")
+    assert a.price_for_model(a.model_name()) == (0.30, 2.50)
+    await a.refresh_pricing()  # nothing to load; must not need the network
+
+
+# ---------------------------------------------------------------------------
+# Token counts are optional metrics
+# ---------------------------------------------------------------------------
+
+
+async def test_a_model_that_reports_no_token_counts_is_said_so_once(
+    replicate: tuple[FakeReplicate, TestServer], caplog: pytest.LogCaptureFixture
+) -> None:
+    a = _analyzer(replicate[1])
+    with caplog.at_level(logging.INFO):
+        await a._call_model([_FRAME], "p")
+        await a._call_model([_FRAME], "p")
+    notices = [r for r in caplog.records if "reported no token counts" in r.message]
+    assert len(notices) == 1
+    assert "openai/gpt-4o-mini" in notices[0].message
+
+
+async def test_a_model_that_reports_token_counts_is_not_told_off(
+    replicate: tuple[FakeReplicate, TestServer], caplog: pytest.LogCaptureFixture
+) -> None:
+    fake, server = replicate
+    fake.create_replies = [
+        lambda _i: (
+            201,
+            _prediction(metrics={"input_token_count": 5, "output_token_count": 0}),
+        )
+    ]
+    with caplog.at_level(logging.INFO):
+        await _analyzer(server)._call_model([_FRAME], "p")
+    assert "reported no token counts" not in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Robustness
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "schema_holder",
+    [
+        {"latest_version": None},
+        {"latest_version": {"openapi_schema": None}},
+        {"latest_version": {"openapi_schema": {"components": None}}},
+        {
+            "latest_version": {
+                "openapi_schema": {"components": {"schemas": {"Input": None}}}
+            }
+        },
+        {"latest_version": ["not", "a", "dict"]},
+    ],
+)
+async def test_a_model_without_a_readable_schema_is_unusable_not_a_crash(
+    replicate: tuple[FakeReplicate, TestServer],
+    caplog: pytest.LogCaptureFixture,
+    schema_holder: dict[str, Any],
+) -> None:
+    """A model with no published version has ``latest_version: null`` and one
+    with no schema has ``openapi_schema: null``; either must read as "no
+    input to look at", never as an AttributeError out of the analyzer."""
+
+    async def model(_request: web.Request) -> web.Response:
+        return web.json_response(schema_holder)
+
+    app = web.Application()
+    app.router.add_get("/v1/models/{owner}/{name}", model)
+    server = TestServer(app)
+    await server.start_server()
+    try:
+        a = _analyzer(server)
+        with caplog.at_level(logging.ERROR):
+            assert await a._call_model([_FRAME], "p") == ""
+    finally:
+        await server.close()
+    assert "does not take both a prompt and an image" in caplog.text
+    assert a.transient_error is False
+
+
+def test_a_property_that_is_not_a_schema_object_is_not_an_image_input() -> None:
+    props = {"prompt": {"type": "string"}, "images": "garbage", "image": None}
+    assert replicate_input_plan(props) is None
+    # ...and an items entry that is not an object does not make a list of files.
+    props = {"prompt": {"type": "string"}, "images": {"type": "array", "items": 7}}
+    assert replicate_input_plan(props) is None
+
+
+async def test_when_one_frame_fails_the_others_are_cancelled_not_abandoned(
+    replicate: tuple[FakeReplicate, TestServer],
+) -> None:
+    """One frame failing fails the clip. The requests still in flight must
+    not be left running against a session that is about to close."""
+    fake, server = replicate
+
+    def failing_first(sent: dict[str, Any]) -> tuple[int, Any]:
+        return (
+            (500, {"detail": "boom"})
+            if sent["image"] == _uri(_FRAME)
+            else (201, _prediction())
+        )
+
+    fake.create_replies = [failing_first]
+    fake.delay_for = lambda sent: 0.0 if sent["image"] == _uri(_FRAME) else 30.0
+    a = _analyzer(server, model="anthropic/claude-4.5-sonnet")
+
+    assert (
+        await a._call_model([_FRAME, _OTHER_FRAME, b"\xff\xd8third\xff\xd9"], "p") == ""
+    )
+
+    leftovers = [
+        task
+        for task in asyncio.all_tasks()
+        if "_ask_each_frame" in repr(task.get_coro())
+    ]
+    assert leftovers == []
+    assert a.transient_error is True
+
+
+# ---------------------------------------------------------------------------
+# health_check keeps checking
+# ---------------------------------------------------------------------------
+
+
+async def test_health_check_notices_a_token_revoked_after_the_first_success(
+    replicate: tuple[FakeReplicate, TestServer],
+) -> None:
+    """A cached plan says the token *was* good; the check has to ask again
+    once its short result cache has run out."""
+    fake, server = replicate
+    a = _analyzer(server)
+    assert await a.health_check() is True
+    fake.valid_token = "r8_rotated"
+    a._last_health_check_time = 0.0  # the 30-second result cache has expired
+    assert await a.health_check() is False
+    assert fake.model_requests == ["openai/gpt-4o-mini", "openai/gpt-4o-mini"]

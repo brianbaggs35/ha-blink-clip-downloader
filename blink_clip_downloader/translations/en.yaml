@@ -467,11 +467,12 @@ configuration:
       on this device (default). "huggingface" = on Hugging Face's servers, for
       hardware that cannot run the model: the sampled clip frames are UPLOADED
       to Hugging Face, and the account behind the Hugging Face API Token (or
-      Hugging Face Token) is billed. Only detection can move: Hugging Face has
-      no depth-estimation or segmentation model, so depth and contact analysis
-      are not run in that mode; pose estimation, face recognition and audio
-      analysis stay on this device, and face recognition data never leaves it
-      in either mode. Read the documentation before enabling.
+      Hugging Face Token) is billed. Only detection can move: Hugging Face
+      serves no depth-estimation model and no box-prompted segmentation model,
+      so depth and contact analysis are not run in that mode; pose estimation,
+      face recognition and audio analysis stay on this device, and face
+      recognition data never leaves it in either mode. Read the documentation
+      before enabling.
   ai_remote_detection_model:
     name: Hugging Face Detection Model
     description: >-

@@ -13,8 +13,10 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import sys
 from collections.abc import AsyncGenerator, Callable
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from aiohttp import web
@@ -63,13 +65,14 @@ def _model(
     model_id: str,
     providers: list[dict[str, Any]],
     inputs: tuple[str, ...] = ("text", "image"),
+    outputs: tuple[str, ...] = ("text",),
 ) -> dict[str, Any]:
     return {
         "id": model_id,
         "object": "model",
         "architecture": {
             "input_modalities": list(inputs),
-            "output_modalities": ["text"],
+            "output_modalities": list(outputs),
         },
         "providers": providers,
     }
@@ -108,6 +111,8 @@ class FakeRouter:
     def __init__(self) -> None:
         self.catalog: list[dict[str, Any]] = list(_CATALOG)
         self.catalog_status = 200
+        # When set, served instead of {"data": catalog} -- for malformed payloads.
+        self.catalog_payload: Any = None
         self.chat_requests: list[dict[str, Any]] = []
         self.chat_replies: list[Callable[[dict[str, Any]], web.Response]] = []
         self.whoami_status = 200
@@ -117,29 +122,33 @@ class FakeRouter:
 
     @staticmethod
     def ok(
-        content: str = _VERDICT, prompt_tokens: int = 1200, completion_tokens: int = 40
+        content: str | None = _VERDICT,
+        prompt_tokens: int = 1200,
+        completion_tokens: int = 40,
+        finish_reason: str = "stop",
+        usage: bool = True,
     ) -> Callable[[dict[str, Any]], web.Response]:
         def reply(_body: dict[str, Any]) -> web.Response:
-            return web.json_response(
-                {
-                    "id": "chatcmpl-1",
-                    "object": "chat.completion",
-                    "created": 1,
-                    "model": "x",
-                    "choices": [
-                        {
-                            "index": 0,
-                            "finish_reason": "stop",
-                            "message": {"role": "assistant", "content": content},
-                        }
-                    ],
-                    "usage": {
-                        "prompt_tokens": prompt_tokens,
-                        "completion_tokens": completion_tokens,
-                        "total_tokens": prompt_tokens + completion_tokens,
-                    },
+            body: dict[str, Any] = {
+                "id": "chatcmpl-1",
+                "object": "chat.completion",
+                "created": 1,
+                "model": "x",
+                "choices": [
+                    {
+                        "index": 0,
+                        "finish_reason": finish_reason,
+                        "message": {"role": "assistant", "content": content},
+                    }
+                ],
+            }
+            if usage:
+                body["usage"] = {
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": prompt_tokens + completion_tokens,
                 }
-            )
+            return web.json_response(body)
 
         return reply
 
@@ -163,6 +172,8 @@ class FakeRouter:
     async def models(self, _request: web.Request) -> web.Response:
         if self.catalog_status != 200:
             return web.Response(status=self.catalog_status)
+        if self.catalog_payload is not None:
+            return web.json_response(self.catalog_payload)
         return web.json_response({"object": "list", "data": self.catalog})
 
     async def chat(self, request: web.Request) -> web.Response:
@@ -769,3 +780,218 @@ def test_huggingface_can_be_the_escalation_tier_with_its_own_model() -> None:
     tier2 = tier1.escalation_analyzer
     assert isinstance(tier2, HuggingFaceAnalyzer)
     assert tier2.model_name() == "google/gemma-4-26B-A4B-it:cheapest"
+
+
+# ---------------------------------------------------------------------------
+# Documented catalog fields and health-check caching
+# ---------------------------------------------------------------------------
+
+
+def test_a_backend_that_is_currently_free_prices_at_zero() -> None:
+    """The router documents ``is_free`` as a temporary promotion in which the
+    backend charges nothing for the model, whatever ``pricing`` still lists."""
+    entry = _model(
+        "org/promo",
+        [
+            {
+                "provider": "novita",
+                "status": "live",
+                "is_free": True,
+                "pricing": {"input": 0.3, "output": 0.9},
+            }
+        ],
+    )
+    assert huggingface_price(entry) == (0.0, 0.0)
+    # ...and a promo with no listed price at all is free too, not unknown.
+    bare = _model(
+        "org/bare-promo", [{"provider": "novita", "status": "live", "is_free": True}]
+    )
+    assert huggingface_price(bare) == (0.0, 0.0)
+
+
+def test_is_free_false_changes_nothing() -> None:
+    entry = _model(
+        "org/paid",
+        [
+            {
+                "provider": "novita",
+                "status": "live",
+                "is_free": False,
+                "pricing": {"input": 0.3, "output": 0.9},
+            }
+        ],
+    )
+    assert huggingface_price(entry) == (0.3, 0.9)
+
+
+def test_a_backend_in_error_is_not_priced() -> None:
+    entry = _model(
+        "org/down",
+        [
+            {
+                "provider": "novita",
+                "status": "error",
+                "pricing": {"input": 0.3, "output": 0.9},
+            }
+        ],
+    )
+    assert huggingface_price(entry) is None
+
+
+async def test_a_good_health_check_is_reused_for_ten_minutes(
+    router: tuple[FakeRouter, TestServer], analyzer: HuggingFaceAnalyzer
+) -> None:
+    """whoami-v2 is rate limited on purpose (huggingface_hub says so and
+    advises caching), and a token that works does not stop every 30 s."""
+    import time
+
+    assert await analyzer.health_check() is True
+    analyzer._last_health_check_time = time.monotonic() - 300
+    assert await analyzer.health_check() is True
+    assert len(router[0].whoami_auth) == 1
+    analyzer._last_health_check_time = time.monotonic() - 700
+    assert await analyzer.health_check() is True
+    assert len(router[0].whoami_auth) == 2
+
+
+async def test_a_failed_health_check_is_retried_after_thirty_seconds(
+    router: tuple[FakeRouter, TestServer], analyzer: HuggingFaceAnalyzer
+) -> None:
+    import time
+
+    router[0].whoami_status = 502
+    assert await analyzer.health_check() is False
+    router[0].whoami_status = 200
+    analyzer._last_health_check_time = time.monotonic() - 10
+    assert await analyzer.health_check() is False  # still inside the short cache
+    analyzer._last_health_check_time = time.monotonic() - 40
+    assert await analyzer.health_check() is True  # recovery is noticed promptly
+    assert len(router[0].whoami_auth) == 2
+
+
+async def test_a_rate_limited_whoami_says_nothing_against_the_token(
+    router: tuple[FakeRouter, TestServer], analyzer: HuggingFaceAnalyzer
+) -> None:
+    router[0].whoami_status = 429
+    assert await analyzer.health_check() is True
+
+
+# ---------------------------------------------------------------------------
+# An answer the token limit cut off is not a verdict
+# ---------------------------------------------------------------------------
+
+
+async def test_an_answer_cut_off_by_the_token_limit_is_a_failed_call_not_a_verdict(
+    router: tuple[FakeRouter, TestServer],
+    analyzer: HuggingFaceAnalyzer,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Parsed, ``{"suspicious": fal`` would fall back to keyword matching and
+    be recorded as "not suspicious" -- a missed event. As a failed call it is
+    a visible failed clip, which is what the shared pipeline does with an
+    empty reply."""
+    router[0].chat_replies = [
+        FakeRouter.ok('{"suspicious": fal', finish_reason="length")
+    ]
+    with caplog.at_level(logging.WARNING):
+        assert await analyzer._call_model([_FRAME], "p") == ""
+    assert "cut off" in caplog.text
+    assert "1024" in caplog.text
+    # Worth another try later: the next sample of the model may finish in time.
+    assert analyzer.transient_error is True
+
+
+async def test_a_model_that_used_the_whole_allowance_thinking_is_a_failed_call(
+    router: tuple[FakeRouter, TestServer],
+    analyzer: HuggingFaceAnalyzer,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    router[0].chat_replies = [FakeRouter.ok(None, finish_reason="length")]
+    with caplog.at_level(logging.WARNING):
+        assert await analyzer._call_model([_FRAME], "p") == ""
+    assert "cut off" in caplog.text
+
+
+async def test_a_complete_answer_that_happened_to_reach_the_limit_is_kept(
+    router: tuple[FakeRouter, TestServer], analyzer: HuggingFaceAnalyzer
+) -> None:
+    router[0].chat_replies = [FakeRouter.ok(_VERDICT, finish_reason="length")]
+    assert json.loads(await analyzer._call_model([_FRAME], "p"))["suspicious"] is True
+
+
+async def test_an_answer_that_simply_stopped_is_untouched(
+    router: tuple[FakeRouter, TestServer],
+    analyzer: HuggingFaceAnalyzer,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    router[0].chat_replies = [FakeRouter.ok("not json at all", finish_reason="stop")]
+    with caplog.at_level(logging.WARNING):
+        assert await analyzer._call_model([_FRAME], "p") == "not json at all"
+    assert "cut off" not in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Odd inputs, and failures with no better name
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "payload", [{"data": "oops"}, ["not", "an", "object"], {"object": "list"}]
+)
+async def test_a_catalog_that_is_not_a_list_of_models_is_ignored(
+    router: tuple[FakeRouter, TestServer],
+    analyzer: HuggingFaceAnalyzer,
+    payload: Any,
+) -> None:
+    router[0].catalog_payload = payload
+    models = await analyzer.fetch_models()
+    assert DEFAULT_HUGGINGFACE_MODEL in [m["name"] for m in models]
+    assert analyzer.price_for_model("Qwen/Qwen3.5-9B") is None
+
+
+def test_a_model_that_does_not_answer_in_text_is_not_a_vision_analyst() -> None:
+    """An image generator takes an image prompt and gives back pixels."""
+    generator = _model(
+        "org/image-editor",
+        [_provider("novita", 0.1, 0.1, 10.0)],
+        outputs=("image",),
+    )
+    assert is_huggingface_vision_entry(generator) is False
+
+
+async def test_a_missing_openai_package_is_reported_not_raised(
+    analyzer: HuggingFaceAnalyzer, caplog: pytest.LogCaptureFixture
+) -> None:
+    with patch.dict(sys.modules, {"openai": None}), caplog.at_level(logging.ERROR):
+        assert await analyzer._call_model([_FRAME], "p") == ""
+    assert "openai package is not installed" in caplog.text
+
+
+async def test_a_reply_without_usage_leaves_the_token_counts_alone(
+    router: tuple[FakeRouter, TestServer], analyzer: HuggingFaceAnalyzer
+) -> None:
+    router[0].chat_replies = [FakeRouter.ok(usage=False)]
+    assert json.loads(await analyzer._call_model([_FRAME], "p"))["suspicious"] is True
+    assert (analyzer.last_prompt_tokens, analyzer.last_completion_tokens) == (0, 0)
+
+
+async def test_a_reply_with_no_choices_is_an_empty_answer(
+    router: tuple[FakeRouter, TestServer], analyzer: HuggingFaceAnalyzer
+) -> None:
+    router[0].chat_replies = [lambda _b: web.json_response({"id": "x", "choices": []})]
+    assert await analyzer._call_model([_FRAME], "p") == ""
+
+
+async def test_an_unexpected_failure_is_logged_and_returns_nothing(
+    analyzer: HuggingFaceAnalyzer, caplog: pytest.LogCaptureFixture
+) -> None:
+    with (
+        patch.object(
+            HuggingFaceAnalyzer,
+            "_create_completion",
+            AsyncMock(side_effect=RuntimeError("boom")),
+        ),
+        caplog.at_level(logging.WARNING),
+    ):
+        assert await analyzer._call_model([_FRAME], "p") == ""
+    assert "request failed: boom" in caplog.text

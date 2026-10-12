@@ -783,7 +783,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
 
         self._analyzer.attach_database(self._db)
         # Assets marked on the Assets tab. Handed over here rather than
-        # threaded through create_analyzer(): none of the six providers does
+        # threaded through create_analyzer(): none of the eight providers does
         # anything with them except inherit BaseAnalyzer's handling, and the
         # Assets tab updates the live analyzer through this same setter.
         self._analyzer.update_protected_assets(read_assets())
