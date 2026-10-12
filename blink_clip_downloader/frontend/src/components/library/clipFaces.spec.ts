@@ -7,13 +7,26 @@ describe('clipFaceLine', () => {
     ['recognized', 'approved household member'],
     ['set_aside', 'put down to the household members'],
     ['unfamiliar', 'A clear face matched nobody enrolled'],
+    ['too_small', 'too small to identify'],
     ['not_approved', 'not approved'],
     ['unexamined', "couldn't be checked"],
     ['unclear', 'no household member seen nearby'],
     ['unclear_ignorable', 'Ignore Unclear Faces'],
-    ['extra_people', 'more people were in view'],
+    ['extra_people', 'More people were in view'],
   ])('explains %s', (outcome, fragment) => {
     expect(clipFaceLine({ face_outcome: outcome })).toContain(fragment)
+  })
+
+  it('points a face too small to identify at the resolution, not at enrolling anyone', () => {
+    const line = clipFaceLine({ face_outcome: 'too_small' })
+    expect(line).toContain('Face Recognition Resolution')
+    expect(line).not.toContain('enroll')
+  })
+
+  it('does not claim every face was accounted for when more people were in view', () => {
+    // Also stored when unclear faces were in the way that the setting would
+    // have set aside: the people count is what would still hold the clip back.
+    expect(clipFaceLine({ face_outcome: 'extra_people' })).not.toContain('accounted for')
   })
 
   it('adds the counts when faces were seen', () => {

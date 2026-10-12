@@ -27,23 +27,29 @@ from .vehicles import VehicleIdentification, relative_side
 _MAX_TIMELINE_ENTRIES = 8
 
 #: Added to the SECURITY EVIDENCE section when the whole clip is one person's
-#: brief trip through a marked door (see :func:`.routine.routine_door_visit`).
-#: The global prompt tells the model to prefer a low-confidence "suspicious"
-#: over saying nothing when it cannot tell; for a figure with their back to
-#: the lens at a lock, it cannot, so this says what ordinary looks like and
-#: what would still count -- and asks for "not suspicious" rather than a
-#: hedge when none of it is visible.
+#: brief visit to a marked door (see :func:`.routine.routine_door_visit`). A
+#: model looking at a figure with their back to the lens at a lock cannot tell
+#: what their hands are doing and tends to hedge with a low-confidence
+#: "suspicious", so this says what ordinary looks like and what would still
+#: count -- and asks for "not suspicious" rather than a hedge when none of it
+#: is visible. It claims no more than tracking found: frames seconds apart
+#: cannot tell going through a door from trying it and walking off between two
+#: of them, which is the owner's own example of what is suspicious, so that is
+#: left to the frames rather than stated as fact.
 _ROUTINE_VISIT_NOTE = (
-    " The only person in this clip went through the door they were at and was "
-    "not there for long -- which is how ordinary use of a door looks, including "
-    "a resident with their back to the camera while they unlock or lock it. "
-    "Their face being turned away, or their hands being at the lock or handle "
-    "for a few seconds, is not by itself a reason to report suspicious "
-    "activity. Report it if the frames show the lock or handle being worked at "
-    "repeatedly or for a long time, forcing, prying or kicking, peering in, "
-    "someone waiting or watching, or something being carried off; if none of "
-    "that is visible, report suspicious=false rather than a low-confidence "
-    "guess."
+    " Tracking followed only one person in this clip, at the door only briefly "
+    "and then gone from view there or walking away from it -- the shape of "
+    "ordinary use of a door, including a resident with their back to the "
+    "camera while they unlock or lock it. The tracked frames can be seconds "
+    "apart, so tracking cannot tell going through the door from trying it and "
+    "walking off between two frames: judge that from what you see. Their face "
+    "being turned away, or their hands being at the lock or handle for a few "
+    "seconds, is not by itself a reason to report suspicious activity. Report "
+    "it if the frames show the door being tried and then left without anyone "
+    "going through it, the lock or handle being worked at repeatedly or for a "
+    "long time, forcing, prying or kicking, peering in, someone waiting or "
+    "watching, or something being carried off; if none of that is visible, "
+    "report suspicious=false rather than a low-confidence guess."
 )
 
 

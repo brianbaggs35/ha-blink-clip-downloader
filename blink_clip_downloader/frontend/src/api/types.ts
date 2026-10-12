@@ -258,6 +258,11 @@ export type SecurityTimelineRow = SecurityEventRow & {
   ai_confidence: number | null
   ai_summary: string | null
   risk_override_applied: boolean | null
+  /** A local rule, not the model, decided the stored verdict: the face bypass
+   *  or routine door use cleared a flag the model raised. Without them a
+   *  cleared clip would read as the model having seen nothing unusual. */
+  face_bypass_applied: boolean | null
+  routine_visit_applied: boolean | null
 }
 
 export interface SecurityTimelineResponse {
@@ -653,7 +658,7 @@ export interface FaceBypassStats {
  * face_outcomes.py's HELD_BACK_OUTCOMES, which are stored with each analysis.
  */
 export type FaceHeldBackReason =
-  'unfamiliar' | 'unclear_ignorable' | 'unclear' | 'not_approved' | 'extra_people' | 'unexamined'
+  'unfamiliar' | 'too_small' | 'unclear_ignorable' | 'unclear' | 'not_approved' | 'extra_people' | 'unexamined'
 
 /**
  * What face recognition made of the last `days` days of analyzed clips (the

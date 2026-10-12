@@ -35,14 +35,19 @@ def _outcome_result(
 
 
 @pytest.mark.parametrize(
-    ("result", "recognized", "expected"),
+    ("result", "recognized", "extra_people", "expected"),
     [
-        pytest.param(_outcome_result(None), False, "", id="nothing examined"),
+        pytest.param(_outcome_result(None), False, False, "", id="nothing examined"),
         pytest.param(
-            _outcome_result(FaceTally()), False, FaceOutcome.NO_FACES, id="no faces"
+            _outcome_result(FaceTally()),
+            False,
+            False,
+            FaceOutcome.NO_FACES,
+            id="no faces",
         ),
         pytest.param(
             _outcome_result(FaceTally(unexamined=2)),
+            False,
             False,
             FaceOutcome.UNEXAMINED,
             id="nothing could be read",
@@ -50,6 +55,7 @@ def _outcome_result(
         pytest.param(
             _outcome_result(FaceTally(seen=2, matched=2), approved=("Amy",)),
             True,
+            False,
             FaceOutcome.RECOGNIZED,
             id="recognized",
         ),
@@ -60,6 +66,7 @@ def _outcome_result(
                 set_aside=1,
             ),
             True,
+            False,
             FaceOutcome.SET_ASIDE,
             id="recognized with a face set aside",
         ),
@@ -67,6 +74,7 @@ def _outcome_result(
             _outcome_result(
                 FaceTally(seen=3, matched=2), approved=("Amy",), unrecognized=True
             ),
+            False,
             False,
             FaceOutcome.UNFAMILIAR,
             id="a clear face matched nobody",
@@ -78,11 +86,24 @@ def _outcome_result(
                 unrecognized=True,
             ),
             False,
+            False,
             FaceOutcome.UNFAMILIAR,
             id="a clear stranger outranks an unapproved person",
         ),
         pytest.param(
+            _outcome_result(
+                FaceTally(seen=3, matched=1, unclear=1, small=1),
+                approved=("Amy",),
+                unrecognized=True,
+            ),
+            False,
+            False,
+            FaceOutcome.UNFAMILIAR,
+            id="a clear stranger outranks a face too small to judge",
+        ),
+        pytest.param(
             _outcome_result(FaceTally(seen=1, matched=1), other=("Carl",)),
+            False,
             False,
             FaceOutcome.NOT_APPROVED,
             id="someone recognized is not approved",
@@ -94,8 +115,31 @@ def _outcome_result(
                 unrecognized=True,
             ),
             False,
+            False,
             FaceOutcome.UNEXAMINED,
             id="a frame could not be examined",
+        ),
+        pytest.param(
+            _outcome_result(
+                FaceTally(seen=3, matched=2, unclear=1, small=1),
+                approved=("Amy", "Brian"),
+                unrecognized=True,
+            ),
+            False,
+            False,
+            FaceOutcome.TOO_SMALL,
+            id="a face too small to judge matched nobody",
+        ),
+        pytest.param(
+            _outcome_result(
+                FaceTally(seen=4, matched=2, unclear=2, small=1),
+                approved=("Amy", "Brian"),
+                unrecognized=True,
+            ),
+            False,
+            True,
+            FaceOutcome.TOO_SMALL,
+            id="too small outranks unclear faces and the people count",
         ),
         pytest.param(
             _outcome_result(
@@ -104,8 +148,20 @@ def _outcome_result(
                 unrecognized=True,
             ),
             False,
+            False,
             FaceOutcome.UNCLEAR_IGNORABLE,
             id="unclear faces the setting would set aside",
+        ),
+        pytest.param(
+            _outcome_result(
+                FaceTally(seen=3, matched=2, unclear=1, would_clear=True),
+                approved=("Amy", "Brian"),
+                unrecognized=True,
+            ),
+            False,
+            True,
+            FaceOutcome.EXTRA_PEOPLE,
+            id="unclear faces set aside would still leave more people than faces",
         ),
         pytest.param(
             _outcome_result(
@@ -114,26 +170,43 @@ def _outcome_result(
                 unrecognized=True,
             ),
             False,
+            False,
             FaceOutcome.UNCLEAR,
             id="unclear faces nothing would set aside",
         ),
         pytest.param(
+            _outcome_result(
+                FaceTally(seen=3, matched=2, unclear=1),
+                approved=("Amy", "Brian"),
+                unrecognized=True,
+            ),
+            False,
+            True,
+            FaceOutcome.UNCLEAR,
+            id="unclear faces nothing would set aside, and more people too",
+        ),
+        pytest.param(
             _outcome_result(FaceTally(seen=2, matched=2), approved=("Amy",)),
             False,
+            True,
             FaceOutcome.EXTRA_PEOPLE,
             id="every face accounted for, more people than faces",
         ),
     ],
 )
 def test_classify_face_outcome(
-    result: FaceRecognitionResult, recognized: bool, expected: str
+    result: FaceRecognitionResult, recognized: bool, extra_people: bool, expected: str
 ) -> None:
-    assert classify_face_outcome(result, recognized=recognized) == expected
+    assert (
+        classify_face_outcome(result, recognized=recognized, extra_people=extra_people)
+        == expected
+    )
 
 
 def test_every_clip_held_back_has_a_reason_the_panel_can_list() -> None:
     assert set(HELD_BACK_OUTCOMES) == {
         FaceOutcome.UNFAMILIAR,
+        FaceOutcome.TOO_SMALL,
         FaceOutcome.UNCLEAR_IGNORABLE,
         FaceOutcome.UNCLEAR,
         FaceOutcome.NOT_APPROVED,
@@ -171,20 +244,22 @@ def test_summary_adds_clips_and_faces_up() -> None:
             _outcome_row(
                 FaceOutcome.UNCLEAR_IGNORABLE, 4, seen=12, matched=8, unclear=4
             ),
+            _outcome_row(FaceOutcome.TOO_SMALL, 2, seen=5, matched=1, unclear=4),
             _outcome_row("something-a-newer-version-wrote", 1, seen=1),
         ]
     )
-    assert summary["clips_checked"] == 26
+    assert summary["clips_checked"] == 28
     assert summary["clips_recognized"] == 8
     assert summary["clips_set_aside"] == 2
     assert summary["held_back"][FaceOutcome.UNFAMILIAR.value] == 3
     assert summary["held_back"][FaceOutcome.UNCLEAR_IGNORABLE.value] == 4
+    assert summary["held_back"][FaceOutcome.TOO_SMALL.value] == 2
     # With faces = recognized + held back, so the panel's figures add up
     # whatever else is in the table.
-    assert summary["clips_with_faces"] == 8 + 7
-    assert summary["faces_seen"] == 50
-    assert summary["faces_matched"] == 37
-    assert summary["faces_unclear"] == 7
+    assert summary["clips_with_faces"] == 8 + 9
+    assert summary["faces_seen"] == 55
+    assert summary["faces_matched"] == 38
+    assert summary["faces_unclear"] == 11
 
 
 # ----------------------------------------------------------------------
@@ -208,6 +283,18 @@ def test_summary_adds_clips_and_faces_up() -> None:
             _outcome_result(FaceTally(seen=2, matched=0, unclear=2)),
             FaceEvidence.NONE,
             id="only faces too hard to read, matching nobody",
+        ),
+        pytest.param(
+            _outcome_result(FaceTally(seen=1, matched=0, unclear=1, small=1)),
+            FaceEvidence.NONE,
+            id="only a face too small to judge, matching nobody",
+        ),
+        pytest.param(
+            _outcome_result(
+                FaceTally(seen=2, matched=1, unclear=1, small=1), approved=("Amy",)
+            ),
+            FaceEvidence.CONFIRMS,
+            id="matched, with a face too small to judge beside them",
         ),
         pytest.param(
             _outcome_result(FaceTally(seen=1, matched=1), approved=("Amy",)),
@@ -276,5 +363,20 @@ def test_what_counts_as_a_stranger_agrees_with_the_recognition_panel() -> None:
         FaceTally(seen=3, matched=1, unclear=1),
     ):
         result = _outcome_result(tally, approved=("Amy",), unrecognized=True)
-        assert classify_face_outcome(result, recognized=False) == FaceOutcome.UNFAMILIAR
+        outcome = classify_face_outcome(result, recognized=False, extra_people=False)
+        assert outcome == FaceOutcome.UNFAMILIAR
         assert face_evidence(result) is FaceEvidence.CONTRADICTS
+
+
+def test_a_face_too_small_to_judge_is_no_stranger_to_either() -> None:
+    """Too small for "it matched nobody" to mean anything: the panel says to
+    raise the resolution rather than to enroll a visitor, and the door rule
+    gives it no weight -- the same reading, so they still cannot disagree."""
+    result = _outcome_result(
+        FaceTally(seen=2, matched=1, unclear=1, small=1),
+        approved=("Amy",),
+        unrecognized=True,
+    )
+    outcome = classify_face_outcome(result, recognized=False, extra_people=False)
+    assert outcome == FaceOutcome.TOO_SMALL
+    assert face_evidence(result) is FaceEvidence.CONFIRMS

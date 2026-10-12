@@ -49,6 +49,8 @@ function row(overrides: Partial<SecurityTimelineRow> = {}): SecurityTimelineRow 
     ai_confidence: null,
     ai_summary: null,
     risk_override_applied: null,
+    face_bypass_applied: null,
+    routine_visit_applied: null,
     ...overrides,
   }
 }
@@ -440,6 +442,27 @@ describe('SecurityPage', () => {
       rows: [row({ severity: 'critical', ai_suspicious: true, risk_override_applied: true })],
     })
     expect(wrapper.text()).toContain('Flagged on evidence')
+    expect(wrapper.text()).not.toContain('disagreement')
+  })
+
+  it('names a flag the face bypass cleared for the bypass, not the model', async () => {
+    // Stored as not suspicious, but the model flagged it just as the code did:
+    // a recognized household member is what cleared it, so neither "nothing
+    // unusual" nor a disagreement is true.
+    const wrapper = await mountPage({
+      rows: [row({ severity: 'suspicious', ai_suspicious: false, face_bypass_applied: true })],
+    })
+    expect(wrapper.text()).toContain('Cleared: household member')
+    expect(wrapper.text()).not.toContain('AI: nothing unusual')
+    expect(wrapper.text()).not.toContain('disagreement')
+  })
+
+  it('names a flag routine door use cleared for that rule', async () => {
+    const wrapper = await mountPage({
+      rows: [row({ severity: 'noteworthy', ai_suspicious: false, routine_visit_applied: true })],
+    })
+    expect(wrapper.text()).toContain('Cleared: routine door use')
+    expect(wrapper.text()).not.toContain('AI: nothing unusual')
     expect(wrapper.text()).not.toContain('disagreement')
   })
 

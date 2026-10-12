@@ -14,7 +14,6 @@ counts distinct ``track_id``s instead.
 from __future__ import annotations
 
 import json
-import logging
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -32,8 +31,6 @@ from .sql import (
 
 if TYPE_CHECKING:
     from ..vision import DetectedObject
-
-_LOGGER = logging.getLogger(__name__)
 
 
 class DetectionsMixin(_DatabaseBase):
@@ -332,7 +329,9 @@ class DetectionsMixin(_DatabaseBase):
                            ar.is_suspicious AS ai_suspicious,
                            ar.confidence AS ai_confidence,
                            ar.summary AS ai_summary,
-                           ar.risk_override_applied
+                           ar.risk_override_applied,
+                           ar.face_bypass_applied,
+                           ar.routine_visit_applied
                     FROM security_events se
                     JOIN clips c ON c.id = se.clip_id
                     -- The model's own verdict, so the timeline can show
@@ -340,10 +339,14 @@ class DetectionsMixin(_DatabaseBase):
                     -- Latest run only, matching get_analysis_for_clip's
                     -- "most recent wins" semantics: a re-analysis must not
                     -- leave the previous verdict sitting beside the events
-                    -- that replaced it.
+                    -- that replaced it. With it, which local rule (if any)
+                    -- overruled that verdict: a flag the face bypass or
+                    -- routine door use cleared is not the model saying
+                    -- nothing unusual, and the tab must not say it was.
                     LEFT JOIN LATERAL (
                         SELECT is_suspicious, confidence, summary,
-                               risk_override_applied
+                               risk_override_applied, face_bypass_applied,
+                               routine_visit_applied
                         FROM analysis_results
                         WHERE clip_id = se.clip_id
                         ORDER BY analyzed_at DESC

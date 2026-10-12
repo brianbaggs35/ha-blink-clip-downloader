@@ -39,6 +39,11 @@ DOOR_ZONE = Zone.from_config(
 
 GOOD = EvidenceQuality(score=0.8)
 
+#: A phrase only the routine-visit note carries: its presence and its absence
+#: are both checked against the note itself, never against a phrase that could
+#: vanish from the prompt for some other reason.
+_NOTE = "the shape of ordinary use of a door"
+
 
 def _event(
     event_type: SecurityEventType,
@@ -208,9 +213,9 @@ def test_how_unsure_the_model_must_have_been(
 
 
 def test_a_confident_finding_is_never_cleared_whoever_it_was() -> None:
-    """The prompt ties 0.8 and above to the plainest cases; a household
-    member being recognized does not turn a confident finding of forcing a
-    lock into a hedge."""
+    """A household member being recognized widens what counts as unsure, but
+    never to a near-certain finding: that does not turn a sure finding of
+    forcing a lock into a hedge."""
     assert ROUTINE_VISIT_MAX_CONFIDENCE < ROUTINE_VISIT_MAX_CONFIDENCE_CONFIRMED < 1.0
     assert ROUTINE_VISIT_MAX_CONFIDENCE_CONFIRMED <= 0.9
 
@@ -249,11 +254,19 @@ def test_a_real_visit_is_explained_and_reaches_the_prompt() -> None:
     outcome = assess_clip(_measurements(_GOING_IN))
     assert routine_door_visit(outcome.events, outcome.evidence) is not None
     prompt = "".join(outcome.prompt_segments)
-    assert "went through the door they were at" in prompt
+    assert _NOTE in prompt
     assert "resident with their back to the camera" in prompt
-    # It says what would still count, and asks for no guess when none of it is
-    # there: the global prompt's "prefer a low-confidence suspicious" is what
-    # produces the false alarms this is for.
+    # It claims no more than tracking found. Frames seconds apart cannot tell
+    # going through the door from trying it and walking off between two of
+    # them, so that is left to the model -- and trying the door and leaving is
+    # named as something that still counts.
+    assert "went through the door" not in prompt
+    assert "cannot tell going through the door from trying it" in prompt
+    assert "the door being tried and then left" in prompt
+    # It says what else would still count, and asks for no guess when none of
+    # it is there: a model unsure of a figure with their back to the lens
+    # hedges with a low-confidence "suspicious", which is what produces the
+    # false alarms this is for.
     assert "worked at repeatedly or for a long time" in prompt
     assert "rather than a low-confidence guess" in prompt
 
@@ -265,7 +278,7 @@ def test_with_the_option_off_nothing_changes_for_the_same_clip() -> None:
     assert "door_used" in {str(e.event_type) for e in on.events}
     assert "door_used" not in {str(e.event_type) for e in off.events}
     assert routine_door_visit(off.events, off.evidence) is None
-    assert "went through the door" not in "".join(off.prompt_segments)
+    assert _NOTE not in "".join(off.prompt_segments)
     # The event is worth nothing, so the score cannot have moved.
     assert on.risk_score == pytest.approx(off.risk_score)
     assert [e.event_type for e in on.events if e.event_type != "door_used"] == [
@@ -288,7 +301,7 @@ def test_the_visit_event_is_worth_no_points() -> None:
 def test_a_lingering_visit_is_not_explained_and_gets_no_note() -> None:
     outcome = assess_clip(_measurements([400.0, 300.0] + [110.0] * 7, frame_count=14))
     assert routine_door_visit(outcome.events, outcome.evidence) is None
-    assert "went through the door" not in "".join(outcome.prompt_segments)
+    assert _NOTE not in "".join(outcome.prompt_segments)
 
 
 def test_the_note_is_added_only_for_a_visit_that_explains_the_clip() -> None:
@@ -296,7 +309,7 @@ def test_the_note_is_added_only_for_a_visit_that_explains_the_clip() -> None:
     # Same events, but evidence too weak to rest a "did not happen" on.
     weak = build_security_segment(outcome.assessment, EvidenceQuality(score=0.2))
     assert weak is not None
-    assert "went through the door" not in weak
+    assert _NOTE not in weak
     strong = build_security_segment(outcome.assessment, EvidenceQuality(score=0.8))
     assert strong is not None
-    assert "went through the door" in strong
+    assert _NOTE in strong

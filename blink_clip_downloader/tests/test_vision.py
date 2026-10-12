@@ -26,12 +26,14 @@ from PIL import Image
 
 from blink_downloader import vision as vision_module
 from blink_downloader.analyzer import ClipAnalyzer
+from blink_downloader.analyzer.base import _unaccounted_people
 from blink_downloader.database import ClipDatabase
 from blink_downloader.face_outcomes import (
     HELD_BACK_OUTCOMES,
+    FaceEvidence,
     FaceOutcome,
     FaceTally,
-    classify_face_outcome,
+    face_evidence,
 )
 from blink_downloader.security.assets import AssetLocation, AssetType, ProtectedAsset
 from blink_downloader.security.geometry import Box, Zone
@@ -2642,8 +2644,32 @@ async def test_a_face_too_small_to_judge_always_counts(db: ClipDatabase) -> None
     both = [_person("Amy"), _person("Brian")]
     narrow = await _recognize(db, [both, [_person("Amy"), _blurred(width=49)]])
     assert narrow.unrecognized_present is True
+    # Tallied as unclear -- it is no clear look at anybody -- and as too small
+    # to judge, which is why it is never set aside.
+    assert narrow.tally == FaceTally(seen=4, matched=3, unclear=1, small=1)
     wide_enough = await _recognize(db, [both, [_person("Amy"), _blurred(width=50)]])
     assert wide_enough.unrecognized_present is False
+    assert wide_enough.tally == FaceTally(
+        seen=4, matched=3, unclear=1, small=0, would_clear=True
+    )
+
+
+async def test_a_face_too_small_to_judge_is_not_read_as_a_stranger(
+    db: ClipDatabase,
+) -> None:
+    """However sharp, a face under the width floor is too small for "it
+    matched nobody" to say who it was. It still blocks the bypass, but it is
+    reported as too small -- raise the resolution -- rather than as a clear
+    look at a visitor to enroll, and routine door use gives it no weight."""
+    await _enroll(db, "Amy", "Brian")
+    for small in (_blurred(width=30), _face(_axis(3), quality=0.95, width=40)):
+        for ignore_unclear in (False, True):
+            result = await _recognize(db, [[small]], ignore_unclear=ignore_unclear)
+            assert result.unrecognized_present is True
+            assert result.tally == FaceTally(seen=1, unclear=1, small=1)
+            hints = VisionHints(face_recognition=result)
+            assert ClipAnalyzer._face_stats(hints, False)[3] == FaceOutcome.TOO_SMALL
+            assert face_evidence(result) is FaceEvidence.NONE
 
 
 async def test_a_face_cut_off_by_the_frame_is_set_aside_however_sharp(
@@ -3002,7 +3028,7 @@ async def test_every_outcome_agrees_with_what_the_analyzer_counts_as_recognized(
                     face_recognition=result, detections=_people_at_once(people)
                 )
                 recognized = ClipAnalyzer._face_match_is_unambiguous(hints)
-                outcome = classify_face_outcome(result, recognized=recognized)
+                outcome = ClipAnalyzer._face_stats(hints, recognized)[3]
                 seen_outcomes.add(outcome)
                 if recognized:
                     assert outcome in (FaceOutcome.RECOGNIZED, FaceOutcome.SET_ASIDE)
@@ -3010,8 +3036,14 @@ async def test_every_outcome_agrees_with_what_the_analyzer_counts_as_recognized(
                         result.unclear_faces > 0
                     )
                 elif outcome == FaceOutcome.EXTRA_PEOPLE:
-                    # Only the people count is in the way.
-                    assert ClipAnalyzer._faces_all_approved(result) is True
+                    # The people count is in the way, and it is all that would
+                    # be once the setting set aside every unclear face it can.
+                    assert _unaccounted_people(hints, result) > 0
+                    assert result.tally is not None
+                    assert (
+                        ClipAnalyzer._faces_all_approved(result)
+                        or result.tally.would_clear
+                    )
                 elif outcome == FaceOutcome.NOT_APPROVED:
                     # Someone enrolled but not approved, and nobody else in the way.
                     assert result.other_names
@@ -3030,7 +3062,48 @@ async def test_every_outcome_agrees_with_what_the_analyzer_counts_as_recognized(
         FaceOutcome.UNCLEAR_IGNORABLE,
         FaceOutcome.NOT_APPROVED,
         FaceOutcome.EXTRA_PEOPLE,
+        FaceOutcome.TOO_SMALL,
     }
+
+
+async def test_what_the_panel_says_the_option_would_do_is_what_it_does() -> None:
+    """A clip stored, with the option off, as "Ignore Unclear Faces would count
+    this as recognized" is recognized once it is on -- and every clip the
+    option would make recognized is stored as that. Across random clips and
+    anywhere from nobody to three people in view at once: unclear faces set
+    aside beside someone whose face never showed still leave a clip
+    unrecognized, which the promise once left out."""
+    enrollments = [
+        {"name": "Amy", "embedding": _axis(0), "approved": True},
+        {"name": "Brian", "embedding": _axis(1), "approved": True},
+    ]
+    database = MagicMock(spec=ClipDatabase)
+    database.list_face_enrollments = AsyncMock(return_value=enrollments)
+    rng = random.Random(613)
+    promised = held_back_by_the_people_count = 0
+    for _ in range(300):
+        scene = _scene(rng)
+        keyed = {f"frame-{i}".encode(): faces for i, faces in enumerate(scene)}
+        recognizer = FaceRecognizer(_detecting(keyed), database)
+        off = await recognizer.recognize(list(keyed), ignore_unclear=False)
+        on = await recognizer.recognize(list(keyed), ignore_unclear=True)
+        for people in range(4):
+            detections = _people_at_once(people)
+            off_hints = VisionHints(face_recognition=off, detections=detections)
+            on_hints = VisionHints(face_recognition=on, detections=detections)
+            counted = ClipAnalyzer._face_match_is_unambiguous(off_hints)
+            outcome = ClipAnalyzer._face_stats(off_hints, counted)[3]
+            would_count = ClipAnalyzer._face_match_is_unambiguous(on_hints)
+            promises = outcome == FaceOutcome.UNCLEAR_IGNORABLE
+            turned_by_the_option = would_count and not counted
+            assert promises is turned_by_the_option
+            promised += promises
+            held_back_by_the_people_count += (
+                outcome == FaceOutcome.EXTRA_PEOPLE and off.unrecognized_present
+            )
+    # Not vacuous: both the promise and the case it once broke come up often.
+    assert promised > 20
+    assert held_back_by_the_people_count > 20
 
 
 async def test_the_option_never_changes_what_the_strict_rule_decides() -> None:

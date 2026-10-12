@@ -4582,6 +4582,36 @@ async def test_timeline_shows_only_the_latest_verdict(db: ClipDatabase) -> None:
     assert row["ai_summary"] == "A cat, on reflection."
 
 
+@pytest.mark.parametrize(
+    "rule", ["face_bypass_applied", "routine_visit_applied", "risk_override_applied"]
+)
+async def test_timeline_says_which_rule_overruled_the_model(
+    db: ClipDatabase, rule: str
+) -> None:
+    """A flag the face bypass or routine door use cleared ends up stored as
+    not suspicious, which on its own reads as the model having seen nothing
+    unusual -- the row has to say which rule decided it instead."""
+    await _seed_timeline(db)
+    await db.add_analysis_result(
+        {
+            "clip_id": "c3",
+            "camera": "Driveway",
+            "model": "llava",
+            "analyzed_at": "2026-01-05T00:00:00+00:00",
+            "is_suspicious": rule == "risk_override_applied",
+            "confidence": 0.6,
+            rule: True,
+        }
+    )
+    by_clip = {e["clip_id"]: e for e in (await db.get_security_timeline())["events"]}
+    flags = ("face_bypass_applied", "routine_visit_applied", "risk_override_applied")
+    assert {flag: by_clip["c3"][flag] for flag in flags} == {
+        flag: flag == rule for flag in flags
+    }
+    # A clip with no analysis row says nothing either way.
+    assert by_clip["c1"]["routine_visit_applied"] is None
+
+
 async def test_timeline_filters_by_camera(db: ClipDatabase) -> None:
     await _seed_timeline(db)
     result = await db.get_security_timeline(camera="Driveway")

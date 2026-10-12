@@ -8,6 +8,7 @@ import { deferred, errorResponse, jsonResponse } from './testing'
 
 const NO_REASONS = {
   unfamiliar: 0,
+  too_small: 0,
   unclear_ignorable: 0,
   unclear: 0,
   not_approved: 0,
@@ -191,6 +192,16 @@ describe('RecognitionResultsCard', () => {
       expect(text).toContain("A frame couldn't be examined")
       expect(text).toContain('The add-on log says why')
       expect(wrapper.find('[data-reason="unfamiliar"] .reason-count').text()).toBe('9')
+    })
+
+    it('sends faces too small to identify to the resolution setting, right after strangers', async () => {
+      stubStats(stats({ held_back: { ...NO_REASONS, unfamiliar: 2, too_small: 7, unclear: 1 } }))
+      const wrapper = await mountCard()
+      expect(reasons(wrapper)).toEqual(['unfamiliar', 'too_small', 'unclear'])
+      const row = wrapper.find('[data-reason="too_small"]')
+      expect(row.find('.reason-count').text()).toBe('7')
+      expect(row.text()).toContain('Faces too small to identify')
+      expect(row.text()).toContain('Raise Face Recognition Resolution')
     })
 
     it('counts how many clips there are to explain', async () => {
