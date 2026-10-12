@@ -181,10 +181,15 @@ function openClip(row: SecurityTimelineRow, startAt: number | null = null) {
 
 /** What the AI model concluded about the same clip, phrased for a badge.
  *  `null` means the clip has no analysis row at all, which is possible for
- *  a clip whose events were written by an older build. */
+ *  a clip whose events were written by an older build. A flag the face
+ *  bypass or routine door use cleared is stored as not suspicious, so it is
+ *  named for the rule that cleared it rather than read as the model having
+ *  seen nothing unusual. */
 function verdict(row: SecurityTimelineRow): { label: string; severity: string } | null {
   if (row.ai_suspicious == null) return null
   if (row.risk_override_applied) return { label: 'Flagged on evidence', severity: 'warn' }
+  if (row.face_bypass_applied) return { label: 'Cleared: household member', severity: 'info' }
+  if (row.routine_visit_applied) return { label: 'Cleared: routine door use', severity: 'info' }
   if (row.ai_suspicious) return { label: 'AI: suspicious', severity: 'danger' }
   return { label: 'AI: nothing unusual', severity: 'secondary' }
 }
@@ -193,9 +198,11 @@ function verdict(row: SecurityTimelineRow): { label: string; severity: string } 
  *  directly: a clip the geometry rates highly and the model waved through —
  *  or the reverse — is the one a person most needs to look at themselves.
  *  A risk override is excluded because that is not a disagreement left
- *  standing: the clip was already flagged on the evidence. */
+ *  standing: the clip was already flagged on the evidence. So is a face
+ *  bypass: the model flagged the clip like the code did, and a recognized
+ *  household member is what cleared it. */
 function disagrees(row: SecurityTimelineRow): boolean {
-  if (row.ai_suspicious == null || row.risk_override_applied) return false
+  if (row.ai_suspicious == null || row.risk_override_applied || row.face_bypass_applied) return false
   const codeConcerned = row.severity === 'critical' || row.severity === 'suspicious'
   return codeConcerned !== row.ai_suspicious
 }

@@ -33,6 +33,7 @@ function stats(overrides: Record<string, unknown> = {}) {
     faces_unclear: 84,
     held_back: {
       unfamiliar: 9,
+      too_small: 0,
       unclear_ignorable: 24,
       unclear: 0,
       not_approved: 0,
@@ -79,6 +80,28 @@ test('shows how many clips and faces were recognized, and why the others were no
     'Turn on Ignore Unclear Faces in the add-on',
   )
   await expect(panel.locator('.set-aside')).toHaveCount(0)
+})
+
+test('sends faces too small to identify to the resolution setting, not to enrolling a visitor', async ({ page }) => {
+  // At the default 640px most faces are under the 50px recognition needs to
+  // judge one; calling them clear faces that matched nobody would send people
+  // off to enroll strangers who were really their own household.
+  await page.route(ENDPOINT, (route) =>
+    route.fulfill({
+      json: stats({
+        clips_recognized: 4,
+        held_back: { ...stats().held_back, unfamiliar: 2, too_small: 58, unclear_ignorable: 0 },
+      }),
+    }),
+  )
+  await openBiometrics(page)
+  const panel = page.locator(PANEL)
+
+  await expect(panel.locator('[data-reason]')).toHaveCount(2)
+  const small = panel.locator('[data-reason="too_small"]')
+  await expect(small.locator('.reason-count')).toHaveText('58')
+  await expect(small).toContainText('Faces too small to identify')
+  await expect(small).toContainText('Raise Face Recognition Resolution')
 })
 
 test('credits Ignore Unclear Faces for the clips it helped once it is on', async ({ page }) => {

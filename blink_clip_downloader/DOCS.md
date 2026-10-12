@@ -1251,6 +1251,11 @@ or one the model flagged that the geometry saw nothing in — is exactly the
 clip worth thirty seconds of your own attention. Rows flagged by
 `ai_risk_alert_threshold` are labelled as such rather than as a
 disagreement, since there the evidence has already had the last word.
+Likewise a clip the model flagged and a local rule then cleared is labelled
+for the rule — *Cleared: household member* for the face bypass, *Cleared:
+routine door use* for that option — rather than as the model having seen
+nothing unusual: those are the rows to look through when deciding whether to
+keep either one on.
 
 Not to be confused with the **Security Feed** tab, which is the grid of
 near-live camera snapshots.
@@ -1373,10 +1378,10 @@ from, which earlier rows did not record.
 A front door is the camera that cries wolf. Its owner walks up, unlocks the
 door with their back to the lens and goes in; the face is never seen, so the
 [face bypass](#biometrics-tab--face-recognition-enrollment-and-the-suspicious-flag-bypass)
-has nothing to work with, and an AI model told to prefer a low-confidence
-"suspicious" over saying nothing obliges. What the owner means by suspicious is
-different and describable: someone hanging around, working at the lock for a
-long time, trying the handle and leaving.
+has nothing to work with, and an AI model that cannot see what their hands are
+doing at the lock hedges with a low-confidence "suspicious". What the owner
+means by suspicious is different and describable: someone hanging around,
+working at the lock for a long time, trying the handle and leaving.
 
 `ai_routine_door_use_enabled` (**off by default**) tells the add-on the
 difference. It does not identify anybody — from behind it cannot — so it is
@@ -1427,15 +1432,23 @@ clip is *nothing but* the visit — the same asset throughout, no other person
 (tracked or not), no lingering, nothing at or above the suspicious band, and
 evidence quality that is not "weak":
 
-1. **The AI is told** the only person in the clip went through the door and
-   was not there for long, that a turned-away face or a few seconds with a key
-   is not by itself suspicious, what *would* still count (the lock worked at
-   repeatedly or for a long time, forcing or prying, peering in, someone
-   waiting or watching, something carried off), and to answer not suspicious
-   rather than a low-confidence guess when none of that is visible.
+1. **The AI is told** what tracking found and no more: one person, at the door
+   only briefly and then gone from view there or walking away from it. It is
+   told that tracking cannot tell going through the door from trying it and
+   walking off between two frames, so it should judge that from what it sees;
+   that a turned-away face or a few seconds with a key is not by itself
+   suspicious; what *would* still count (the door tried and then left without
+   anyone going through it, the lock worked at repeatedly or for a long time,
+   forcing or prying, peering in, someone waiting or watching, something
+   carried off); and to answer not suspicious rather than a low-confidence
+   guess when none of that is visible.
 2. **A flag the model raised while unsure of itself is cleared.** Only below a
    confidence of **0.70** (the prompt reserves 0.8 and above for the plainest
-   cases). The clip is recorded as *cleared as routine door use*, with the
+   cases) — and only a confidence the model gave itself. Some models, small
+   local ones especially, report none; the add-on then fills one in for alerts
+   and notifications to show, but that figure says nothing about how sure the
+   model was, so a flag from a model that gave no confidence is never cleared
+   this way. The clip is recorded as *cleared as routine door use*, with the
    visit on its timeline, and the log line says why; a visit that was found but
    not cleared is logged with the reason, so "why does my front door still
    alert" has an answer.
@@ -1453,7 +1466,9 @@ anything about ordinary door use, and nothing is cleared:
 - **A face that contradicts it** (see the table below).
 - **An hour this camera rarely sees activity in** — the Smart Security Brain's
   anomaly score for the clip is **0.35 or more**: a rarely used hour, or one it
-  has never seen — unless a household member was positively matched. (A new
+  has never seen, or an uncommon hour with a clip of unusual length (the score
+  adds the hour's rarity and the clip's length) — unless a household member was
+  positively matched. (A new
   install with under 30 events of history has no such score yet, so the hour is
   not held against it.) This is "coming and going regularly" made literal: the
   camera's own history has to say that a visit at this hour is ordinary.
@@ -1480,7 +1495,13 @@ key. If the model was unsure about that clip, with nobody recognized, at an hour
 the camera is used to, and nothing else was going on, this rule will clear it.
 That is the trade, and it is why the rule is off by default, why it only ever
 lowers a flag the model itself was unsure of, and why it stops at a clear
-stranger's face. Two people tailgating through the door in quick succession can
+stranger's face. Frames far apart also cannot tell going through the door from
+trying it and walking out of view between two of them — the *tried the handle
+and left* case — since either way the person was last seen at the door; the AI
+is told so and asked to judge it from what it sees, and the rule still clears a
+flag only if the model stayed unsure. The closer together the frames (short
+clips, or a higher `ai_temporal_scan_frames`), the less room there is for it.
+Two people tailgating through the door in quick succession can
 also be tracked as one if the frames are far apart. The numbers above (12 s,
 0.70, 0.35) are judgement calls, not measurements from real front-door clips:
 watch the Security Events tab for a while after turning it on, and turn it off
@@ -1668,14 +1689,18 @@ a clip did not count as recognized without reading logs:
   appears in, so these are detections, not people.
 - **Why the rest did not count,** as a short list of only the reasons that
   actually happened, each with what to do about it: a clear face matched nobody
-  (a visitor, or someone to enroll); only unclear faces matched nobody; unclear
-  faces with no recognized person to put them down to; someone enrolled who is not
-  approved; more people seen at once than faces recognized (needs object
-  detection); a frame that could not be examined.
+  (a visitor, or someone to enroll); faces too small to identify (under the 50px
+  recognition needs to judge one, which at the default `standard` resolution is
+  most faces: raise `ai_face_recognition_resolution`); only unclear faces matched
+  nobody; unclear faces with no recognized person to put them down to; someone
+  enrolled who is not approved; more people seen at once than faces recognized
+  (needs object detection); a frame that could not be examined.
 - **What Ignore Unclear Faces would change.** With the setting off, the panel
   says how many clips it would count as recognized; with it on, how many it
   has. That is the quickest way to tell whether it is worth turning on for your
-  cameras.
+  cameras. It counts only clips the setting really would turn: one with more
+  people in view than were recognized would still not count, so it is listed
+  under that reason instead.
 
 It keeps counts and reasons only -- never who -- and only for clips analyzed
 from 6.1.1 on: earlier ones are left out rather than counted as "no faces". It

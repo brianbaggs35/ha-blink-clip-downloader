@@ -930,10 +930,14 @@ class BaseAnalyzer(abc.ABC):
         the bypass log line, never part of anything sent to an AI provider.
         """
         faces = vision_hints.face_recognition if vision_hints else None
-        if faces is None or faces.tally is None:
+        if vision_hints is None or faces is None or faces.tally is None:
             return 0, 0, 0, ""
         tally = faces.tally
-        outcome = classify_face_outcome(faces, recognized=recognized)
+        outcome = classify_face_outcome(
+            faces,
+            recognized=recognized,
+            extra_people=bool(_unaccounted_people(vision_hints, faces)),
+        )
         return tally.seen, tally.matched, tally.unclear, outcome
 
     @staticmethod
@@ -1335,6 +1339,7 @@ class BaseAnalyzer(abc.ABC):
             security=security,
             clip_id=clip_id,
             camera=camera,
+            model_confidence=self._model_confidence(response),
         )
         is_suspicious = verdict.is_suspicious
         confidence = verdict.confidence
@@ -1407,6 +1412,7 @@ class BaseAnalyzer(abc.ABC):
         security: SecurityOutcome | None,
         clip_id: str,
         camera: str,
+        model_confidence: float | None,
     ) -> _Verdict:
         """Apply the local, post-model adjustments to the model's verdict.
 
@@ -1419,6 +1425,10 @@ class BaseAnalyzer(abc.ABC):
         caller. The routine-door-use rule comes after the bypass, so a clip an
         identity already cleared is recorded as that, and never when the risk
         score forces an alert.
+
+        *model_confidence* is the confidence the model itself gave
+        (:meth:`_model_confidence`), unlike *verdict*'s, which
+        :meth:`parse_response` makes up when the model gave none.
         """
         is_suspicious = verdict.is_suspicious
         confidence = verdict.confidence
@@ -1463,7 +1473,7 @@ class BaseAnalyzer(abc.ABC):
         routine_visit_applied = False
         if is_suspicious and not risk_forces_alert:
             routine_visit_applied = self._routine_visit_clears(
-                security, vision_hints, confidence, clip_id, camera
+                security, vision_hints, model_confidence, clip_id, camera
             )
             is_suspicious = not routine_visit_applied
 
@@ -1497,7 +1507,7 @@ class BaseAnalyzer(abc.ABC):
         self,
         security: SecurityOutcome | None,
         vision_hints: VisionHints | None,
-        confidence: float,
+        confidence: float | None,
         clip_id: str,
         camera: str,
     ) -> bool:
@@ -1517,6 +1527,13 @@ class BaseAnalyzer(abc.ABC):
         at a lock with their back half turned produces, counts for nothing
         either way.
 
+        *confidence* is the model's own (:meth:`_model_confidence`), ``None``
+        when it gave none. A model that reports no confidence -- some small
+        local ones do not -- never has a flag cleared here: the confidence
+        :meth:`parse_response` makes up for it is a fixed or keyword-counted
+        figure that says nothing about how sure the model was, and a clip
+        described as someone forcing the door got 0.5 from it.
+
         A refusal after a visit was found is logged with its reason, so "why
         does the front door still alert" has an answer in the log.
         """
@@ -1524,6 +1541,15 @@ class BaseAnalyzer(abc.ABC):
             return False
         visit = routine_door_visit(security.events, security.evidence)
         if visit is None:
+            return False
+        if confidence is None:
+            _LOGGER.info(
+                "Routine door use not applied to clip=%r camera=%r: the model "
+                "gave no confidence of its own, so there is no telling how "
+                "sure it was",
+                clip_id,
+                camera,
+            )
             return False
         confirmed = (
             face_evidence(getattr(vision_hints, "face_recognition", None))
@@ -1936,9 +1962,11 @@ class BaseAnalyzer(abc.ABC):
         Not when face recognition saw somebody it contradicts -- a clear face
         that matched nobody, a recognized person who is not approved, a frame
         it could not examine -- and not, unless a household member was matched,
-        at an hour this camera rarely sees activity in. Decided here rather
-        than when the verdict is adjusted because a visit also reaches the
-        prompt: the model is told it is ordinary use of a door, and telling it
+        when this camera's anomaly score calls the clip unusual: an hour it
+        rarely sees activity in, or an uncommon one with a clip of an unusual
+        length (``ClipDatabase.get_anomaly_score`` adds the two). Decided here
+        rather than when the verdict is adjusted because a visit also reaches
+        the prompt: the model is told it is ordinary use of a door, and telling it
         so beside a clear look at a stranger, or at three in the morning on a
         camera that never sees anyone then, would soften its own verdict on
         exactly the clip that most needs it left alone. With no visit there is
@@ -1956,8 +1984,9 @@ class BaseAnalyzer(abc.ABC):
             anomaly_score, identity_confirmed=faces is FaceEvidence.CONFIRMS
         ):
             reason = (
-                f"this camera rarely sees activity at this hour (anomaly "
-                f"{anomaly_score:.2f}) and nobody was recognized"
+                f"this camera's history makes the clip unusual (anomaly "
+                f"{anomaly_score:.2f}, from its hour and length) and nobody was "
+                "recognized"
             )
         else:
             return True
@@ -3073,6 +3102,20 @@ class BaseAnalyzer(abc.ABC):
         summary = self._clean_summary(response)
 
         return is_suspicious, confidence, summary
+
+    @classmethod
+    def _model_confidence(cls, response: str) -> float | None:
+        """The confidence the model itself gave with its verdict, or ``None``
+        when :meth:`parse_response` had to make one up: no JSON verdict at
+        all, or one with no (or a zero) confidence.
+
+        The made-up figure is what alert thresholds and notifications show,
+        which is what it exists for; but it says nothing about how sure the
+        model was, so a rule that lowers a verdict because the model was
+        unsure (routine door use) must read this instead.
+        """
+        _, confidence, description = cls._try_parse_json(response)
+        return confidence if description and confidence > 0.0 else None
 
     @staticmethod
     def _clean_summary(text: str) -> str:

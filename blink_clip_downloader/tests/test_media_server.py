@@ -6921,6 +6921,7 @@ async def test_faces_recognition_stats_empty(client: TestClient) -> None:
     assert data["clips_with_faces"] == 0
     assert data["held_back"] == {
         "unfamiliar": 0,
+        "too_small": 0,
         "unclear_ignorable": 0,
         "unclear": 0,
         "not_approved": 0,
@@ -6937,6 +6938,7 @@ async def test_faces_recognition_stats_sum_what_analyses_recorded(
         ("c2", "set_aside", 5, 4, 1),
         ("c3", "unclear_ignorable", 3, 2, 1),
         ("c4", "no_faces", 0, 0, 0),
+        ("c5", "too_small", 2, 0, 2),
     ]
     for clip_id, outcome, seen, matched, unclear in rows:
         await db.add_clip(_make_clip(clip_id))
@@ -6959,15 +6961,16 @@ async def test_faces_recognition_stats_sum_what_analyses_recorded(
             }
         )
     data = await (await client.get("/api/ai/faces/recognition-stats")).json()
-    assert data["clips_checked"] == 4
-    assert data["clips_with_faces"] == 3
+    assert data["clips_checked"] == 5
+    assert data["clips_with_faces"] == 4
     assert data["clips_recognized"] == 2
     assert data["clips_set_aside"] == 1
     assert data["held_back"]["unclear_ignorable"] == 1
+    assert data["held_back"]["too_small"] == 1
     assert (data["faces_seen"], data["faces_matched"], data["faces_unclear"]) == (
-        12,
+        14,
         10,
-        2,
+        4,
     )
 
 

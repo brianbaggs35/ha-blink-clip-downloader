@@ -150,8 +150,9 @@ architecture.
     `FaceEmbedder.detect()` finds the faces.
   - `face_outcomes.py` — what face recognition made of a clip, stdlib only
     (the analyzer, which stores it, does not import the optional `vision`
-    package): `FaceTally` (faces seen/matched/unclear, frames unexamined, and
-    whether the set-aside rule would clear the clip), `FaceOutcome` (why the
+    package): `FaceTally` (faces seen/matched/unclear, how many of the unclear
+    were too small to judge, frames unexamined, and whether the set-aside rule
+    would clear the clip), `FaceOutcome` (why the
     clip did or did not count as recognized -- **stored values: add, never
     rename**), `classify_face_outcome` and `summarize_face_outcomes`, the
     Biometrics tab's Recognition results panel's totals. Counts and a code,
@@ -160,11 +161,18 @@ architecture.
     examined nothing and the row is left out, which is also every row from
     before 6.1.1), read by `get_face_outcome_counts` -- latest analysis per
     clip, like the Recognized badge -- behind
-    `GET /api/ai/faces/recognition-stats`. `classify_face_outcome`'s last
-    reason (`extra_people`) is a residual that relies on
-    `_face_match_is_unambiguous`'s definition of "recognized";
+    `GET /api/ai/faces/recognition-stats`. `unclear` is every face that matched
+    nobody without a clear look at anybody, a face under `_MIN_JUDGEABLE_WIDTH`
+    included (also counted in `small`, outcome `too_small`): calling those
+    "clear" once sent the panel's users off to enroll their own household at
+    640px and let them veto routine door use. `classify_face_outcome` takes the
+    people count as a required `extra_people` (from `_unaccounted_people`, via
+    `BaseAnalyzer._face_stats`) so `unclear_ignorable` -- "the setting would
+    count this" -- is only stored when the setting really would;
+    `test_what_the_panel_says_the_option_would_do_is_what_it_does` checks that
+    both ways, and
     `test_every_outcome_agrees_with_what_the_analyzer_counts_as_recognized`
-    is what notices if that definition grows another blocker.
+    is what notices if `_face_match_is_unambiguous` grows another blocker.
   - `security/` — the structured security layer (`events.py`, `tracks.py`,
     `geometry.py`, `zones`/`assets.py`, `vehicles.py`, `detector.py`,
     `sounds.py`, `scoring.py`, `evidence.py`, `narrative.py`,
@@ -966,7 +974,10 @@ satisfy than the bypass, not easier. Rules that must not be loosened casually:
 it runs **after** the face bypass (a clip identity cleared is recorded as that,
 `routine_visit_applied` stays false) and never when `risk_forces_alert`; the
 model's confidence must be under `ROUTINE_VISIT_MAX_CONFIDENCE` (0.70, or 0.85
-with an approved match) -- the prompt reserves 0.8+ for the plainest findings;
+with an approved match) -- the prompt reserves 0.8+ for the plainest findings --
+and must be one the model *reported* (`BaseAnalyzer._model_confidence`): the
+figure `parse_response` makes up for a model that gives none (0.5, or 0.3 per
+keyword) cleared "a person forces the door open" until that was caught;
 without an approved match the camera's anomaly score must be under 0.35
 (`ROUTINE_VISIT_MAX_ANOMALY`: its rarest two hour bands); both of those last
 two face/hour conditions are applied in `_door_use_applies`, **before the model
@@ -978,7 +989,7 @@ read by `face_outcomes.face_evidence`: a **clear** face that matched nobody
 unfamiliar), a recognized-but-not-approved person or an unexamined frame always
 vetoes -- in `_door_use_applies`, which stops the `DOOR_USED` event (and so the
 prompt note telling the model it was ordinary use of a door) from existing at all,
-not merely the clear -- while faces too hard to read (`unclear`) deliberately count for nothing
+not merely the clear -- while faces too hard to read (`unclear`, a face too small to judge among them) deliberately count for nothing
 -- someone at a lock with their back half turned produces exactly those, and
 vetoing on them would defeat the feature. The 12 s / 0.70 / 0.85 / 0.35 numbers
 are judgement calls, not measurements (no real front-door corpus exists); say

@@ -22,6 +22,10 @@ const OUTCOME_TEXT = new Map<string, string>([
     'Recognized: faces too blurred, cut off or small to read were put down to the household members seen beside them.',
   ],
   ['unfamiliar', 'A clear face matched nobody enrolled — a visitor, or someone to enroll on the Biometrics tab.'],
+  [
+    'too_small',
+    'A face was too small to identify — a higher Face Recognition Resolution (add-on Configuration) captures faces larger.',
+  ],
   ['not_approved', 'Someone enrolled but not approved for clearing alerts was in this clip.'],
   ['unexamined', "A frame couldn't be checked for faces; the add-on log says why."],
   ['unclear', 'Faces too blurred, cut off or small to tell, with no household member seen nearby for them to be.'],
@@ -29,10 +33,7 @@ const OUTCOME_TEXT = new Map<string, string>([
     'unclear_ignorable',
     'Faces too blurred, cut off or small to tell. Ignore Unclear Faces (add-on Configuration) would have counted this clip as recognized.',
   ],
-  [
-    'extra_people',
-    "Every face was accounted for, but more people were in view at once than faces recognized — someone's face never showed.",
-  ],
+  ['extra_people', "More people were in view at once than household members recognized — someone's face never showed."],
 ])
 
 type ClipFaces = Pick<AnalysisResultDict, 'face_outcome' | 'faces_seen' | 'faces_matched'>

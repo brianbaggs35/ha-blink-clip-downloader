@@ -29,6 +29,12 @@ const REASONS: Reason[] = [
     hint: () => "A visitor, or someone who isn't enrolled yet. Find them in one of these clips above to enroll them.",
   },
   {
+    key: 'too_small',
+    label: 'Faces too small to identify',
+    hint: () =>
+      "Under 50 pixels wide, too small to tell who they are, so they never count as recognized. Raise Face Recognition Resolution to high or very_high in the add-on's Configuration tab.",
+  },
+  {
     key: 'unclear_ignorable',
     label: 'Unclear faces matched nobody',
     hint: (ignoring) =>

@@ -105,7 +105,11 @@ _EDGE_MARGIN = 2.0
 
 # Narrower than this a face is never set aside, whatever its quality: a face
 # that small is as likely to be someone far away as someone blurred, and too
-# small for "it matched nobody" to be read either way.
+# small for "it matched nobody" to be read either way. For the same reason it
+# is no evidence of a stranger either: the tally counts it as unclear (and as
+# too small, FaceTally.small), so the Recognition results panel says to raise
+# the resolution rather than to enroll a visitor, and routine door use
+# (face_outcomes.face_evidence) gives it no weight either way.
 _MIN_JUDGEABLE_WIDTH = 50
 
 # The Biometrics tab's "Good" line (frontend components/biometrics/found.ts).
@@ -401,8 +405,8 @@ class _Unmatched:
 
     face: DetectedFace
     #: Best similarity to each enrolled person's photos, by name -- what "looks
-    #: like one of the people it could be" is read from. Only worked out when
-    #: unclear faces may be set aside.
+    #: like one of the people it could be" is read from. Worked out for every
+    #: face, option on or off, so the tally can say what the option would do.
     resemblance: dict[str, float]
 
 
@@ -512,22 +516,24 @@ def _account_for(
     examined = [s for s in sightings if s is not None]
     unexamined = len(sightings) - len(examined)
     matches = [match for s in examined for match in s.matches]
+    unmatched = [u for s in examined for u in s.unmatched]
     approved = {name for name, is_approved in matches if is_approved}
     other = {name for name, is_approved in matches if not is_approved}
     blocked, set_aside, unclear = _account_unmatched(sightings)
     if ignore_unclear:
         unrecognized = bool(unexamined) or blocked
     else:
-        unrecognized = bool(unexamined) or any(s.unmatched for s in examined)
+        unrecognized = bool(unexamined) or bool(unmatched)
     return FaceRecognitionResult(
         approved_names=sorted(approved),
         other_names=sorted(other),
         unrecognized_present=unrecognized,
         unclear_faces=set_aside if ignore_unclear and not unrecognized else 0,
         tally=FaceTally(
-            seen=len(matches) + sum(len(s.unmatched) for s in examined),
+            seen=len(matches) + len(unmatched),
             matched=len(matches),
             unclear=unclear,
+            small=sum(u.face.width < _MIN_JUDGEABLE_WIDTH for u in unmatched),
             unexamined=unexamined,
             would_clear=not unexamined and not blocked,
         ),
@@ -537,7 +543,8 @@ def _account_for(
 def _account_unmatched(sightings: list[_Sighting | None]) -> tuple[bool, int, int]:
     """Apply the set-aside rule to every frame: whether any face still counts
     as a stranger, how many faces it set aside, and how many of the faces that
-    matched nobody looked unclear."""
+    matched nobody gave no clear look at anybody (too small to judge among
+    them, though those are never set aside)."""
     names_by_frame = [
         set() if s is None else {name for name, _ in s.matches} for s in sightings
     ]
@@ -566,17 +573,20 @@ def _available(index: int, names_by_frame: list[set[str]]) -> set[str]:
 
 def _could_be(unmatched: _Unmatched, available: set[str]) -> set[str] | None:
     """Who this face matching nobody could still be: ``None`` for a clear look
-    at somebody unfamiliar (too narrow to judge, or sharp, whole and like no
-    one *available*), otherwise the *available* people it leaves open -- empty
-    when it is unclear but nobody is there for it to be.
+    at somebody unfamiliar (sharp, whole and like no one *available*),
+    otherwise the *available* people it leaves open -- empty when it is too
+    narrow to judge, which is never set aside, or unclear with nobody there
+    for it to be.
 
     A poor look (quality under Good, or cut off by the frame) says nothing
     about who it is, so it could be any of them; a sharp, whole face could
-    only be one it clearly resembles.
+    only be one it clearly resembles. A face too narrow to judge is no clear
+    look at anybody either, so it is tallied as unclear, but it can never be
+    put down to anyone: it is as likely to be someone farther off.
     """
     face = unmatched.face
     if face.width < _MIN_JUDGEABLE_WIDTH:
-        return None
+        return set()
     if face.quality < _CLEAR_FACE_QUALITY or face.cut_off:
         return set(available)
     likenesses = {

@@ -21,6 +21,7 @@ from blink_downloader.analyzer import AnalysisResult, ClipAnalyzer
 from blink_downloader.analyzer.base import SecurityLayerSettings
 from blink_downloader.face_outcomes import FaceTally
 from blink_downloader.security import (
+    ROUTINE_VISIT_MAX_CONFIDENCE,
     Box,
     SecurityOutcome,
     Zone,
@@ -34,6 +35,11 @@ INTERVAL = 2.0
 DOOR_ZONE = Zone.from_config(
     {"x_min": 0.094, "y_min": 0.333, "x_max": 0.203, "y_max": 0.833}
 )
+
+#: A phrase only the routine-visit note carries: its presence and its absence
+#: are both checked against the note itself, never against a phrase that could
+#: vanish from the prompt for some other reason.
+_NOTE = "the shape of ordinary use of a door"
 
 
 def _person(x: float) -> Box:
@@ -152,7 +158,7 @@ async def test_an_ordinary_trip_through_the_front_door_is_not_an_alert(
     assert "Routine door use cleared suspicious flag for clip='c1'" in caplog.text
     assert '"Front door"' in caplog.text
     # The model was told what it was looking at.
-    assert "went through the door they were at" in model.call_args.args[1]
+    assert _NOTE in model.call_args.args[1]
 
 
 async def test_the_same_clip_stays_flagged_with_the_option_off() -> None:
@@ -164,7 +170,7 @@ async def test_the_same_clip_stays_flagged_with_the_option_off() -> None:
     assert result.is_suspicious is True
     assert result.routine_visit_applied is False
     assert "door_used" not in _kinds(result)
-    assert "went through the door" not in model.call_args.args[1]
+    assert _NOTE not in model.call_args.args[1]
 
 
 async def test_a_clip_the_model_found_unremarkable_is_left_alone(
@@ -239,9 +245,11 @@ async def test_a_camera_that_never_sees_this_hour_stays_flagged(
     assert result.is_suspicious is True
     assert result.routine_visit_applied is False
     assert "door_used" not in _kinds(result)
-    assert "went through the door" not in model.call_args.args[1]
+    assert _NOTE not in model.call_args.args[1]
     assert "Routine door use stands down for camera='Porch'" in caplog.text
-    assert "rarely sees activity at this hour (anomaly 0.50)" in caplog.text
+    assert (
+        "makes the clip unusual (anomaly 0.50, from its hour and length)" in caplog.text
+    )
 
 
 async def test_standing_down_is_only_logged_for_a_camera_with_a_door_marked(
@@ -315,7 +323,7 @@ async def test_a_clear_face_that_matches_nobody_stays_flagged(
     # ordinary use of a door, which would soften the model's own verdict on
     # the clip that most needs it left alone.
     assert "door_used" not in _kinds(result)
-    assert "went through the door" not in model.call_args.args[1]
+    assert _NOTE not in model.call_args.args[1]
     assert "does not match an approved household member" in caplog.text
 
 
@@ -391,6 +399,71 @@ async def test_even_with_a_match_a_very_confident_finding_stays_flagged() -> Non
     )
     result, _ = await _analyze(_hints(_GOING_IN, face=matched), _flagged(0.9))
     assert result.is_suspicious is True
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        pytest.param(
+            json.dumps(
+                {"suspicious": True, "description": "A person pries at the lock."}
+            ),
+            id="no confidence given",
+        ),
+        pytest.param(
+            json.dumps(
+                {
+                    "suspicious": True,
+                    "confidence": 0,
+                    "description": "A person forces the door open.",
+                }
+            ),
+            id="a confidence of zero",
+        ),
+        pytest.param(
+            "An intruder forces the front door open and goes inside.",
+            id="no JSON verdict at all",
+        ),
+    ],
+)
+async def test_a_flag_the_model_gave_no_confidence_for_stays_flagged(
+    response: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """parse_response makes a confidence up for a model that reports none --
+    0.5, or 0.3 for each keyword it finds -- and that figure says nothing about
+    how sure the model was. Read as "unsure", it cleared a clip described as
+    someone forcing the door on their way in."""
+    analyzer = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="p",
+        suspicious_keywords=["intruder"],
+        security_settings=SecurityLayerSettings(routine_door_use=True),
+    )
+    with caplog.at_level(logging.INFO, logger="blink_downloader.analyzer"):
+        result, _ = await _analyze(_hints(_GOING_IN), response, analyzer=analyzer)
+
+    assert result.is_suspicious is True
+    assert result.routine_visit_applied is False
+    # The made-up figure is under the cap: only knowing it was made up stops it.
+    assert result.confidence < ROUTINE_VISIT_MAX_CONFIDENCE
+    assert "door_used" in _kinds(result)
+    assert "gave no confidence of its own" in caplog.text
+
+
+async def test_a_face_too_small_to_judge_neither_helps_nor_hurts() -> None:
+    """At the default 640px most faces are narrower than recognition can judge.
+    Matching nobody, such a face is no clear look at a stranger: like a blurred
+    or turned-away one it counts for nothing either way -- and the clip says
+    the face was too small, not that a stranger was seen."""
+    tiny = FaceRecognitionResult(
+        unrecognized_present=True, tally=FaceTally(seen=1, unclear=1, small=1)
+    )
+    result, model = await _analyze(_hints(_GOING_IN, face=tiny), _flagged(0.6))
+
+    assert result.routine_visit_applied is True
+    assert _NOTE in model.call_args.args[1]
+    assert result.face_outcome == "too_small"
 
 
 async def test_the_face_bypass_clears_first_and_is_recorded_as_itself() -> None:

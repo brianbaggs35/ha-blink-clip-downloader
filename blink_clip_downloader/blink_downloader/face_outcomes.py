@@ -30,17 +30,20 @@ class FaceTally:
 
     Behind the Biometrics tab's Recognition results panel. A face is counted
     once per sampled frame it appears in, so these are detections rather
-    than people. *unclear* is how many of the faces that matched nobody had
-    an inconclusive look (see ``_could_be``) -- the ones
-    ``ai_face_recognition_ignore_unclear_faces`` may set aside -- whether or
-    not that option is on, and *would_clear* whether setting them aside
-    would leave no face counting as a stranger, which is how the panel can
-    say what turning the option on would change.
+    than people. *unclear* is how many of the faces that matched nobody gave
+    no clear look at anybody (see ``_could_be``): too small to judge, a poor
+    look, or only a likeness of someone recognized nearby -- whether or not
+    ``ai_face_recognition_ignore_unclear_faces`` is on. *small* is how many of
+    those were too small to judge (``_MIN_JUDGEABLE_WIDTH``), which the option
+    never sets aside, and *would_clear* whether setting the rest aside would
+    leave no face counting as a stranger, which is how the panel can say what
+    turning the option on would change.
     """
 
     seen: int = 0
     matched: int = 0
     unclear: int = 0
+    small: int = 0
     unexamined: int = 0
     would_clear: bool = False
 
@@ -66,14 +69,20 @@ class FaceOutcome(StrEnum):
     NOT_APPROVED = "not_approved"
     #: A frame could not be examined.
     UNEXAMINED = "unexamined"
+    #: A face too small to judge matched nobody (``_MIN_JUDGEABLE_WIDTH``):
+    #: recognition cannot tell who it is at this resolution, and the Ignore
+    #: Unclear Faces setting never sets one aside.
+    TOO_SMALL = "too_small"
     #: Only unclear faces are in the way, and they could not be set aside
     #: (nobody recognized beside them) or the setting would not help.
     UNCLEAR = "unclear"
     #: Only unclear faces are in the way, and the Ignore Unclear Faces
-    #: setting -- off when this was analyzed -- would set them aside.
+    #: setting -- off when this was analyzed -- would set them aside and so
+    #: count the clip as recognized.
     UNCLEAR_IGNORABLE = "unclear_ignorable"
-    #: Every face is accounted for, but object detection saw more people at
-    #: once than there were faces recognized.
+    #: Object detection saw more people at once than there were approved
+    #: members recognized, and nothing else is in the way (or only unclear
+    #: faces the setting would set aside, which would leave this standing).
     EXTRA_PEOPLE = "extra_people"
 
 
@@ -81,6 +90,7 @@ class FaceOutcome(StrEnum):
 #: order the panel lists them.
 HELD_BACK_OUTCOMES = (
     FaceOutcome.UNFAMILIAR,
+    FaceOutcome.TOO_SMALL,
     FaceOutcome.UNCLEAR_IGNORABLE,
     FaceOutcome.UNCLEAR,
     FaceOutcome.NOT_APPROVED,
@@ -89,15 +99,20 @@ HELD_BACK_OUTCOMES = (
 )
 
 
-def classify_face_outcome(result: FaceRecognitionResult, *, recognized: bool) -> str:
+def classify_face_outcome(
+    result: FaceRecognitionResult, *, recognized: bool, extra_people: bool
+) -> str:
     """The :class:`FaceOutcome` of a clip, or ``""`` if nothing was examined.
 
     *recognized* is whether the clip counted as recognized
-    (``BaseAnalyzer._face_match_is_unambiguous``). When it did not, the
-    reason is the first of these that applies, most actionable first -- and
-    the last needs no test of its own: a clip that every face check passes
-    and that still did not count can only have been held back by the people
-    count from object detection.
+    (``BaseAnalyzer._face_match_is_unambiguous``), and *extra_people* whether
+    object detection saw more people at once than approved members were
+    recognized -- the one thing besides faces that decides it. When the clip
+    did not count, the reason is the first of these that applies, most
+    actionable first. Unclear faces are only called ones the setting would
+    set aside when that would leave the clip recognized, so the panel never
+    promises more than turning it on delivers: with more people in view than
+    were recognized, it would still not count, and that is the reason given.
     """
     tally = result.tally
     if tally is None:
@@ -112,10 +127,12 @@ def classify_face_outcome(result: FaceRecognitionResult, *, recognized: bool) ->
         return FaceOutcome.NOT_APPROVED
     if tally.unexamined:
         return FaceOutcome.UNEXAMINED
-    if result.unrecognized_present:
-        return (
-            FaceOutcome.UNCLEAR_IGNORABLE if tally.would_clear else FaceOutcome.UNCLEAR
-        )
+    if tally.small:
+        return FaceOutcome.TOO_SMALL
+    if result.unrecognized_present and not tally.would_clear:
+        return FaceOutcome.UNCLEAR
+    if result.unrecognized_present and not extra_people:
+        return FaceOutcome.UNCLEAR_IGNORABLE
     return FaceOutcome.EXTRA_PEOPLE
 
 
@@ -126,8 +143,9 @@ class FaceEvidence(StrEnum):
     member and so needs every face matched. This is the question behaviour
     asks of identity (``security/routine.py``): does anything contradict a
     household member, and does anything confirm one. A face that is merely
-    hard to read -- blurred, turned away, cut off -- is neither, which is
-    what a person at a lock with their back half to the camera produces.
+    hard to read -- blurred, turned away, cut off, too small to judge -- is
+    neither, which is what a person at a lock with their back half to the
+    camera produces.
     """
 
     #: No face was found to say anything, or recognition has nothing enrolled
@@ -147,9 +165,10 @@ def face_evidence(result: FaceRecognitionResult | None) -> FaceEvidence:
 
     "A clear look at a face that matched nobody" is the same count
     :func:`classify_face_outcome` calls ``UNFAMILIAR`` -- faces seen, less
-    those matched, less those with an inconclusive look -- so the two cannot
-    disagree about what a stranger is, and ``ai_face_recognition_ignore_
-    unclear_faces`` changes neither.
+    those matched, less those that gave no clear look at anybody (a face too
+    small to judge among them) -- so the two cannot disagree about what a
+    stranger is, and ``ai_face_recognition_ignore_unclear_faces`` changes
+    neither.
     """
     if result is None or result.tally is None:
         return FaceEvidence.NONE

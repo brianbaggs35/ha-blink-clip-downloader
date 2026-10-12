@@ -34,6 +34,8 @@ function row(over: Record<string, unknown> = {}) {
     ai_confidence: 0.83,
     ai_summary: 'A person is standing at the driver door.',
     risk_override_applied: false,
+    face_bypass_applied: false,
+    routine_visit_applied: false,
     ...over,
   }
 }
@@ -93,6 +95,27 @@ test('a clip flagged on evidence alone is labelled as such, not as a disagreemen
   // conflict left for a person to arbitrate.
   await showTimeline(page, [row({ clip_id: 'verdict-4', ai_suspicious: false, risk_override_applied: true })])
   await expect(page.getByText('Flagged on evidence')).toBeVisible()
+  await expect(page.locator('.security-disagree')).toHaveCount(0)
+})
+
+test('a flag a local rule cleared is named for that rule, not as the model seeing nothing', async ({ page }) => {
+  // Both are stored as not suspicious. The model flagged them; the face bypass
+  // or routine door use is what cleared them -- the clips to check when
+  // deciding whether to keep either rule on.
+  await showTimeline(page, [
+    row({ clip_id: 'verdict-7', ai_suspicious: false, face_bypass_applied: true }),
+    row({
+      id: 2,
+      clip_id: 'verdict-8',
+      severity: 'noteworthy',
+      event_type: 'asset_approached',
+      ai_suspicious: false,
+      routine_visit_applied: true,
+    }),
+  ])
+  await expect(page.getByText('Cleared: household member')).toBeVisible()
+  await expect(page.getByText('Cleared: routine door use')).toBeVisible()
+  await expect(page.getByText('AI: nothing unusual')).toHaveCount(0)
   await expect(page.locator('.security-disagree')).toHaveCount(0)
 })
 
