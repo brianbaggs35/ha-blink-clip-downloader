@@ -11,7 +11,7 @@ interface ProviderInfo {
   link: { href: string; label: string }
   // Local providers have no pricing to link to — a docs link takes that
   // button's place instead. 'kind' picks the icon/label in the template
-  // rather than baking them into each entry, so all six stay consistent.
+  // rather than baking them into each entry, so all eight stay consistent.
   secondaryLink: { href: string; kind: 'pricing' | 'docs' }
 }
 
@@ -95,6 +95,40 @@ const PROVIDERS: ProviderInfo[] = [
     link: { href: 'https://platform.openai.com', label: 'platform.openai.com' },
     secondaryLink: { href: 'https://developers.openai.com/api/docs/pricing', kind: 'pricing' },
   },
+  {
+    key: 'huggingface',
+    name: 'Hugging Face',
+    tagline:
+      'Uses Hugging Face Inference Providers — one token, and any vision model its backends serve (Qwen, Gemma, GLM, and more). Billed per token to your Hugging Face account, at the rate of whichever backend serves the request.',
+    configFields: [
+      'Hugging Face Token — a token that may make calls to Inference Providers; the same one the computer-vision downloads use',
+      'Hugging Face Model — org/name, optionally with :cheapest, :fastest or a backend name such as :novita',
+    ],
+    notes: [
+      'Fetch Models on the AI tab lists the vision models available right now, cheapest first, with their price. Model availability and rates change often, and rates differ between backends.',
+      'Free Hugging Face accounts include no monthly credit for Inference Providers — an account needs a PRO subscription or purchased credit, and a clip that arrives when the balance is empty waits in the queue instead of being lost. See the pricing page for the current terms.',
+      'Clip frames are sent to Hugging Face and to the backend it routes to, the same as for any cloud provider.',
+    ],
+    link: { href: 'https://huggingface.co/docs/inference-providers', label: 'Inference Providers docs' },
+    secondaryLink: { href: 'https://huggingface.co/docs/inference-providers/pricing', kind: 'pricing' },
+  },
+  {
+    key: 'replicate',
+    name: 'Replicate',
+    tagline:
+      "Uses Replicate's official vision models (Gemini, GPT, Claude and more) through its prediction API. Billed to your Replicate account — per token or per second of compute, depending on the model.",
+    configFields: [
+      'Replicate API Token — API token from replicate.com/account/api-tokens',
+      'Replicate Model — an official model written owner/name, defaults to openai/gpt-4o-mini',
+    ],
+    notes: [
+      "The add-on reads each model's own input schema to learn what it calls its image, prompt and token-limit inputs, so a model that takes a picture and a prompt works without a release. Models that accept only one image per request are asked once per frame, and the most alarming answer is kept.",
+      "Replicate publishes no per-token rate this add-on can read, so the AI Usage tab shows token counts (where the model reports them) but no cost — check your Replicate dashboard for what you've spent.",
+      'Clip frames are sent to Replicate, and to the model provider behind the model you pick, the same as for any cloud provider.',
+    ],
+    link: { href: 'https://replicate.com/docs/get-started/python', label: 'Replicate documentation' },
+    secondaryLink: { href: 'https://replicate.com/pricing', kind: 'pricing' },
+  },
 ]
 </script>
 
@@ -102,8 +136,8 @@ const PROVIDERS: ProviderInfo[] = [
   <div class="auto-content">
     <h2>AI Providers &amp; Models</h2>
     <p>
-      Six AI providers are supported for clip analysis — set the AI Provider option in the add-on's Configuration tab to
-      one of the values below. Use <strong>Fetch Models</strong> on the AI tab to browse live model availability and
+      Eight AI providers are supported for clip analysis — set the AI Provider option in the add-on's Configuration tab
+      to one of the values below. Use <strong>Fetch Models</strong> on the AI tab to browse live model availability and
       pricing for the provider you've configured; this page is a reference for choosing between them.
     </p>
 
@@ -188,6 +222,13 @@ const PROVIDERS: ProviderInfo[] = [
       automatically at startup; on unsupported hardware the pipeline reports itself unavailable rather than crashing,
       and the Biometrics tab and Library's "Recognized" filter are hidden automatically rather than shown
       non-functional.
+    </p>
+    <p style="font-size: 0.85rem; color: var(--muted); line-height: 1.55; max-width: 70ch; margin-top: 0.75rem">
+      Hardware that cannot run these models can send the object-detection stage to Hugging Face instead — set the Object
+      Detection Backend option to <code>huggingface</code>. That uploads the sampled clip frames to Hugging Face for
+      detection; face recognition, enrolled photos, face data and sound classification always stay on this device.
+      Hugging Face's serverless inference offers no depth-estimation or segmentation model, so those two stages are not
+      run in that mode.
     </p>
   </div>
 </template>

@@ -107,6 +107,9 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             os.environ["HF_TOKEN"] = config.hf_token
         else:
             os.environ.pop("HF_TOKEN", None)
+        # Decided (and announced) once, here, so the media server and the
+        # log agree on whether frames leave the device.
+        self._remote_vision = self._remote_vision_active(config)
 
         self._storage = StorageManager(
             base_path=config.download_path,
@@ -272,6 +275,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             face_frame_width=FACE_RESOLUTION_WIDTHS[
                 config.ai_face_recognition_resolution
             ],
+            remote_vision=self._remote_vision,
             live_view=self._live_view,
             list_camera_names=(
                 self._e2e_fixtures.list_camera_names
@@ -662,6 +666,9 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
                 ("ai_enhanced_detection_enabled", config.ai_enhanced_detection_enabled),
                 ("ai_security_events_enabled", config.ai_security_events_enabled),
                 ("ai_temporal_scan_frames above 0", config.ai_temporal_scan_frames > 0),
+                # Remote detection returns boxes without tracks, and a door
+                # visit is defined by one person's continuous track.
+                ("ai_vision_backend set to local", config.ai_vision_backend == "local"),
             )
             if not on
         ]
@@ -672,6 +679,36 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
                 ", ".join(missing),
             )
         return not missing
+
+    @staticmethod
+    def _remote_vision_active(config: AppConfig) -> bool:
+        """Whether sampled clip frames are uploaded to Hugging Face for detection.
+
+        Only when detection is on at all: ``ai_vision_backend`` names where the
+        stage runs, and with the stage off nothing runs anywhere. Warns, once at
+        start-up, about the two ways it can quietly do nothing useful (no token
+        to make the calls with) or surprise (a privacy-minded setup that now
+        sends frames to a cloud service), because neither shows anywhere else
+        until a clip is analyzed.
+        """
+        if not (
+            config.ai_enhanced_detection_enabled
+            and config.ai_vision_backend == "huggingface"
+        ):
+            return False
+        _LOGGER.info(
+            "  Vision backend : object detection runs on Hugging Face (model=%s). "
+            "Sampled clip frames are uploaded for it; enrolled photos, face "
+            "data, names and audio never leave this device.",
+            config.ai_remote_detection_model,
+        )
+        if not config.huggingface_inference_key():
+            _LOGGER.warning(
+                "ai_vision_backend is 'huggingface' but neither "
+                "huggingface_api_key nor hf_token is set: object detection "
+                "cannot run, and its evidence will be reported unavailable."
+            )
+        return True
 
     def _setup_ai_analysis(self, config: AppConfig) -> None:
         (
@@ -732,6 +769,10 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
                 anthropic_model=config.anthropic_model,
                 openai_api_key=config.openai_api_key,
                 openai_model=config.openai_model,
+                huggingface_api_key=config.huggingface_inference_key(),
+                huggingface_model=config.huggingface_model,
+                replicate_api_key=config.replicate_api_key,
+                replicate_model=config.replicate_model,
             ),
             escalation_provider=config.ai_escalation_provider,
             escalation_model=config.ai_escalation_model,
@@ -767,6 +808,9 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
                     audio_analysis_enabled=config.ai_audio_analysis_enabled,
                     audio_model=config.ai_audio_model,
                     hf_token=config.hf_token,
+                    vision_backend=config.ai_vision_backend,
+                    remote_detection_model=config.ai_remote_detection_model,
+                    remote_detection_token=config.huggingface_inference_key(),
                     temporal_scan_frames=config.ai_temporal_scan_frames,
                     security_events_enabled=config.ai_security_events_enabled,
                 ),
@@ -1031,6 +1075,8 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
                 "moondream_cloud": self._config.moondream_finetune_model,
                 "anthropic": self._config.anthropic_model,
                 "openai": self._config.openai_model,
+                "huggingface": self._config.huggingface_model,
+                "replicate": self._config.replicate_model,
             }
             _LOGGER.info(
                 "  AI analysis    : on (provider=%s, model=%s)",

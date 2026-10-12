@@ -189,6 +189,7 @@ class FaceRoutesMixin(_MediaServerBase):
                 "recognition_enabled": self._face_recognition_enabled,
                 "analysis_enabled": self._analyzer is not None,
                 "frame_width": self._face_frame_width,
+                "remote_vision": self._remote_vision,
                 "faces": [
                     {
                         "id": e["id"],

@@ -3,14 +3,23 @@ import { mount } from '@vue/test-utils'
 import ModelsPage from './ModelsPage.vue'
 
 describe('ModelsPage', () => {
-  it('lists all six AI providers with their config keys', () => {
+  it('lists all seven AI providers with their config keys', () => {
     const wrapper = mount(ModelsPage)
-    for (const key of ['ollama', 'ollama_cloud', 'moondream_cloud', 'moondream_local', 'anthropic', 'openai']) {
+    for (const key of [
+      'ollama',
+      'ollama_cloud',
+      'moondream_cloud',
+      'moondream_local',
+      'anthropic',
+      'openai',
+      'huggingface',
+    ]) {
       expect(wrapper.text()).toContain(key)
     }
     expect(wrapper.text()).toContain('Ollama (Local/LAN)')
     expect(wrapper.text()).toContain('Anthropic (Claude)')
     expect(wrapper.text()).toContain('OpenAI (GPT)')
+    expect(wrapper.text()).toContain('Hugging Face')
   })
 
   it("links out to each provider's docs/console instead of hardcoding pricing", () => {
@@ -29,6 +38,7 @@ describe('ModelsPage', () => {
     expect(hrefs).toContain('https://platform.claude.com/docs/en/about-claude/pricing')
     expect(hrefs).toContain('https://docs.moondream.ai/pricing/')
     expect(hrefs).toContain('https://ollama.com/pricing')
+    expect(hrefs).toContain('https://huggingface.co/docs/inference-providers/pricing')
     expect(wrapper.text()).toContain('💲 Pricing')
   })
 
@@ -46,6 +56,25 @@ describe('ModelsPage', () => {
       expect(a.attributes('target')).toBe('_blank')
       expect(a.attributes('rel')).toBe('noopener')
     }
+  })
+
+  it('gives the Hugging Face card both its documentation and its pricing page, not just somewhere on the page', () => {
+    const wrapper = mount(ModelsPage)
+    const card = wrapper.findAll('.p-card').find((c) => c.text().includes('huggingface'))
+    expect(card).toBeDefined()
+    const links = card!.findAll('a').map((a) => ({ href: a.attributes('href'), text: a.text() }))
+    expect(links).toEqual([
+      { href: 'https://huggingface.co/docs/inference-providers', text: '↗ Inference Providers docs' },
+      { href: 'https://huggingface.co/docs/inference-providers/pricing', text: '💲 Pricing' },
+    ])
+  })
+
+  it('says plainly that frames go to Hugging Face, and what never does', () => {
+    const wrapper = mount(ModelsPage)
+    expect(wrapper.text()).toContain('sampled clip frames to Hugging Face')
+    expect(wrapper.text()).toContain(
+      'face recognition, enrolled photos, face data and sound classification always stay',
+    )
   })
 
   it('mentions the moondream_local GPU requirement', () => {

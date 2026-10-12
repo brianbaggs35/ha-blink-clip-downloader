@@ -128,6 +128,23 @@ describe('BiometricsPage', () => {
     expect(reveal).toHaveBeenCalled()
   })
 
+  it('says plainly that frames go to Hugging Face when detection runs there, and keeps the promise about enrollment', async () => {
+    stubFetch(() => facesResponse([], { remote_vision: true }))
+    const wrapper = await mountPage()
+    const banner = wrapper.find('.privacy-banner').text()
+    expect(banner).toContain('uploaded')
+    expect(banner).toContain('Hugging Face')
+    // The promise that is still true stays on the page beside the exception.
+    expect(banner).toContain('Everything here stays local')
+    expect(banner).toContain('everything enrolled here, still stays on this device')
+  })
+
+  it.each([[{ remote_vision: false }], [{}]])('shows no upload notice when detection is local (%j)', async (extra) => {
+    stubFetch(() => facesResponse([], extra))
+    const wrapper = await mountPage()
+    expect(wrapper.find('.privacy-banner').text()).not.toContain('Hugging Face')
+  })
+
   it('cannot start finding faces where recognition cannot run', async () => {
     stubFetch(() => facesResponse([], { available: false }))
     const wrapper = await mountPage()

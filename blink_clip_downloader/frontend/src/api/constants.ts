@@ -10,6 +10,8 @@ export const PROVIDER_LABELS: Record<AiProvider, string> = {
   moondream_local: 'Moondream Local (0.5B)',
   anthropic: 'Anthropic (Claude)',
   openai: 'OpenAI (GPT)',
+  huggingface: 'Hugging Face',
+  replicate: 'Replicate',
 }
 
 export function providerLabel(provider?: string): string {

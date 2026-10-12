@@ -19,7 +19,7 @@ const props = defineProps<{ status: AiStatus }>()
 
 const toast = useToastStore()
 
-const MODEL_PICKER_PROVIDERS = new Set(['ollama', 'ollama_cloud', 'anthropic', 'openai'])
+const MODEL_PICKER_PROVIDERS = new Set(['ollama', 'ollama_cloud', 'anthropic', 'openai', 'huggingface', 'replicate'])
 const showModelPicker = () => MODEL_PICKER_PROVIDERS.has(props.status.provider || '')
 
 // OpenAI's picker is sorted newest-to-oldest (see model_catalog.py's
@@ -33,7 +33,13 @@ const OPENAI_BEST_ESCALATION_MODEL = 'gpt-5.4-mini'
 
 type ModelTier = 'primary' | 'escalation'
 
+// Hugging Face's list is sorted cheapest-first and Replicate's is a fixed
+// roster, so for neither is "index 0" a recommendation — and the add-on has
+// no measurement that would justify naming one.
+const UNRANKED_PROVIDERS = new Set<string | undefined>(['huggingface', 'replicate'])
+
 function isBestModel(m: AiModelEntry, index: number, provider: string | undefined, tier: ModelTier): boolean {
+  if (UNRANKED_PROVIDERS.has(provider)) return false
   if (provider === 'ollama_cloud') return m.recommended === true
   if (provider === 'openai') {
     return m.name === (tier === 'primary' ? OPENAI_BEST_PRIMARY_MODEL : OPENAI_BEST_ESCALATION_MODEL)
@@ -41,10 +47,16 @@ function isBestModel(m: AiModelEntry, index: number, provider: string | undefine
   return index === 0
 }
 
+// Dollars per million tokens, trimmed so $0.07 and $15 both read naturally.
+function perMillion(dollars: number): string {
+  return `$${Number(dollars.toFixed(3))}`
+}
+
 function modelLabel(m: AiModelEntry, index: number, provider: string | undefined, tier: ModelTier): string {
   const gb = m.size ? ` · ${(m.size / 1e9).toFixed(1)} GB` : ''
+  const price = m.pricing ? ` · ${perMillion(m.pricing.input)}/${perMillion(m.pricing.output)} per 1M` : ''
   const star = isBestModel(m, index, provider, tier) ? ' ⭐ Best' : ''
-  return `${m.name}${gb}${star}`
+  return `${m.name}${gb}${price}${star}`
 }
 
 function modelFetchMessage(modelCount: number, provider: string | undefined): string {
@@ -266,6 +278,13 @@ function confPct(r: AnalysisResultDict): number {
       <div style="font-size: 0.82rem; color: var(--muted); margin-bottom: 0.6rem">
         Model: <strong>{{ status.model || '—' }}</strong>
       </div>
+      <div
+        v-if="status.remote_vision"
+        class="remote-vision"
+        style="font-size: 0.82rem; color: var(--muted); margin-bottom: 0.6rem"
+      >
+        Object detection: <strong>Hugging Face</strong> — sampled clip frames are uploaded for it
+      </div>
 
       <div v-if="showModelPicker()" class="model-picker">
         <Button size="small" class="model-picker__fetch" :disabled="fetchingModels" @click="fetchModels">
@@ -287,7 +306,7 @@ function confPct(r: AnalysisResultDict): number {
             severity="secondary"
             outlined
             class="model-picker__copy"
-            title="Copy the selected model id, then paste it into this add-on's configuration (OpenAI Model / Anthropic Model / Ollama Vision Model)"
+            title="Copy the selected model id, then paste it into this add-on's configuration (OpenAI Model / Anthropic Model / Ollama Vision Model / Hugging Face Model / Replicate Model)"
             @click="copyModelId"
           >
             📋 Copy

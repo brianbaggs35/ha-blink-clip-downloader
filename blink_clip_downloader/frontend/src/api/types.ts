@@ -96,7 +96,15 @@ export interface ActivityRow {
 // AI status / queue / analysis
 // ---------------------------------------------------------------------
 
-export type AiProvider = 'ollama' | 'ollama_cloud' | 'moondream_cloud' | 'moondream_local' | 'anthropic' | 'openai'
+export type AiProvider =
+  | 'ollama'
+  | 'ollama_cloud'
+  | 'moondream_cloud'
+  | 'moondream_local'
+  | 'anthropic'
+  | 'openai'
+  | 'huggingface'
+  | 'replicate'
 
 export interface QueueStatus {
   schedule_start: string | null
@@ -142,6 +150,9 @@ export interface AiStatus {
    *  recognition. See vision/runtime.py's torch_cpu_compatible(). Undefined only
    *  when AI analysis itself is off (enabled: false). */
   torch_cpu_compatible?: boolean
+  /** True when object detection runs on Hugging Face's servers
+   *  (ai_vision_backend), i.e. sampled clip frames are uploaded for it. */
+  remote_vision?: boolean
   moondream_installed?: boolean
   moondream_arch_supported?: boolean
   escalation_provider?: AiProvider
@@ -414,6 +425,9 @@ export interface AiModelEntry {
   description?: string
   size?: number
   recommended?: boolean
+  /** Estimated $ per 1M tokens, for the providers that publish prices
+   *  (Hugging Face); null when nothing in the catalog prices the model. */
+  pricing?: { input: number; output: number } | null
   [key: string]: unknown
 }
 
@@ -577,6 +591,9 @@ export interface FacesResponse {
   analysis_enabled: boolean
   /** The width recognition matches faces at (ai_face_recognition_resolution). */
   frame_width: number
+  /** True when object detection runs on Hugging Face, so the clip frames
+   *  (which can contain faces) are uploaded — enrollment data never is. */
+  remote_vision?: boolean
   faces: FaceEnrollment[]
 }
 

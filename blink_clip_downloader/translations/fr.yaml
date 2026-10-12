@@ -236,13 +236,17 @@ configuration:
   ai_provider:
     name: Fournisseur d'IA
     description: >-
-      Quel moteur d'IA utiliser. « ollama » = serveur Ollama local sur
-      votre réseau (gratuit, privé). « ollama_cloud » = API Ollama Cloud
-      (payant). « moondream_cloud » = API Moondream Cloud (payant,
-      utilise la détection d'objets + le raisonnement pour une meilleure
-      précision). « moondream_local » = Moondream 0.5B sur l'appareil
-      (gratuit, x86_64 uniquement). « anthropic » = API Claude (payant).
-      « openai » = API OpenAI GPT (payant).
+      Quel moteur d'IA utiliser. « ollama » = serveur Ollama local sur votre
+      réseau (gratuit, privé). « ollama_cloud » = API Ollama Cloud (payant). «
+      moondream_cloud » = API Moondream Cloud (payant, utilise la détection
+      d'objets + le raisonnement pour une meilleure précision). «
+      moondream_local » = Moondream 0.5B sur l'appareil (gratuit, x86_64
+      uniquement). « anthropic » = API Claude (payant). « openai » = API
+      OpenAI GPT (payant). « huggingface » = Hugging Face Inference Providers,
+      tout modèle de vision qu'il propose (payant au jeton ; utilise le Jeton
+      d'API Hugging Face ou, s'il est vide, le Jeton Hugging Face). «
+      replicate » = modèles de vision officiels de Replicate (payant ; utilise
+      le jeton d'API Replicate).
   ollama_url:
     name: URL du serveur Ollama
     description: >-
@@ -299,6 +303,42 @@ configuration:
       Modèle GPT à utiliser. gpt-4o-mini est l'option de vision la plus
       économique. Utilisez « Fetch Models » dans l'onglet IA de
       l'interface Web.
+  huggingface_api_key:
+    name: Jeton d'API Hugging Face
+    description: >-
+      Jeton Hugging Face utilisé par le fournisseur d'IA « huggingface » et le
+      backend de détection d'objets « huggingface ». Créez sur
+      https://huggingface.co/settings/tokens un jeton à granularité fine avec
+      « Make calls to Inference Providers ». Les requêtes sont facturées au
+      compte auquel il appartient (les comptes gratuits n'ont pas de crédit
+      mensuel — voir la documentation). Laissez vide pour utiliser à la place
+      le Jeton Hugging Face ci-dessous. Gardez-le secret.
+  huggingface_model:
+    name: Modèle Hugging Face
+    description: >-
+      Modèle de vision à utiliser lorsque le fournisseur d'IA est «
+      huggingface », sous la forme org/nom, avec éventuellement un suffixe de
+      routage : « :cheapest », « :fastest » (par défaut) ou un backend comme «
+      :novita ». Utilisez « Fetch Models » dans l'onglet IA de l'interface Web
+      pour voir ce qui est disponible en ce moment, du moins cher au plus
+      cher, avec les prix. Authentifié par le Jeton d'API Hugging Face
+      ci-dessus (ou, s'il est vide, par le Jeton Hugging Face ci-dessous).
+  replicate_api_key:
+    name: Jeton d'API Replicate
+    description: >-
+      Jeton d'API de replicate.com/account/api-tokens. Obligatoire lorsque le
+      fournisseur d'IA est « replicate ». Les requêtes sont facturées au
+      compte auquel il appartient. Gardez-le secret.
+  replicate_model:
+    name: Modèle Replicate
+    description: >-
+      Modèle officiel de Replicate à utiliser lorsque le fournisseur d'IA est
+      « replicate », écrit owner/name — par exemple openai/gpt-4o-mini (par
+      défaut) ou google/gemini-2.5-flash. Il doit accepter une image et un
+      prompt ; les modèles de la communauté ne sont pas pris en charge.
+      Utilisez « Fetch Models » dans l'onglet IA de l'interface Web pour voir
+      les modèles de vision officiels. Les modèles qui n'acceptent qu'une
+      image par requête sont interrogés une fois par image.
   openai_escalation_model:
     name: Modèle d'escalade OpenAI (obsolète)
     description: >-
@@ -491,6 +531,29 @@ configuration:
       que le reste de cet add-on. Confortable sur un Raspberry Pi 5
       (8 Go) ou mieux. Désactivé par défaut ; l'analyse fonctionne
       exactement de la même façon sans cette option.
+  ai_vision_backend:
+    name: Backend de détection d'objets
+    description: >-
+      Où s'exécute l'étape de détection d'objets de la détection améliorée. «
+      local » = sur cet appareil (par défaut). « huggingface » = sur les
+      serveurs de Hugging Face, pour le matériel qui ne peut pas exécuter le
+      modèle : les images échantillonnées du clip sont ENVOYÉES à Hugging
+      Face, et le compte associé au Jeton d'API Hugging Face (ou au Jeton
+      Hugging Face) est facturé. Seule la détection peut être déportée :
+      Hugging Face n'a aucun modèle d'estimation de profondeur ni de
+      segmentation, donc l'analyse de profondeur et de contact ne s'exécute
+      pas dans ce mode ; l'estimation de posture, la reconnaissance faciale et
+      l'analyse audio restent sur cet appareil, et les données de
+      reconnaissance faciale ne le quittent dans aucun des deux modes. Lisez
+      la documentation avant de l'activer.
+  ai_remote_detection_model:
+    name: Modèle de détection Hugging Face
+    description: >-
+      Modèle de détection d'objets de Hugging Face utilisé lorsque le backend
+      de détection d'objets est « huggingface ». Son inférence serverless
+      propose actuellement facebook/detr-resnet-50 (par défaut) et
+      facebook/detr-resnet-101. Laissez vide pour utiliser la valeur par
+      défaut.
   ai_object_detection_model:
     name: Modèle de détection d'objets
     description: >-
@@ -554,12 +617,15 @@ configuration:
       changement, rescannez un clip dans l'onglet Biométrie — les visages
       correspondent mieux aux photos enregistrées à la même résolution.
   hf_token:
-    name: Jeton Hugging Face (optionnel)
+    name: Jeton Hugging Face
     description: >-
-      Jeton d'accès Hugging Face facultatif utilisé pour authentifier
-      les téléchargements de modèles de vision par ordinateur et
-      augmenter les limites de débit du Hugging Face Hub. Créez-en un
-      sur https://huggingface.co/settings/tokens. Gardez-le secret.
+      Jeton d'accès Hugging Face. Facultatif tant que tout s'exécute sur cet
+      appareil, où il authentifie les téléchargements de modèles de vision par
+      ordinateur et augmente les limites de débit du Hugging Face Hub. Si le
+      Jeton d'API Hugging Face ci-dessus est vide, il sert aussi d'identifiant
+      pour le fournisseur d'IA « huggingface » et le backend de détection
+      d'objets « huggingface », et doit alors autoriser « Make calls to
+      Inference Providers ». Gardez-le secret.
   ai_pose_estimation_enabled:
     name: Activer l'estimation de pose
     description: >-
