@@ -54,7 +54,16 @@ class UsageRoutesMixin(_MediaServerBase):
             if self._analyzer.escalation_analyzer is not None:
                 analyzers.append(self._analyzer.escalation_analyzer)
         for analyzer in analyzers:
-            await analyzer.refresh_pricing()
+            try:
+                await analyzer.refresh_pricing()
+            except Exception:
+                # Prices are a courtesy on this page; a provider that cannot
+                # load its own must cost a row its figure, not the page.
+                _LOGGER.warning(
+                    "Could not load %s's prices; its rows show no cost",
+                    analyzer.provider_name,
+                    exc_info=True,
+                )
 
         def lookup(model: str) -> tuple[float, float] | None:
             for analyzer in analyzers:

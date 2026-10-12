@@ -43,9 +43,10 @@ defineProps<{ provider?: string; showEscalationNote: boolean }>()
       pin the least expensive backend), and your Hugging Face billing page has the exact figure.
     </p>
     <p v-else-if="provider === 'replicate'">
-      Replicate bills per token or per second of compute depending on the model, and publishes no rate this add-on can
-      read — so token counts are shown where the model reports them, and no cost is estimated. Your Replicate dashboard
-      has what you have spent.
+      Replicate bills its official language models per token. Its API carries no prices, so the estimated cost uses the
+      per-token rates shown on each model's Replicate page, copied into the add-on and so liable to drift — your
+      Replicate dashboard has what you have actually spent. Token counts come from the prediction's optional metrics: a
+      model that reports none shows no tokens, and one with no listed rate (GPT-5.6 Sol) shows no cost.
     </p>
     <p v-if="showEscalationNote">
       Two-tier escalation (the AI Escalation Provider / AI Escalation Model options) works with any provider as tier 2,

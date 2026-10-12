@@ -160,6 +160,7 @@ def test_every_option_the_parser_reads_is_declared_in_config_yaml(
     ).read_text()
     read = set(re.findall(r'data\.get\(\s*["\']([a-z0-9_]+)["\']', source))
     read |= set(re.findall(r'_bounded_int\(\s*data,\s*["\']([a-z0-9_]+)["\']', source))
+    read |= set(re.findall(r'_text_option\(\s*data,\s*["\']([a-z0-9_]+)["\']', source))
     undeclared = sorted(read - set(current["schema"]))
     assert not undeclared, (
         f"read from options.json but not in config.yaml: {undeclared}"

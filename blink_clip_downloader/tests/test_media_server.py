@@ -11125,3 +11125,52 @@ async def test_ai_usage_asks_the_escalation_analyzer_for_its_own_rate(
     finally:
         await tc.close()
     assert data["monthly"][0]["cost"] == pytest.approx(0.2)
+
+
+async def test_ai_usage_prices_replicate_rows_from_the_model_pages(
+    db: ClipDatabase,
+) -> None:
+    """Replicate's API carries no prices; the ones for its official models
+    were read off their pages, and a model nobody could price stays N/A."""
+    from blink_downloader.analyzer import ReplicateAnalyzer
+
+    await _add_usage_row(db, "r1", "openai/gpt-4o-mini")
+    await _add_usage_row(db, "r2", "anthropic/claude-4.5-sonnet")
+    await _add_usage_row(db, "r3", "openai/gpt-5.6-sol")
+    analyzer = ReplicateAnalyzer(api_key="r8_x", model="openai/gpt-4o-mini", prompt="p")
+    server = MediaServer(db=db, port=0, analyzer=analyzer)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        data = await (await tc.get("/api/ai/usage")).json()
+    finally:
+        await tc.close()
+    by_model = {row["model"]: row["cost"] for row in data["by_model"]}
+    assert by_model["openai/gpt-4o-mini"] == pytest.approx(0.15 + 0.60)
+    assert by_model["anthropic/claude-4.5-sonnet"] == pytest.approx(3.00 + 15.00)
+    assert by_model["openai/gpt-5.6-sol"] is None
+    assert data["provider"] == "replicate"
+    assert data["total_estimated_cost"] == pytest.approx(0.75 + 18.0)
+
+
+async def test_ai_usage_survives_an_analyzer_that_cannot_load_its_prices(
+    db: ClipDatabase, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Prices are a courtesy on this page: a provider whose own price lookup
+    fails must cost its rows their figure, not the whole page its answer."""
+    await _add_usage_row(db, "p1", "gpt-4o-mini")
+    analyzer = _make_analyzer()
+    analyzer.refresh_pricing = AsyncMock(side_effect=RuntimeError("catalog down"))
+    server = MediaServer(db=db, port=0, analyzer=analyzer)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        with caplog.at_level(logging.WARNING):
+            resp = await tc.get("/api/ai/usage")
+        data = await resp.json()
+    finally:
+        await tc.close()
+    assert resp.status == 200
+    # The static tables still price what they always priced.
+    assert data["by_model"][0]["cost"] == pytest.approx(0.15 + 0.60)
+    assert "Could not load" in caplog.text

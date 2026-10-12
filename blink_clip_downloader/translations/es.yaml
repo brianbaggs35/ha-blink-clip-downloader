@@ -530,12 +530,12 @@ configuration:
       el modelo: los fotogramas muestreados del clip se SUBEN a Hugging Face y
       se factura a la cuenta del Token de API de Hugging Face (o del Token de
       Hugging Face). Solo la detección puede trasladarse: Hugging Face no
-      tiene modelos de estimación de profundidad ni de segmentación, así que
-      en ese modo no se ejecutan el análisis de profundidad ni el de contacto;
-      la estimación de postura, el reconocimiento facial y el análisis de
-      audio permanecen en este dispositivo, y los datos de reconocimiento
-      facial nunca salen de él en ninguno de los dos modos. Lee la
-      documentación antes de activarlo.
+      ofrece modelos de estimación de profundidad ni de segmentación guiada
+      por recuadros, así que en ese modo no se ejecutan el análisis de
+      profundidad ni el de contacto; la estimación de postura, el
+      reconocimiento facial y el análisis de audio permanecen en este
+      dispositivo, y los datos de reconocimiento facial nunca salen de él en
+      ninguno de los dos modos. Lee la documentación antes de activarlo.
   ai_remote_detection_model:
     name: Modelo de detección de Hugging Face
     description: >-

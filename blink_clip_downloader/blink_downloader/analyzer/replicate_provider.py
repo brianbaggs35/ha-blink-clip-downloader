@@ -121,9 +121,13 @@ def _status_error(status: int, body: Any) -> _ReplicateError:
             permanent=True,
         )
     if status == 402:
+        # Replicate's API reference lists no 402, so all this claims is what
+        # the status means. Every clip would meet the same answer, so the
+        # batch stops — and the clips stay queued for when billing is sorted.
         return _ReplicateError(
-            "the Replicate account has no credit left (HTTP 402) — add credit "
-            f"at replicate.com/account/billing and queued clips resume{suffix}",
+            "Replicate answered HTTP 402 (payment required) — check the "
+            "account's billing at replicate.com/account/billing; queued clips "
+            f"resume once it is sorted out{suffix}",
             rate_limited=True,
         )
     if status == 404:
@@ -141,6 +145,31 @@ def _status_error(status: int, body: Any) -> _ReplicateError:
             f"Replicate rate limit hit (HTTP 429){suffix}", rate_limited=True
         )
     return _ReplicateError(f"Replicate answered HTTP {status}{suffix}")
+
+
+#: Where a model's input properties sit in the model object Replicate returns.
+_SCHEMA_PATH = (
+    "latest_version",
+    "openapi_schema",
+    "components",
+    "schemas",
+    "Input",
+    "properties",
+)
+
+
+def _input_properties(model: dict[str, Any]) -> dict[str, Any]:
+    """The ``Input`` properties from a model object, or ``{}``.
+
+    Walked defensively: a model with no published version has
+    ``latest_version: null`` and one with no schema has ``openapi_schema:
+    null``, and either one anywhere along the path means "no input to read",
+    not an exception.
+    """
+    node: Any = model
+    for key in _SCHEMA_PATH:
+        node = node.get(key) if isinstance(node, dict) else None
+    return node if isinstance(node, dict) else {}
 
 
 def _data_uri(frame: bytes) -> str:
@@ -204,10 +233,12 @@ class ReplicateAnalyzer(BaseAnalyzer):
     single image (Claude) gets one request per frame, and the most alarming
     answer stands, as with the ``sequential`` frame strategy.
 
-    Replicate bills the account the API token belongs to, per second of
-    compute or per token depending on the model, and publishes no rate this
-    add-on can read — so the usage page shows token counts (when the model
-    reports them) and no cost.
+    Replicate bills the account the API token belongs to — per token for the
+    official language models, by their documentation. Their API carries no
+    prices, so those come from a table in :mod:`~blink_downloader.model_catalog`
+    read off each model's page, and the token counts from the prediction's
+    optional ``metrics``; a model missing from the table, or one that reports
+    no counts, shows N/A or zero rather than a figure made up.
     """
 
     #: Where requests go. A class attribute rather than a constructor argument
@@ -248,6 +279,7 @@ class ReplicateAnalyzer(BaseAnalyzer):
         self._api_key = api_key
         self._model = (model or "").strip() or DEFAULT_REPLICATE_MODEL
         self._plan: ReplicateInputPlan | None = None
+        self._said_no_tokens = False
 
     @property
     def provider_name(self) -> str:
@@ -301,27 +333,25 @@ class ReplicateAnalyzer(BaseAnalyzer):
             raise _ReplicateError("Replicate returned something other than an object")
         return body
 
-    async def _load_plan(self, session: aiohttp.ClientSession) -> ReplicateInputPlan:
+    async def _load_plan(
+        self, session: aiohttp.ClientSession, refresh: bool = False
+    ) -> ReplicateInputPlan:
         """How to call the model, from its own input schema (cached).
 
         This is also the cheapest honest check that a token and a model name
         both work: the same call fails 401 for one and 404 for the other.
+        *refresh* asks Replicate again even when a plan is cached, which is
+        what a health check has to do — a cached plan says the token *was*
+        good.
         """
-        if self._plan is not None:
+        if self._plan is not None and not refresh:
             return self._plan
         path = self._model_path()
         async with session.get(
             f"{self._base()}/models/{path}", headers=self._headers()
         ) as resp:
             model = await self._read(resp)
-        schemas = (
-            (model.get("latest_version") or {})
-            .get("openapi_schema", {})
-            .get("components", {})
-            .get("schemas", {})
-        )
-        properties = (schemas.get("Input") or {}).get("properties") or {}
-        plan = replicate_input_plan(properties)
+        plan = replicate_input_plan(_input_properties(model))
         if plan is None:
             raise _ReplicateError(
                 f"Replicate model {path!r} does not take both a prompt and an "
@@ -352,7 +382,14 @@ class ReplicateAnalyzer(BaseAnalyzer):
         if not _PREDICTION_ID_RE.fullmatch(prediction_id):
             raise _ReplicateError("Replicate returned a prediction with no usable id")
         give_up = time.monotonic() + _DEADLINE_SECONDS
-        while prediction.get(_STATUS) not in _TERMINAL_STATUSES:
+        # Asking again is the only way to wait here, so this loop carries the
+        # marker on its first line rather than an Event, which nothing in this
+        # process could ever set: Replicate's API reference gives
+        # ``GET /predictions/{id}`` nothing but the id (its ``Prefer: wait``
+        # belongs to creating a prediction, and has already been spent), and
+        # the alternatives are a webhook, which needs an inbound endpoint this
+        # add-on does not expose, or an event stream on a second host.
+        while prediction.get(_STATUS) not in _TERMINAL_STATUSES:  # NOSONAR
             if time.monotonic() >= give_up:
                 raise _ReplicateError(
                     "the Replicate prediction did not finish in time — this "
@@ -384,6 +421,17 @@ class ReplicateAnalyzer(BaseAnalyzer):
             reason = str(prediction.get("error") or prediction.get(_STATUS))[:200]
             raise _ReplicateError(f"the Replicate prediction failed: {reason}")
         tokens_in, tokens_out = _token_counts(prediction)
+        if not (tokens_in or tokens_out) and not self._said_no_tokens:
+            # Replicate's own client library lists both counts as optional
+            # metrics, so a model may report neither — and nothing here
+            # estimates them: the AI Usage tab would otherwise show a cost
+            # that was never established.
+            self._said_no_tokens = True
+            _LOGGER.info(
+                "Replicate: %s reported no token counts for a prediction, so "
+                "the AI Usage tab will show no tokens or cost for it",
+                self._model,
+            )
         return _output_text(prediction), tokens_in, tokens_out
 
     async def _ask_each_frame(
@@ -401,7 +449,16 @@ class ReplicateAnalyzer(BaseAnalyzer):
             async with gate:
                 return await self._ask(session, plan, [frame], prompt)
 
-        answers = await asyncio.gather(*(one(frame) for frame in frames))
+        tasks = [asyncio.ensure_future(one(frame)) for frame in frames]
+        try:
+            answers = await asyncio.gather(*tasks)
+        except BaseException:
+            # One frame failing fails the clip; the others must not go on
+            # running (and billing) against a session about to be closed.
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
         best = _MostAlarming()
         for text, _, _ in answers:
             suspicious, confidence, description = self._try_parse_json(text)
@@ -459,8 +516,10 @@ class ReplicateAnalyzer(BaseAnalyzer):
         """Return True when the token and the model both work.
 
         Loading the model's schema is the check — see :meth:`_load_plan` —
-        and it is cached after the first success, so this costs a request
-        only until then (and, otherwise, the 30-second result cache).
+        asked of Replicate afresh each time (the 30-second result cache is
+        what keeps that to one request per half minute), so a token revoked
+        after the first success shows up here rather than only as failed
+        clips.
         """
         cached = self._cached_health_check_result()
         if cached is not None:
@@ -473,7 +532,7 @@ class ReplicateAnalyzer(BaseAnalyzer):
             return self._store_health_check_result(False)
         try:
             async with aiohttp.ClientSession(timeout=_SHORT_TIMEOUT) as session:
-                await self._load_plan(session)
+                await self._load_plan(session, refresh=True)
         except _ReplicateError as error:
             self._log_failure(error)
             return self._store_health_check_result(False)

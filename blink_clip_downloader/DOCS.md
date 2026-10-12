@@ -599,12 +599,21 @@ check the pricing page rather than relying on this paragraph.
   judge a model on your own clips.
 - The router passes your request to whichever provider serves it, and providers
   differ. If the provider rejects a response schema, the add-on asks for JSON in
-  the prompt alone from then on. A model or provider that accepts only one image
-  per request is reported in the log with the fix: set `ai_frame_strategy` to
-  `sequential`.
+  the prompt alone from then on. When a provider's error says a model accepts only
+  one image per request, the log says so and names the fix: set
+  `ai_frame_strategy` to `sequential`.
+- Many models in the catalog think before they answer, and what they think about
+  counts against the 1,024-token allowance for each reply. An answer that is cut
+  off by that limit is treated as a **failed call**, not a verdict: the log says so
+  and the clip is retried, because reading half of a JSON reply as "not suspicious"
+  would hide an event. If it happens on every clip, choose a model that answers
+  directly. (A complete answer that merely ends at the limit is kept.)
 - Costs on the AI Usage tab are **estimates** from the rate listed for the
-  provider that would have been chosen. Your Hugging Face billing page has the
-  actual figure.
+  provider that would have been chosen (a provider currently running a model free
+  of charge counts as $0). Your Hugging Face billing page has the actual figure.
+- The health check asks the Hub's `whoami` endpoint, which Hugging Face rate-limits
+  on purpose, so a good result is reused for ten minutes; a failure is rechecked
+  after thirty seconds.
 - The clip frames are sent to Hugging Face and on to the provider serving the
   model, as they would be for any cloud provider.
 
@@ -614,7 +623,8 @@ Uses [Replicate](https://replicate.com)'s **official** vision models (Gemini, GP
 Claude and others) through its prediction API. See Replicate's
 [documentation](https://replicate.com/docs/get-started/python) and
 [pricing](https://replicate.com/pricing). Billed to the Replicate account the API
-token belongs to — per token or per second of compute, depending on the model.
+token belongs to. Replicate's documentation says official models are billed by
+their output or input rather than by run time, and the language models by token.
 
 | Option | Default | Description |
 |--------|---------|-------------|
@@ -628,15 +638,23 @@ fit it, which is how a vision model Replicate publishes later works without a ne
 release. A model that takes a list of images gets the whole clip in one request. A
 model that takes **one** image (Claude) is asked once per frame and the most
 alarming answer is kept, which costs more requests and more input tokens than a
-single call; the log says nothing is wrong when you see this. A model with no
+single call; seeing several requests for one clip is expected, not a fault. A model with no
 image input, or none for a prompt, is rejected with a message saying so.
 
-**Usage and cost.** Replicate publishes no per-token rate this add-on can read, so
-the AI Usage tab shows token counts (for models that report them) and no cost
-estimate — check your Replicate dashboard for what you have spent. Frames are sent
+**Usage and cost.** Replicate's API carries no prices; each official model's page
+shows its own. The AI Usage tab estimates cost from per-token rates copied from
+those pages (checked 2026-10-12), so they can drift — Replicate does not promise
+they stay fixed, and your Replicate dashboard has what you have actually spent.
+`openai/gpt-5.6-sol` is not priced: its page describes a promotion that has ended
+and its billing data disagrees with that text, so there is no figure to trust,
+and it shows tokens and no cost. Token counts come from the prediction's
+`metrics`, which Replicate lists as optional per model; a model that reports none
+shows no tokens (the log says so once) rather than an estimate. Frames are sent
 as base64 data URIs, which Replicate recommends for files under 1 MB; an analysis
-frame is a 640-pixel JPEG. Predictions are cancelled by Replicate after four
-minutes, so a request this add-on stops waiting for does not keep billing.
+frame is a 640-pixel JPEG. Each prediction is created with a four-minute
+`Cancel-After`, so a request this add-on stops waiting for is not left running
+indefinitely (Replicate's billing documentation notes that a cancelled run of an
+official model may still be charged).
 
 Replicate lowers the rate it allows an account as its credit runs low and limits
 an account with credit but no payment method to six requests a minute; either
@@ -1064,8 +1082,9 @@ as usual and add a token (`huggingface_api_key`, or `hf_token`) with the
 **Make calls to Inference Providers** permission.
 
 **What moves, and what does not.** Only detection can. Hugging Face's serverless
-tier currently serves object-detection models (DETR) but **no depth-estimation,
-segmentation or pose model**, so in this mode:
+tier currently serves object-detection models (DETR) but **no depth-estimation
+model, no box-prompted (SAM-style) segmentation model and no pose model**, so in
+this mode:
 
 - **Object detection runs on Hugging Face.** The scan frames
   (`ai_temporal_scan_frames` of them per clip, 12 by default) are posted to it,
@@ -1094,9 +1113,10 @@ marked as inferred. Anything that needs a *measured* track under-claims: the
 tracking hint (lingering versus passing through) is not produced, "N separate
 people" is not raised, event confidences are lower, and routine door use cannot
 clear a clip (the add-on warns at start-up if it is switched on). The confidence
-floor (0.5) is Hugging Face's own default for the task, **not** a value measured
-on footage like yours; DETR's scores are not on the same scale as YOLO's, and the
-security layer's thresholds were tuned on YOLO. Treat results as less proven than
+floor (0.5) is this add-on's own choice — sent to Hugging Face as the task's
+`threshold` parameter and applied again to what comes back — and **not** a value
+measured on footage like yours; DETR's scores are not on the same scale as YOLO's,
+and the security layer's thresholds were tuned on YOLO. Treat results as less proven than
 the local detector's until you have compared them on your own clips.
 
 **Cost and failure.** Requests are billed to the Hugging Face account behind the

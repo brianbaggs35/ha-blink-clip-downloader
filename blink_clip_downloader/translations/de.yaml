@@ -542,11 +542,11 @@ configuration:
       ausgewählten Clip-Frames werden dabei zu Hugging Face HOCHGELADEN, und
       das Konto hinter dem Hugging Face-API-Token (oder Hugging Face-Token)
       wird belastet. Nur die Erkennung kann ausgelagert werden: Hugging Face
-      hat kein Modell für Tiefenschätzung oder Segmentierung, daher laufen
-      Tiefen- und Kontaktanalyse in diesem Modus nicht; Posenschätzung,
-      Gesichtserkennung und Audioanalyse bleiben auf diesem Gerät, und
-      Gesichtserkennungsdaten verlassen es in keinem der beiden Modi. Lies vor
-      dem Aktivieren die Dokumentation.
+      bietet weder ein Modell für Tiefenschätzung noch eine Segmentierung mit
+      Box-Vorgabe an, daher laufen Tiefen- und Kontaktanalyse in diesem Modus
+      nicht; Posenschätzung, Gesichtserkennung und Audioanalyse bleiben auf
+      diesem Gerät, und Gesichtserkennungsdaten verlassen es in keinem der
+      beiden Modi. Lies vor dem Aktivieren die Dokumentation.
   ai_remote_detection_model:
     name: Hugging Face-Erkennungsmodell
     description: >-

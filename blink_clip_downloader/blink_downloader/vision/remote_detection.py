@@ -32,6 +32,7 @@ What it deliberately is **not**:
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -47,12 +48,12 @@ _LOGGER = logging.getLogger(__name__)
 #: provider behind the router, which is the one that runs object detection.
 HUGGINGFACE_INFERENCE_URL = "https://router.huggingface.co/hf-inference/models"
 
-#: Confidence a box must reach to be kept. Hugging Face's own default for the
-#: task (what the server applies when the request names no threshold, and
-#: this request does not, so that the same call also works against a
-#: dedicated endpoint): a judgement call rather than a measurement. DETR's
-#: scores are not on YOLO's scale, no footage of this add-on's was used to
-#: calibrate it, and the security layer's thresholds were tuned on YOLO.
+#: Confidence a box must reach to be kept. This add-on's own choice, sent to
+#: the server as the task's documented ``threshold`` parameter and applied
+#: again to what comes back, rather than left to whatever default the server
+#: has: a judgement call, not a measurement. DETR's scores are not on YOLO's
+#: scale, no footage of this add-on's was used to calibrate it, and the
+#: security layer's thresholds were tuned on YOLO.
 _MIN_CONFIDENCE = 0.5
 
 #: Frames in flight at once. A clip is up to ``ai_temporal_scan_frames`` of
@@ -64,14 +65,17 @@ _CONCURRENCY = 4
 #: Tries per frame, the first included.
 _ATTEMPTS = 3
 
-_REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=60)
+#: Per request. Short, because a hung server costs the whole analysis queue
+#: its time: a frame gets ``_ATTEMPTS`` tries, and a clip's frames run
+#: ``_CONCURRENCY`` at a time, so the worst case is a few minutes rather than
+#: the better part of an hour.
+_REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=30)
 
-#: Longest a retry will wait on a server's own estimate (a cold model reports
-#: how long it needs to load). Beyond this the clip is better off failing and
-#: being tried on the next cycle than holding the analysis queue.
+#: Longest a retry will wait. A response may say how long to wait (an
+#: ``estimated_time`` for a model that is loading, a ``Retry-After`` for a
+#: throttled request); beyond this the clip is better off failing and being
+#: tried on the next cycle than holding the analysis queue.
 _MAX_WAIT_SECONDS = 20.0
-
-_RETRYABLE_STATUSES = frozenset({429, 500, 502, 503, 504})
 
 
 class _Failure(Exception):
@@ -123,10 +127,30 @@ def _error_text(body: Any) -> str:
     return ""
 
 
+async def _json_or_none(resp: aiohttp.ClientResponse) -> Any:
+    """The response's JSON body, or ``None`` when it is not JSON (an HTML
+    error page from a gateway, an empty body)."""
+    try:
+        return await resp.json(content_type=None)
+    except ValueError:
+        return None
+
+
+def _is_retryable(status: int) -> bool:
+    """Whether asking again could change the answer: throttled (429), the
+    server failing (5xx), or a 200 that was not JSON — a gateway's page in
+    front of the model, which the next request may not hit. Every other 4xx
+    is the request or the account being refused, and repeating it only costs
+    another billed call."""
+    return status in (200, 429) or status >= 500
+
+
 def _classify(status: int, body: Any, model: str) -> _Failure:
     """Turn a non-200 answer into the failure it means."""
     detail = _error_text(body)
     suffix = f": {detail}" if detail else ""
+    if status == 200:
+        return _Failure("Hugging Face answered with something that is not JSON")
     if status == 401:
         return _Failure(
             "Hugging Face rejected the token (HTTP 401) — check "
@@ -145,16 +169,15 @@ def _classify(status: int, body: Any, model: str) -> _Failure:
         )
     if status == 403:
         return _Failure(
-            "Hugging Face denied the request (HTTP 403) — the token needs "
-            f"'Make calls to Inference Providers'{suffix}",
+            "Hugging Face denied the request (HTTP 403) — the token needs the "
+            f"'Make calls to Inference Providers' permission{suffix}",
             permanent=True,
         )
     if status == 404:
         return _Failure(
             f"model {model!r} is not available through Hugging Face's "
-            "serverless inference (HTTP 404) — check "
-            f"ai_remote_detection_model; it serves only a few detectors "
-            f"(facebook/detr-resnet-50, facebook/detr-resnet-101){suffix}",
+            "serverless inference (HTTP 404) — check ai_remote_detection_model "
+            f"(facebook/detr-resnet-50 is the default){suffix}",
             permanent=True,
         )
     return _Failure(f"Hugging Face answered HTTP {status}{suffix}")
@@ -247,6 +270,8 @@ class RemoteObjectDetector:
         run = _Run()
         gate = asyncio.Semaphore(_CONCURRENCY)
         async with aiohttp.ClientSession(timeout=_REQUEST_TIMEOUT) as session:
+            # _detect_frame turns every failure into run.failure rather than
+            # raising, so no sibling is left running against a closed session.
             results = await asyncio.gather(
                 *(
                     self._detect_frame(session, gate, run, index, frame)
@@ -274,38 +299,50 @@ class RemoteObjectDetector:
             try:
                 return _parse_detections(await self._post(session, frame), index)
             except _Failure as failure:
-                # Keep the first permanent failure over a transient one: it
-                # is the one the user can act on.
-                if run.failure is None or (
-                    failure.permanent and not run.failure.permanent
-                ):
-                    run.failure = failure
-                return []
+                self._record(run, failure)
+            except Exception as exc:  # noqa: BLE001
+                # Like ObjectDetector.detect, fail soft: whatever went wrong,
+                # the clip is analyzed without this evidence, not abandoned.
+                self._record(run, _Failure(f"unexpected {type(exc).__name__}: {exc}"))
+            return []
+
+    @staticmethod
+    def _record(run: _Run, failure: _Failure) -> None:
+        """Keep the first permanent failure over a transient one: it is the
+        one the user can act on."""
+        if run.failure is None or (failure.permanent and not run.failure.permanent):
+            run.failure = failure
 
     async def _post(self, session: aiohttp.ClientSession, frame: bytes) -> Any:
         """One frame's JSON answer, retrying what retrying can fix."""
         url = f"{self._base_url}/{self._model_id}"
+        # The task's documented JSON form: raw image bytes are accepted only
+        # when no parameters are sent, and this request sends a threshold.
+        payload = {
+            "inputs": base64.b64encode(frame).decode("ascii"),
+            "parameters": {"threshold": _MIN_CONFIDENCE},
+        }
         headers = {
             "Authorization": f"Bearer {self._token}",
-            "Content-Type": "image/jpeg",
             "Accept": "application/json",
         }
-        failure = _Failure("no attempt was made")
-        for attempt in range(1, _ATTEMPTS + 1):
+        attempt = 0
+        while True:
+            attempt += 1
             hint: float | None = None
             try:
-                async with session.post(url, data=frame, headers=headers) as resp:
-                    body = await resp.json(content_type=None)
-                    if resp.status == 200:
+                async with session.post(url, json=payload, headers=headers) as resp:
+                    body = await _json_or_none(resp)
+                    if resp.status == 200 and body is not None:
                         return body
+                    # Classified by status first: a CDN's HTML error page has
+                    # no JSON to read, but a 401 in it is still a 401.
                     failure = _classify(resp.status, body, self._model_id)
-                    if resp.status in _RETRYABLE_STATUSES:
-                        hint = _server_hint(resp.status, resp.headers, body)
-                    elif failure.permanent or resp.status < 500:
-                        raise failure
-            except (TimeoutError, aiohttp.ClientError, ValueError) as exc:
-                # ValueError: a body that was not JSON (a gateway's HTML page).
+                    hint = _server_hint(resp.status, resp.headers, body)
+                    retryable = _is_retryable(resp.status)
+            except (TimeoutError, aiohttp.ClientError) as exc:
                 failure = _Failure(f"could not reach Hugging Face: {exc}")
-            if attempt < _ATTEMPTS:
-                await asyncio.sleep(_wait_for(attempt, hint))
-        raise failure
+                retryable = True
+            if not retryable or attempt >= _ATTEMPTS:
+                raise failure
+            await asyncio.sleep(_wait_for(attempt, hint))

@@ -101,7 +101,7 @@ const PROVIDERS: ProviderInfo[] = [
     tagline:
       'Uses Hugging Face Inference Providers — one token, and any vision model its backends serve (Qwen, Gemma, GLM, and more). Billed per token to your Hugging Face account, at the rate of whichever backend serves the request.',
     configFields: [
-      'Hugging Face Token — a token that may make calls to Inference Providers; the same one the computer-vision downloads use',
+      'Hugging Face API Token — a token with the Make calls to Inference Providers permission (left blank, the Hugging Face Token option is used instead)',
       'Hugging Face Model — org/name, optionally with :cheapest, :fastest or a backend name such as :novita',
     ],
     notes: [
@@ -116,14 +116,14 @@ const PROVIDERS: ProviderInfo[] = [
     key: 'replicate',
     name: 'Replicate',
     tagline:
-      "Uses Replicate's official vision models (Gemini, GPT, Claude and more) through its prediction API. Billed to your Replicate account — per token or per second of compute, depending on the model.",
+      "Uses Replicate's official vision models (Gemini, GPT, Claude and more) through its prediction API. Billed to your Replicate account — per token for the official language models.",
     configFields: [
       'Replicate API Token — API token from replicate.com/account/api-tokens',
       'Replicate Model — an official model written owner/name, defaults to openai/gpt-4o-mini',
     ],
     notes: [
       "The add-on reads each model's own input schema to learn what it calls its image, prompt and token-limit inputs, so a model that takes a picture and a prompt works without a release. Models that accept only one image per request are asked once per frame, and the most alarming answer is kept.",
-      "Replicate publishes no per-token rate this add-on can read, so the AI Usage tab shows token counts (where the model reports them) but no cost — check your Replicate dashboard for what you've spent.",
+      "Replicate's API carries no prices, so the AI Usage tab estimates cost from the per-token rates on each model's Replicate page (copied into the add-on, so they can drift) and shows tokens only where the model reports them — check your Replicate dashboard for what you've actually spent.",
       'Clip frames are sent to Replicate, and to the model provider behind the model you pick, the same as for any cloud provider.',
     ],
     link: { href: 'https://replicate.com/docs/get-started/python', label: 'Replicate documentation' },
@@ -227,8 +227,8 @@ const PROVIDERS: ProviderInfo[] = [
       Hardware that cannot run these models can send the object-detection stage to Hugging Face instead — set the Object
       Detection Backend option to <code>huggingface</code>. That uploads the sampled clip frames to Hugging Face for
       detection; face recognition, enrolled photos, face data and sound classification always stay on this device.
-      Hugging Face's serverless inference offers no depth-estimation or segmentation model, so those two stages are not
-      run in that mode.
+      Hugging Face's serverless inference offers no depth-estimation model and no box-prompted segmentation model, so
+      those two stages are not run in that mode.
     </p>
   </div>
 </template>

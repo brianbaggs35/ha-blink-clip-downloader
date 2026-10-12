@@ -400,9 +400,10 @@ configuration:
       ggingface” = 在 Hugging Face 的服务器上，适用于无法运\
       行该模型的硬件：抽取的剪辑画面帧会被上传到 Hugging Face，并向 Hu\
       gging Face API 令牌（或 Hugging Face 令牌）所属的账\
-      户计费。只有检测可以迁出：Hugging Face 没有深度估计或分割模型，因此\
-      该模式下不会运行深度分析和接触分析；姿态估计、人脸识别和音频分析仍留在本设备上，\
-      无论哪种模式，人脸识别数据都不会离开本设备。启用前请阅读文档。"
+      户计费。只有检测可以迁出：Hugging Face 没有深度估计模型，也没有可按\
+      边界框提示的分割模型，因此该模式下不会运行深度分析和接触分析；姿态估计、人脸识别\
+      和音频分析仍留在本设备上，无论哪种模式，人脸识别数据都不会离开本设备。启用前请阅\
+      读文档。"
   ai_remote_detection_model:
     name: Hugging Face 检测模型
     description: "物体检测后端为“huggingface”时使用的 Hugging Face 物体\
