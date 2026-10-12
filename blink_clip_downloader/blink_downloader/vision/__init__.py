@@ -17,7 +17,8 @@ One module per stage, in the order a clip passes through them:
   pixel-diff motion.
 - :mod:`.remote_detection` — the same detection stage run on Hugging Face's
   servers instead (``ai_vision_backend``), for hardware that cannot run the
-  local model. Boxes only: no tracking, and no depth or segmentation, which
+  local model. Boxes only: no tracking, and no depth estimation or
+  box-prompted segmentation, which
   Hugging Face's serverless tier does not offer.
 - :mod:`.depth` — monocular depth estimation (Depth Anything V2 via
   transformers), to tell "overlapping in the 2D frame" apart from

@@ -1046,7 +1046,8 @@ _MANIFEST = yaml.safe_load(
 
 
 def _provider_choices(schema_entry: str) -> set[str]:
-    assert schema_entry.startswith("list(") and schema_entry.endswith(")")
+    assert schema_entry.startswith("list(")
+    assert schema_entry.endswith(")")
     return set(schema_entry[len("list(") : -1].split("|"))
 
 

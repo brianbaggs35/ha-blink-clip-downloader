@@ -63,7 +63,7 @@ class FineTuneRoutesMixin(_MediaServerBase):
         """Return a fine-tune manager, or None if not configured for it.
 
         Only meaningful when the active provider is moondream_cloud — the
-        only one of the six providers with a fine-tuning API (see the
+        only one of the eight providers with a fine-tuning API (see the
         module docstring and CHANGELOG for why OpenAI/Anthropic aren't
         supported here).
         """

@@ -540,12 +540,12 @@ configuration:
       modèle : les images échantillonnées du clip sont ENVOYÉES à Hugging
       Face, et le compte associé au Jeton d'API Hugging Face (ou au Jeton
       Hugging Face) est facturé. Seule la détection peut être déportée :
-      Hugging Face n'a aucun modèle d'estimation de profondeur ni de
-      segmentation, donc l'analyse de profondeur et de contact ne s'exécute
-      pas dans ce mode ; l'estimation de posture, la reconnaissance faciale et
-      l'analyse audio restent sur cet appareil, et les données de
-      reconnaissance faciale ne le quittent dans aucun des deux modes. Lisez
-      la documentation avant de l'activer.
+      Hugging Face ne propose aucun modèle d'estimation de profondeur ni de
+      segmentation guidée par boîtes, donc l'analyse de profondeur et de
+      contact ne s'exécute pas dans ce mode ; l'estimation de posture, la
+      reconnaissance faciale et l'analyse audio restent sur cet appareil, et
+      les données de reconnaissance faciale ne le quittent dans aucun des deux
+      modes. Lisez la documentation avant de l'activer.
   ai_remote_detection_model:
     name: Modèle de détection Hugging Face
     description: >-

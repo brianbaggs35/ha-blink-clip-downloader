@@ -16,7 +16,6 @@ wonder which ``huggingface`` an import inside it resolves to.
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import logging
 import re
@@ -57,6 +56,13 @@ _CATALOG_TTL_SECONDS = 6 * 3600
 
 _CATALOG_TIMEOUT = aiohttp.ClientTimeout(total=20)
 
+#: How long a *good* health check is reused. It asks the Hub's ``whoami-v2``,
+#: which huggingface_hub's own client calls "intentionally strict" about request
+#: rate and tells callers to cache; a token that works does not stop working
+#: every half minute. A failure is still rechecked at the base class's usual
+#: interval, so recovery is noticed promptly.
+_TOKEN_OK_CACHE_SECONDS = 600.0
+
 #: Generous because the budget is shared with a reasoning model's invisible
 #: thinking, which is billed from the same allowance as the visible answer.
 _MAX_COMPLETION_TOKENS = 1024
@@ -66,12 +72,12 @@ _REQUEST_TIMEOUT_SECONDS = 120.0
 _THINKING_BLOCK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 _UNCLOSED_THINKING_RE = re.compile(r"<think>.*", re.DOTALL | re.IGNORECASE)
 
+_JSON_SCHEMA = "json_schema"
+
 #: Words in a 400 that say the backend refused ``response_format`` rather than
 #: refused the request. Both halves matter: a 400 for any other reason (an
 #: image too large, a model with no vision) must not be retried as if
 #: dropping the schema would fix it.
-_JSON_SCHEMA = "json_schema"
-
 _RESPONSE_FORMAT_REJECTION_MARKERS: tuple[str, ...] = (
     "response_format",
     _JSON_SCHEMA,
@@ -93,10 +99,11 @@ class HuggingFaceAnalyzer(BaseAnalyzer):
 
     The credential is the add-on's ``huggingface_api_key`` — or ``hf_token``,
     the token that already authenticates model downloads, when that is blank —
-    and must be allowed to make calls to Inference Providers. Hugging Face bills the account it belongs to, and a
-    free account has no monthly credit to bill (see DOCS.md), so an empty
-    balance is the first failure a new user is likely to meet; it is reported
-    in those terms rather than as a generic API error.
+    and must be allowed to make calls to Inference Providers. Hugging Face
+    bills the account it belongs to, and a free account has no monthly credit
+    to bill (see DOCS.md), so an empty balance is the first failure a new user
+    is likely to meet; it is reported in those terms rather than as a generic
+    API error.
 
     Two-tier escalation is handled generically by ``BaseAnalyzer`` — see
     ``create_analyzer()``'s ``escalation_provider``/``escalation_model``. This
@@ -238,16 +245,29 @@ class HuggingFaceAnalyzer(BaseAnalyzer):
             await self._client.close()
             self._client = None
 
+    def _cached_health_check_result(self) -> bool | None:
+        """A still-fresh health check result: ten minutes for a good one (see
+        ``_TOKEN_OK_CACHE_SECONDS``), the base class's interval for a bad one."""
+        ttl = (
+            _TOKEN_OK_CACHE_SECONDS
+            if self._last_health_check_result
+            else self._HEALTH_CHECK_CACHE_SECONDS
+        )
+        if time.monotonic() - self._last_health_check_time < ttl:
+            return self._last_health_check_result
+        return None
+
     async def health_check(self) -> bool:
         """Return True when the token is accepted by Hugging Face.
 
-        Cached for ``_HEALTH_CHECK_CACHE_SECONDS`` like every provider that
-        calls a real API. Asks the Hub who the token belongs to, because the
-        router's own listing is public and says nothing about the token.
-        That cannot show the token is *allowed to run inference* — only a
-        billed request could — so a 403 (a token scoped too narrowly to read
-        its own profile) is taken as a valid token, and the first real
-        request reports a missing permission if there is one.
+        Asks the Hub who the token belongs to — the call huggingface_hub's own
+        login makes to validate a token of any kind, fine-grained included —
+        because the router's listing is public and says nothing about the
+        token. That cannot show the token is *allowed to run inference*, only
+        a billed request could, so any answer but a 401 (or a failing Hub) is
+        taken as a usable token, and the first real request reports a missing
+        permission if there is one. That includes a 429: the endpoint's rate
+        limit says nothing about this token.
         """
         cached = self._cached_health_check_result()
         if cached is not None:
@@ -387,11 +407,11 @@ class HuggingFaceAnalyzer(BaseAnalyzer):
     def _without_reasoning(text: str) -> str:
         """Drop a model's inline ``<think>`` block from its answer.
 
-        Some backends return a reasoning model's thinking inside ``content``
-        rather than in a field of its own, and ``parse_response`` takes the
-        first ``{`` to the last ``}`` — which on a thought that mentions JSON
-        is not the answer. An unterminated block means the budget ran out
-        mid-thought, so nothing after it is an answer either.
+        A reasoning model's thinking can arrive inside ``content`` rather than
+        in a field of its own, and ``parse_response`` takes the first ``{`` to
+        the last ``}`` — which on a thought that mentions JSON is not the
+        answer. An unterminated block means the budget ran out mid-thought,
+        so nothing after it is an answer either.
         """
         text = _THINKING_BLOCK_RE.sub("", text)
         return _UNCLOSED_THINKING_RE.sub("", text).strip()
@@ -404,9 +424,29 @@ class HuggingFaceAnalyzer(BaseAnalyzer):
                 getattr(usage, "completion_tokens", 0) or 0
             )
         choice = response.choices[0] if response.choices else None
-        if choice and choice.message and choice.message.content:
-            return self._without_reasoning(str(choice.message.content))
-        return ""
+        if not (choice and choice.message and choice.message.content):
+            text = ""
+        else:
+            text = self._without_reasoning(str(choice.message.content))
+        if (
+            choice is not None
+            and choice.finish_reason == "length"
+            and not self._is_well_formed_json_object(text)
+        ):
+            # Not an answer: parsed as one, half a JSON reply falls through
+            # to keyword matching and is recorded as "not suspicious". An
+            # empty reply is turned into a visible failed clip by the
+            # shared pipeline, which is what this should be too.
+            _LOGGER.warning(
+                "Hugging Face: %s's answer was cut off at the %d-token limit "
+                "before it finished — a model that thinks before it answers can "
+                "use the whole allowance. This clip will be retried; if it keeps "
+                "happening, choose a model that answers directly",
+                self._model,
+                _MAX_COMPLETION_TOKENS,
+            )
+            return ""
+        return text
 
     # ------------------------------------------------------------------
     # Failures
@@ -422,10 +462,8 @@ class HuggingFaceAnalyzer(BaseAnalyzer):
         elif isinstance(exc, _openai.PermissionDeniedError):
             self._last_transient_error = False
             _LOGGER.error(
-                "Hugging Face: permission denied (HTTP 403) — the token needs "
-                "'Make calls to Inference Providers' (a fine-grained token) or "
-                "to be a read token, and a gated model needs its licence "
-                "accepted on the model's page. %s",
+                "Hugging Face: permission denied (HTTP 403) — the token needs the "
+                "'Make calls to Inference Providers' permission. %s",
                 self._api_error_message(exc),
             )
         elif isinstance(exc, _openai.RateLimitError):
@@ -444,9 +482,8 @@ class HuggingFaceAnalyzer(BaseAnalyzer):
         elif isinstance(exc, _openai.APIStatusError):
             self._handle_status_error(exc)
         elif isinstance(exc, _openai.APIConnectionError):
+            # Includes the SDK's own timeout, APITimeoutError.
             _LOGGER.warning("Hugging Face: connection error — %s", exc)
-        elif isinstance(exc, asyncio.TimeoutError):
-            _LOGGER.warning("Hugging Face request timed out")
         else:
             _LOGGER.warning("Hugging Face request failed: %s", exc)
         return ""

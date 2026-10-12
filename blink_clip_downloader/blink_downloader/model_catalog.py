@@ -391,9 +391,11 @@ DEFAULT_HUGGINGFACE_MODEL = "google/gemma-4-26B-A4B-it"
 #: this add-on does not ask for, so only official models are supported.
 REPLICATE_API_URL = "https://api.replicate.com/v1"
 
+_REPLICATE_GPT_4O_MINI = "openai/gpt-4o-mini"
+
 #: The model used when ``replicate_model`` is left empty: the same model the
 #: OpenAI provider defaults to, cheap and with a long-stable schema.
-DEFAULT_REPLICATE_MODEL = "openai/gpt-4o-mini"
+DEFAULT_REPLICATE_MODEL = _REPLICATE_GPT_4O_MINI
 
 #: Official Replicate models that take an image and a prompt and answer in
 #: text — the "Vision models" collection's official entries, cheapest-class
@@ -401,7 +403,7 @@ DEFAULT_REPLICATE_MODEL = "openai/gpt-4o-mini"
 #: about what a model *does*; whether one fits is decided at call time from
 #: its own input schema (:func:`replicate_input_plan`).
 REPLICATE_VISION_MODELS: tuple[str, ...] = (
-    "openai/gpt-4o-mini",
+    _REPLICATE_GPT_4O_MINI,
     "openai/gpt-4.1-mini",
     "google/gemini-2.5-flash",
     "google/gemini-3-flash",
@@ -413,6 +415,33 @@ REPLICATE_VISION_MODELS: tuple[str, ...] = (
     "openai/gpt-5.4",
     "openai/gpt-5.6-sol",
 )
+
+#: Replicate's price per million tokens, (input, output), for the official
+#: models in :data:`REPLICATE_VISION_MODELS` whose price could be established.
+#: Replicate's API carries no pricing; its docs say a model's price is on "the
+#: pricing section of the model", and the page is built from billing data it
+#: embeds (``token_input_count`` / ``token_output_count`` at a price per million
+#: or per thousand tokens). These figures were read there on 2026-10-12, with
+#: the per-thousand ones converted, and each agrees with the model's own
+#: vendor's list price. Replicate does not promise they stay fixed, so like the
+#: OpenAI and Anthropic tables above they are estimates that can drift.
+#:
+#: ``openai/gpt-5.6-sol`` is left out on purpose: its page describes a
+#: "50% off until Sept 18" promotion that has passed, and its billing data
+#: disagrees with that text, so which figure is current cannot be told. A model
+#: with no entry shows tokens and no cost on the AI Usage tab.
+_REPLICATE_MODEL_PRICING: dict[str, tuple[float, float]] = {
+    _REPLICATE_GPT_4O_MINI: (0.15, 0.60),
+    "openai/gpt-4.1-mini": (0.40, 1.60),
+    "google/gemini-2.5-flash": (0.30, 2.50),
+    "google/gemini-3-flash": (0.50, 3.00),
+    "openai/gpt-5.6-luna": (1.00, 6.00),
+    "openai/gpt-4o": (2.50, 10.00),
+    "openai/gpt-5.6-terra": (2.50, 15.00),
+    "anthropic/claude-4.5-sonnet": (3.00, 15.00),
+    "openai/gpt-5": (1.25, 10.00),
+    "openai/gpt-5.4": (2.50, 15.00),
+}
 
 #: The input names Replicate's official language models use for the same
 #: four things, in the order they are tried. Read off the models' published
@@ -466,27 +495,26 @@ def replicate_input_plan(properties: dict[str, Any]) -> ReplicateInputPlan | Non
     def first_of(names: tuple[str, ...]) -> str | None:
         return next((name for name in names if name in properties), None)
 
+    def spec_of(name: str) -> dict[str, Any]:
+        spec = properties.get(name)
+        return spec if isinstance(spec, dict) else {}
+
     def takes_files(name: str) -> bool:
-        spec = properties[name]
-        items = spec.get("items") or {}
-        return spec.get("format") == "uri" or items.get("format") == "uri"
+        spec = spec_of(name)
+        items = spec.get("items")
+        item_format = items.get("format") if isinstance(items, dict) else None
+        return spec.get("format") == "uri" or item_format == "uri"
 
     list_field = next(
         (
             name
             for name in _REPLICATE_IMAGE_LIST_FIELDS
-            if name in properties
-            and properties[name].get("type") == "array"
-            and takes_files(name)
+            if spec_of(name).get("type") == "array" and takes_files(name)
         ),
         None,
     )
     single_field = next(
-        (
-            name
-            for name in _REPLICATE_IMAGE_FIELDS
-            if name in properties and takes_files(name)
-        ),
+        (name for name in _REPLICATE_IMAGE_FIELDS if takes_files(name)),
         None,
     )
     images_field = list_field or single_field
@@ -542,7 +570,14 @@ _RATE_KEYS = ("input", "output")
 
 def _rate(provider: dict[str, Any]) -> tuple[float, float] | None:
     """A backend row's (input, output) $/1M tokens, or ``None`` when it
-    publishes no complete price for the model."""
+    publishes no complete price for the model.
+
+    The router documents ``pricing`` as USD per million tokens, and
+    ``is_free`` as the backend currently charging nothing for the model (a
+    temporary promotion) — which is $0 whatever ``pricing`` still says.
+    """
+    if provider.get("is_free") is True:
+        return 0.0, 0.0
     pricing = provider.get("pricing")
     if not isinstance(pricing, dict) or not all(key in pricing for key in _RATE_KEYS):
         return None
@@ -583,7 +618,9 @@ def huggingface_price(
     if selector == "cheapest":
         return min((rate for _, rate in priced), key=sum)
     # Highest throughput; between equals, the cheaper backend.
-    return max(priced, key=lambda pr: (float(pr[0].get("throughput") or 0.0), -sum(pr[1])))[1]
+    return max(
+        priced, key=lambda pr: (float(pr[0].get("throughput") or 0.0), -sum(pr[1]))
+    )[1]
 
 
 def huggingface_vision_entries(catalog: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -614,13 +651,17 @@ def lookup_model_pricing(model: str) -> tuple[float, float] | None:
     unrecognized/fine-tuned id) so callers can render an explicit "N/A"
     instead of guessing at a price.
 
-    An id with a ``/`` in it (``org/name``, how Hugging Face and the Ollama
-    registry spell a model) is never one of those two providers' — neither
-    publishes such an id — and the substring match below would otherwise
-    price it as one: ``Sao10K/L3-8B-Stheno-v3.2`` contains ``o1`` and came
-    out at OpenAI o1's $15/$60.
+    An id with a ``/`` in it (``org/name``, how Hugging Face, Replicate and the
+    Ollama registry spell a model) is never one of those two providers' —
+    neither publishes such an id — and the substring match below would
+    otherwise price it as one: ``Sao10K/L3-8B-Stheno-v3.2`` contains ``o1`` and
+    came out at OpenAI o1's $15/$60. Replicate's official models are the
+    exception, looked up by their exact id first.
     """
     lower = (model or "").lower()
+    replicate_price = _REPLICATE_MODEL_PRICING.get(lower)
+    if replicate_price is not None:
+        return replicate_price
     if "/" in lower:
         return None
     for table in (_OPENAI_MODEL_PRICING, _ANTHROPIC_MODEL_PRICING):

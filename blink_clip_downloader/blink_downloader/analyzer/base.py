@@ -2699,7 +2699,7 @@ class BaseAnalyzer(abc.ABC):
         ``_build_prompt`` returns, not the per-clip parameters that built
         it — restructuring that shared signature so every provider's
         ``_call_model`` could receive the pieces separately would touch
-        all 6 providers' request-building for a benefit only the two
+        all 8 providers' request-building for a benefit only the two
         caching ones can use. Reconstructing the known-static prefix here
         instead keeps prompt caching contained to those providers' own
         request construction, at the cost of only being able to cache this

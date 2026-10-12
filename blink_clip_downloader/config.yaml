@@ -486,8 +486,9 @@ options:
   #                   clip frames are UPLOADED to Hugging Face for this. Needs
   #                   hf_token below, and the account is billed for the requests.
   # Only detection can move. Hugging Face's serverless inference serves no
-  # depth-estimation or segmentation model, so in "huggingface" mode depth
-  # estimation and contact segmentation are not run (the AI is told that
+  # depth-estimation model and no box-prompted (SAM-style) segmentation model,
+  # so in "huggingface" mode depth estimation and contact segmentation are not
+  # run (the AI is told that
   # evidence was unavailable); pose estimation, face recognition and audio
   # analysis keep running on this device under their own switches. Face
   # recognition is never remote: enrolled photos, face data and names do not
