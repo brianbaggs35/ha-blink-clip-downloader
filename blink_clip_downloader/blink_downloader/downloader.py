@@ -1115,12 +1115,18 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
             return cached
         try:
             response = await camera.get_thumbnail()
+            if response is None or response.status != 200:
+                return None
+            # Read inside the try: a 200 whose body is cut off mid-transfer
+            # raises ClientPayloadError here, which used to escape as a 500
+            # and made the tile's image fail to load.
+            image = await response.read()
         except Exception as exc:  # noqa: BLE001
             _LOGGER.warning("Could not fetch snapshot for camera %r: %s", name, exc)
             return None
-        if response is None or response.status != 200:
-            return None
-        return await response.read()
+        # An empty body is no snapshot; served as one it is an image that
+        # cannot be drawn.
+        return image or None
 
     # ------------------------------------------------------------------
     # Downloading
