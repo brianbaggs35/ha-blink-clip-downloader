@@ -62,7 +62,8 @@ onUnmounted(() => {
         :class="{ 'secfeed-tile-image-hidden': !shownUrl }"
       />
       <div v-if="unavailable" class="secfeed-tile-placeholder muted-note">No snapshot available yet</div>
-      <div v-if="stale" class="secfeed-tile-stale" role="status">Couldn't refresh</div>
+      <!-- <output> is itself a polite live region, so no role="status" is needed. -->
+      <output v-if="stale" class="secfeed-tile-stale">Couldn't refresh</output>
     </div>
     <div class="secfeed-tile-name">{{ camera }}</div>
   </div>
