@@ -2121,6 +2121,11 @@ eye on multiple cameras at once rather than watching one at a time.
   cached — opening this tab (or leaving it open) doesn't ask Blink for
   anything extra beyond what the add-on already does, and it stops making
   any requests the moment you navigate away.
+- A tile only swaps its picture once the new one has fully arrived. If a
+  refresh fails, it keeps showing the previous picture with a small
+  *Couldn't refresh* note until the next one succeeds, rather than going
+  blank. A camera that has no snapshot yet shows *No snapshot available
+  yet*.
 - The **Customize** panel (collapsed by default) lets you pick which
   cameras to show, how many tiles per row (1–3 — beyond 3 a tile shrinks
   too small to make out what it's showing), and how often tiles refresh

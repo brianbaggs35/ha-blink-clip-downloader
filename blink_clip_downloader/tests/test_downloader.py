@@ -12,7 +12,10 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import aiohttp
 import pytest
+from aiohttp import web
+from aiohttp.test_utils import TestServer
 from blinkpy.auth import (
     BlinkTwoFARequiredError,
     LoginError,
@@ -4188,6 +4191,61 @@ async def test_get_camera_snapshot_download_exception_is_caught(
 
     assert result is None
     assert "network exploded" in caplog.text
+
+
+async def test_get_camera_snapshot_body_cut_off_mid_transfer_is_none(
+    dl: BlinkDownloader, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A 200 whose body the connection drops part-way through: aiohttp's
+    read() raises ClientPayloadError, which used to escape get_camera_snapshot
+    and reach the browser as a 500. Real aiohttp objects on both ends, since
+    a mocked response would never raise it."""
+
+    async def truncated(request: web.Request) -> web.StreamResponse:
+        response = web.StreamResponse(headers={"Content-Length": "100"})
+        await response.prepare(request)
+        await response.write(b"x" * 10)
+        assert request.transport is not None
+        request.transport.close()
+        return response
+
+    app = web.Application()
+    app.router.add_get("/thumb", truncated)
+    async with TestServer(app) as server, aiohttp.ClientSession() as session:
+
+        async def get_thumbnail() -> aiohttp.ClientResponse:
+            return await session.get(server.make_url("/thumb"))
+
+        camera = MagicMock()
+        camera.image_from_cache = None
+        camera.get_thumbnail = get_thumbnail
+        fake_blink = MagicMock()
+        fake_blink.cameras = CaseInsensitiveDict({"Front Door": camera})
+        dl._blink = fake_blink
+
+        with caplog.at_level("WARNING"):
+            result = await dl.get_camera_snapshot("Front Door")
+
+    assert result is None
+    # The real aiohttp error, not an incidental one from a bad stand-in.
+    assert "Could not fetch snapshot for camera 'Front Door'" in caplog.text
+    assert "payload" in caplog.text.lower()
+
+
+async def test_get_camera_snapshot_empty_download_is_none(
+    dl: BlinkDownloader,
+) -> None:
+    camera = MagicMock()
+    camera.image_from_cache = None
+    response = MagicMock()
+    response.status = 200
+    response.read = AsyncMock(return_value=b"")
+    camera.get_thumbnail = AsyncMock(return_value=response)
+    fake_blink = MagicMock()
+    fake_blink.cameras = CaseInsensitiveDict({"Front Door": camera})
+    dl._blink = fake_blink
+
+    assert await dl.get_camera_snapshot("Front Door") is None
 
 
 # ---------------------------------------------------------------------------

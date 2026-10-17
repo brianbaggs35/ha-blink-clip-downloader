@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   getSecurityFeedCameras,
   getSecurityFeedSettings,
+  getSecurityFeedSnapshot,
   saveSecurityFeedSettings,
-  securityFeedSnapshotUrl,
 } from './securityFeed'
 
 function jsonResponse(body: unknown) {
@@ -45,11 +45,39 @@ describe('securityFeed api', () => {
     })
   })
 
-  it('securityFeedSnapshotUrl()', () => {
-    expect(securityFeedSnapshotUrl('Front Door')).toBe('/api/security-feed/snapshot/Front%20Door')
-  })
+  describe('getSecurityFeedSnapshot()', () => {
+    function blobResponse(blob: Blob, ok = true, status = 200) {
+      return { ok, status, blob: () => Promise.resolve(blob) } as Response
+    }
 
-  it('securityFeedSnapshotUrl() URL-encodes special characters', () => {
-    expect(securityFeedSnapshotUrl('a/b c')).toBe('/api/security-feed/snapshot/a%2Fb%20c')
+    it('resolves the snapshot bytes, asking for it uncached', async () => {
+      const blob = new Blob(['jpeg'])
+      vi.mocked(fetch).mockResolvedValue(blobResponse(blob))
+      const signal = new AbortController().signal
+
+      await expect(getSecurityFeedSnapshot('Front Door', signal)).resolves.toBe(blob)
+
+      expect(fetch).toHaveBeenCalledWith('/api/security-feed/snapshot/Front%20Door', { cache: 'no-store', signal })
+    })
+
+    it('URL-encodes special characters in the camera name', async () => {
+      vi.mocked(fetch).mockResolvedValue(blobResponse(new Blob(['jpeg'])))
+
+      await getSecurityFeedSnapshot('a/b c')
+
+      expect(vi.mocked(fetch).mock.calls[0][0]).toBe('/api/security-feed/snapshot/a%2Fb%20c')
+    })
+
+    it('rejects when the server answers with an error', async () => {
+      vi.mocked(fetch).mockResolvedValue(blobResponse(new Blob(['nope']), false, 404))
+
+      await expect(getSecurityFeedSnapshot('Front Door')).rejects.toThrow('Snapshot unavailable: 404')
+    })
+
+    it('rejects an empty body rather than handing back an image that cannot be drawn', async () => {
+      vi.mocked(fetch).mockResolvedValue(blobResponse(new Blob([])))
+
+      await expect(getSecurityFeedSnapshot('Front Door')).rejects.toThrow('Snapshot was empty')
+    })
   })
 })

@@ -94,6 +94,20 @@ object-detection stage to Hugging Face's serverless inference. It is off
   or `gpt-4o` took OpenAI's price — `Sao10K/L3-8B-Stheno-v3.2` came out at o1's
   $15/$60 per million tokens. An id with a `/` in it is never an OpenAI or
   Anthropic id and is no longer matched against their tables.
+- **Security Feed: a tile could turn black and flicker.** Every refresh asked for
+  each camera's snapshot again by pointing the tile's `<img>` at a new address, and
+  a browser drops the picture an `<img>` was showing the moment its next load
+  fails. So one failed request (Blink throttling the thumbnail, a dropped
+  connection) replaced that tile's picture with a black box until the next refresh
+  happened to work. Each tile now fetches the snapshot first and swaps it in only
+  once it has arrived whole; if a refresh fails it keeps showing the previous
+  picture, with a small *Couldn't refresh* note on it until the next one succeeds.
+  A tile that has never had a picture still says *No snapshot available yet*.
+  Related fixes on the same path: a snapshot download cut off part-way through
+  (`ClientPayloadError`) or an empty one was served as a 500 or an undrawable image
+  and is now reported as no snapshot; and a background reload of the tab (a camera
+  renamed, the sidebar's Refresh button) no longer swaps the whole grid for a
+  loading spinner and rebuilds every tile.
 
 ### Other
 
