@@ -19,6 +19,10 @@ function jsonResponse(body: unknown, ok = true) {
   } as Response
 }
 
+function snapshotResponse(ok = true) {
+  return { ok, status: ok ? 200 : 404, blob: () => Promise.resolve(new Blob(['jpeg'])) } as Response
+}
+
 const DEFAULT_SETTINGS: SecurityFeedSettings = { cameras: [], columns: 3, refresh_seconds: 15 }
 
 interface Routes {
@@ -28,11 +32,17 @@ interface Routes {
   settingsFail?: boolean
   putResult?: SecurityFeedSettings
   putFail?: boolean
+  /** Camera names whose snapshot request is answered with a 404. */
+  noSnapshot?: string[]
 }
 
 function routedFetch(routes: Routes) {
   return vi.fn((url: string, opts?: RequestInit) => {
     const method = opts?.method
+    if (url.startsWith('/api/security-feed/snapshot/')) {
+      const camera = decodeURIComponent(url.slice('/api/security-feed/snapshot/'.length))
+      return Promise.resolve(snapshotResponse(!routes.noSnapshot?.includes(camera)))
+    }
     if (url === '/api/security-feed/cameras') {
       if (routes.camerasFail) return Promise.resolve(jsonResponse({}, false))
       return Promise.resolve(jsonResponse({ cameras: routes.cameras ?? [] }))
@@ -53,9 +63,20 @@ function mountPage() {
   return mount(SecurityFeedPage)
 }
 
+function snapshotRequests(fetchMock: ReturnType<typeof routedFetch>, camera?: string) {
+  return fetchMock.mock.calls.filter(
+    (c) =>
+      c[0].startsWith('/api/security-feed/snapshot/') && (!camera || c[0].endsWith(`/${encodeURIComponent(camera)}`)),
+  )
+}
+
 describe('SecurityFeedPage', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
+    // jsdom implements neither of these.
+    let urls = 0
+    URL.createObjectURL = vi.fn(() => `blob:snapshot-${++urls}`)
+    URL.revokeObjectURL = vi.fn()
   })
   afterEach(() => {
     vi.unstubAllGlobals()
@@ -153,85 +174,86 @@ describe('SecurityFeedPage', () => {
     expect((grid.attributes('style') || '').replace(/\s/g, '')).toContain('--secfeed-columns:3')
   })
 
-  it("includes the camera name and a cache-busting param in each tile's image src", async () => {
-    vi.stubGlobal('fetch', routedFetch({ cameras: ['Front Door'] }))
-    const wrapper = mountPage()
-    await flushPromises()
-    const src = wrapper.find('img.secfeed-tile-image').attributes('src')
-    expect(src).toContain('/api/security-feed/snapshot/Front%20Door')
-    expect(src).toMatch(/\?t=\d+/)
-  })
-
-  it('shows a placeholder and hides the broken image on load error', async () => {
-    vi.stubGlobal('fetch', routedFetch({ cameras: ['Front Door'] }))
+  it("shows each camera's snapshot in its own tile", async () => {
+    const fetchMock = routedFetch({ cameras: ['Front Door', 'Backyard'] })
+    vi.stubGlobal('fetch', fetchMock)
     const wrapper = mountPage()
     await flushPromises()
 
-    const img = wrapper.find('img.secfeed-tile-image')
-    await img.trigger('error')
-
-    expect(wrapper.find('img.secfeed-tile-image').classes()).toContain('secfeed-tile-image-hidden')
-    expect(wrapper.text()).toContain('No snapshot available yet')
+    expect(snapshotRequests(fetchMock, 'Front Door')).toHaveLength(1)
+    expect(snapshotRequests(fetchMock, 'Backyard')).toHaveLength(1)
+    const images = wrapper.findAll('img.secfeed-tile-image')
+    expect(images).toHaveLength(2)
+    expect(images.map((img) => img.attributes('src'))).toEqual(['blob:snapshot-1', 'blob:snapshot-2'])
+    expect(images[0].attributes('alt')).toBe('Front Door snapshot')
   })
 
-  it('clears the placeholder once the image successfully loads', async () => {
-    vi.stubGlobal('fetch', routedFetch({ cameras: ['Front Door'] }))
+  it('shows the placeholder only on the tile whose camera has no snapshot', async () => {
+    vi.stubGlobal('fetch', routedFetch({ cameras: ['Front Door', 'Garage'], noSnapshot: ['Garage'] }))
     const wrapper = mountPage()
     await flushPromises()
 
-    const img = wrapper.find('img.secfeed-tile-image')
-    await img.trigger('error')
-    expect(wrapper.text()).toContain('No snapshot available yet')
-
-    await img.trigger('load')
-    expect(wrapper.text()).not.toContain('No snapshot available yet')
-    expect(wrapper.find('img.secfeed-tile-image').classes()).not.toContain('secfeed-tile-image-hidden')
+    const [front, garage] = wrapper.findAll('.secfeed-tile')
+    expect(front.text()).not.toContain('No snapshot available yet')
+    expect(front.find('img').classes()).not.toContain('secfeed-tile-image-hidden')
+    expect(garage.text()).toContain('No snapshot available yet')
+    expect(garage.find('img').classes()).toContain('secfeed-tile-image-hidden')
   })
 
-  it('a normal load with no prior error is a no-op', async () => {
-    vi.stubGlobal('fetch', routedFetch({ cameras: ['Front Door'] }))
-    const wrapper = mountPage()
-    await flushPromises()
-
-    await wrapper.find('img.secfeed-tile-image').trigger('load')
-
-    expect(wrapper.text()).not.toContain('No snapshot available yet')
-    expect(wrapper.find('img.secfeed-tile-image').classes()).not.toContain('secfeed-tile-image-hidden')
-  })
-
-  it('bumps the cache-busting param on every refresh tick', async () => {
+  it('asks for a fresh snapshot for every tile on every refresh tick', async () => {
     vi.useFakeTimers()
-    vi.stubGlobal(
-      'fetch',
-      routedFetch({ cameras: ['Front Door'], settings: { cameras: [], columns: 3, refresh_seconds: 15 } }),
-    )
-    const wrapper = mountPage()
+    const fetchMock = routedFetch({
+      cameras: ['Front Door', 'Backyard'],
+      settings: { cameras: [], columns: 3, refresh_seconds: 15 },
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    mountPage()
     await flushPromises()
+    expect(snapshotRequests(fetchMock)).toHaveLength(2)
 
-    const before = wrapper.find('img.secfeed-tile-image').attributes('src')
     await vi.advanceTimersByTimeAsync(15000)
-    const after = wrapper.find('img.secfeed-tile-image').attributes('src')
+    expect(snapshotRequests(fetchMock)).toHaveLength(4)
 
-    expect(after).not.toBe(before)
+    await vi.advanceTimersByTimeAsync(15000)
+    expect(snapshotRequests(fetchMock)).toHaveLength(6)
   })
 
-  it('stops the refresh timer on unmount', async () => {
+  it('stops refreshing once the page is gone', async () => {
     vi.useFakeTimers()
-    vi.stubGlobal(
-      'fetch',
-      routedFetch({ cameras: ['Front Door'], settings: { cameras: [], columns: 3, refresh_seconds: 15 } }),
-    )
+    const fetchMock = routedFetch({
+      cameras: ['Front Door'],
+      settings: { cameras: [], columns: 3, refresh_seconds: 15 },
+    })
+    vi.stubGlobal('fetch', fetchMock)
     const wrapper = mountPage()
     await flushPromises()
-    const before = wrapper.find('img.secfeed-tile-image').attributes('src')
+    expect(snapshotRequests(fetchMock)).toHaveLength(1)
 
     wrapper.unmount()
     await vi.advanceTimersByTimeAsync(60000)
 
-    // Nothing to assert on the unmounted wrapper's DOM directly, but the
-    // absence of a thrown error/timer leak is the point - pair with the
-    // interval-cleared check below for a positive assertion too.
+    expect(snapshotRequests(fetchMock)).toHaveLength(1)
+  })
+
+  it('keeps a tile showing its picture when one refresh of one camera fails', async () => {
+    vi.useFakeTimers()
+    const routes: Routes = {
+      cameras: ['Front Door', 'Backyard', 'Garage'],
+      settings: { cameras: [], columns: 2, refresh_seconds: 15 },
+    }
+    vi.stubGlobal('fetch', routedFetch(routes))
+    const wrapper = mountPage()
+    await flushPromises()
+    const third = () => wrapper.findAll('.secfeed-tile')[2]
+    const before = third().find('img').attributes('src')
     expect(before).toBeTruthy()
+
+    routes.noSnapshot = ['Garage']
+    await vi.advanceTimersByTimeAsync(15000)
+
+    expect(third().find('img').attributes('src')).toBe(before)
+    expect(third().find('img').classes()).not.toContain('secfeed-tile-image-hidden')
+    expect(third().text()).not.toContain('No snapshot available yet')
   })
 
   it('populates the customize panel with the loaded settings', async () => {
@@ -315,10 +337,10 @@ describe('SecurityFeedPage', () => {
       .trigger('click')
     await flushPromises()
 
-    const before = wrapper.find('img.secfeed-tile-image').attributes('src')
+    const before = snapshotRequests(fetchMock).length
     await vi.advanceTimersByTimeAsync(5000)
-    const after = wrapper.find('img.secfeed-tile-image').attributes('src')
-    expect(after).not.toBe(before)
+    expect(snapshotRequests(fetchMock)).toHaveLength(before + 1)
+    wrapper.unmount()
   })
 
   it('reloads clean settings on a shared refresh tick (e.g. a camera rename)', async () => {
@@ -332,6 +354,40 @@ describe('SecurityFeedPage', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('Entryway')
+  })
+
+  it('keeps the tiles on screen while a shared refresh tick reloads in the background', async () => {
+    let releaseReload!: (v: Response) => void
+    let settingsCalls = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url.startsWith('/api/security-feed/snapshot/')) return Promise.resolve(snapshotResponse())
+        if (url === '/api/security-feed/cameras') return Promise.resolve(jsonResponse({ cameras: ['Front Door'] }))
+        settingsCalls++
+        if (settingsCalls === 2) {
+          return new Promise<Response>((resolve) => {
+            releaseReload = resolve
+          })
+        }
+        return Promise.resolve(jsonResponse({ cameras: [], columns: 3, refresh_seconds: 15 }))
+      }),
+    )
+    const wrapper = mountPage()
+    await flushPromises()
+    const tile = wrapper.find('.secfeed-tile').element
+
+    useRefreshStore().bump()
+    await flushPromises()
+
+    // The reload is still waiting on the server: the grid must not have been
+    // swapped for the loading indicator, which would tear down every tile.
+    expect(wrapper.find('.loading-indicator').exists()).toBe(false)
+    expect(wrapper.find('.secfeed-tile').element).toBe(tile)
+
+    releaseReload(jsonResponse({ cameras: [], columns: 3, refresh_seconds: 15 }))
+    await flushPromises()
+    expect(wrapper.find('.secfeed-tile').element).toBe(tile)
   })
 
   it('does not clobber unsaved draft changes on a shared refresh tick', async () => {

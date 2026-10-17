@@ -37,6 +37,50 @@ test('shows a real snapshot for a camera with one cached, and the placeholder fo
   await expect(garageTile.getByText('No snapshot available yet')).toBeVisible()
 })
 
+test('a refresh that fails keeps the last picture instead of blacking the tile out @standalone', async ({ page }) => {
+  // The reported fault: a tile in the grid turns black and flickers. Every
+  // refresh tick re-requests each snapshot, and one request failing used to
+  // swap that tile's picture for the "No snapshot available yet" placeholder
+  // on a black background until the next tick happened to succeed. A fake
+  // clock drives the refresh timer, so no test waits out the real interval.
+  await page.clock.install()
+  await page.reload()
+  await page.locator('.app-nav-tab[data-tab="securityfeed"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="securityfeed"]')
+
+  const tile = page.locator('.secfeed-tile', { hasText: 'Backyard' })
+  const img = tile.locator('img')
+  await expect(img).toBeVisible()
+  await expect.poll(() => img.evaluate((el: HTMLImageElement) => el.naturalWidth)).toBeGreaterThan(0)
+
+  let failing = true
+  let attempts = 0
+  await page.route('**/api/security-feed/snapshot/Backyard*', (route) => {
+    attempts += 1
+    return failing ? route.fulfill({ status: 500, body: 'boom' }) : route.continue()
+  })
+
+  await page.clock.fastForward(15_000)
+  await expect.poll(() => attempts).toBeGreaterThan(0)
+  // Give the failed request time to land before judging what is on screen.
+  await page.clock.runFor(1_000)
+
+  await expect(img).toBeVisible()
+  expect(await img.evaluate((el: HTMLImageElement) => el.naturalWidth)).toBeGreaterThan(0)
+  await expect(tile.getByText('No snapshot available yet')).toHaveCount(0)
+  await expect(tile.getByText("Couldn't refresh")).toBeVisible()
+
+  // Once the camera answers again the tile carries on as normal.
+  failing = false
+  const before = attempts
+  await page.clock.fastForward(15_000)
+  await expect.poll(() => attempts).toBeGreaterThan(before)
+  await expect(img).toBeVisible()
+  await expect(tile.getByText('No snapshot available yet')).toHaveCount(0)
+  await expect(tile.getByText("Couldn't refresh")).toHaveCount(0)
+  await page.unroute('**/api/security-feed/snapshot/Backyard*')
+})
+
 test('the Customize panel starts collapsed and expands on click', async ({ page }) => {
   await expect(page.locator('#secfeed-cameras')).not.toBeVisible()
   await page.getByRole('button', { name: 'Customize' }).click()

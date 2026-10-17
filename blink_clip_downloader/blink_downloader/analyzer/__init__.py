@@ -1,12 +1,16 @@
 """AI video analysis via ffmpeg frame extraction and pluggable AI providers.
 
-Six providers are supported:
+Eight providers are supported:
 - ``ollama``          – local/LAN Ollama server with a vision-capable model
 - ``ollama_cloud``    – Ollama Cloud API (ollama.com) with an API key
 - ``moondream_cloud`` – Moondream Cloud API (api.moondream.ai)
 - ``moondream_local`` – Moondream 0.5B model running on-device (no cloud)
 - ``anthropic``       – Anthropic Claude API (claude.ai) with an API key
 - ``openai``          – OpenAI Chat Completions API (platform.openai.com) with an API key
+- ``huggingface``     – Hugging Face Inference Providers (router.huggingface.co), any
+  vision model it serves, billed to the Hugging Face account behind its token
+- ``replicate``       – Replicate's official vision models (replicate.com), billed to
+  the Replicate account behind its API token
 
 Use :func:`create_analyzer` to instantiate the right provider from config.
 
@@ -17,9 +21,9 @@ the vision/security layers, verdict handling — and each provider module
 holds only what differs about talking to that one API. :mod:`.factory`
 chooses between them. The provider modules depend on :mod:`.base` and on
 nothing else in the package, so a provider can be read, changed or added
-without reading the other five.
+without reading the other seven.
 
-What this module re-exports is the package's public surface — the six
+What this module re-exports is the package's public surface — the eight
 analyzer classes, :class:`BaseAnalyzer`, :class:`AnalysisResult`,
 :class:`SecurityLayerSettings`, :func:`create_analyzer` — plus the
 model-catalog names the old module happened to pass through. That covers
@@ -51,9 +55,11 @@ from ..model_catalog import (
 from .anthropic_provider import AnthropicAnalyzer
 from .base import AnalysisResult, BaseAnalyzer, SecurityLayerSettings
 from .factory import AnalyzerSettings, ProviderCredentials, create_analyzer
+from .huggingface_provider import HuggingFaceAnalyzer
 from .moondream_provider import MoondreamCloudAnalyzer, MoondreamLocalAnalyzer
 from .ollama_provider import ClipAnalyzer, OllamaCloudAnalyzer
 from .openai_provider import OpenAIAnalyzer
+from .replicate_provider import ReplicateAnalyzer
 
 __all__ = [
     "_ANTHROPIC_DATED_SNAPSHOT_RE",
@@ -66,11 +72,13 @@ __all__ = [
     "AnthropicAnalyzer",
     "BaseAnalyzer",
     "ClipAnalyzer",
+    "HuggingFaceAnalyzer",
     "MoondreamCloudAnalyzer",
     "MoondreamLocalAnalyzer",
     "OllamaCloudAnalyzer",
     "OpenAIAnalyzer",
     "ProviderCredentials",
+    "ReplicateAnalyzer",
     "SecurityLayerSettings",
     "_anthropic_supports_structured_output",
     "_openai_model_rank",

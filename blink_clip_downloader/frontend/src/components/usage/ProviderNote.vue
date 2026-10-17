@@ -37,6 +37,17 @@ defineProps<{ provider?: string; showEscalationNote: boolean }>()
     <p v-else-if="provider === 'openai'">
       OpenAI charges per token. Input and output tokens are tracked from the API response for every analysis.
     </p>
+    <p v-else-if="provider === 'huggingface'">
+      Hugging Face Inference Providers charges per token, at the rate of whichever backend serves each request — the
+      estimated cost below uses the rate Hugging Face lists for the model (add <code>:cheapest</code> to the model to
+      pin the least expensive backend), and your Hugging Face billing page has the exact figure.
+    </p>
+    <p v-else-if="provider === 'replicate'">
+      Replicate bills its official language models per token. Its API carries no prices, so the estimated cost uses the
+      per-token rates shown on each model's Replicate page, copied into the add-on and so liable to drift — your
+      Replicate dashboard has what you have actually spent. Token counts come from the prediction's optional metrics: a
+      model that reports none shows no tokens, and one with no listed rate (GPT-5.6 Sol) shows no cost.
+    </p>
     <p v-if="showEscalationNote">
       Two-tier escalation (the AI Escalation Provider / AI Escalation Model options) works with any provider as tier 2,
       including a different one than tier 1 — e.g. a fast OpenAI model escalating to Moondream Cloud or Claude for a

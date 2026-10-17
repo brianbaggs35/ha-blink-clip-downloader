@@ -176,12 +176,18 @@ configuration:
       手机应用发送提醒。
   ai_provider:
     name: AI 提供商
-    description: >-
-      使用哪个 AI 后端。“ollama” = 你局域网内的本地 Ollama 服务器（免费、私密）。
-      “ollama_cloud” = Ollama Cloud API（付费）。“moondream_cloud” = Moondream
-      Cloud API（付费，使用物体检测 + 推理以提高准确率）。“moondream_local” =
-      本地设备端的 Moondream 0.5B（免费，仅限 x86_64）。“anthropic” = Claude
-      API（付费）。“openai” = OpenAI GPT API（付费）。
+    description: "使用哪个 AI 后端。“ollama” = 你局域网内的本地 Ollama 服务\
+      器（免费、私密）。 “ollama_cloud” = Ollama Cloud \
+      API（付费）。“moondream_cloud” = Moondream Cl\
+      oud API（付费，使用物体检测 + 推理以提高准确率）。“moondream\
+      _local” = 本地设备端的 Moondream 0.5B（免费，仅限 x8\
+      6_64）。“anthropic” = Claude API（付费）。“open\
+      ai” = OpenAI GPT API（付费）。 “huggingface” \
+      = Hugging Face Inference Providers，可使用其提\
+      供的任意视觉模型（按 token 付费；使用 Hugging Face API \
+      令牌，若为空则使用 Hugging Face 令牌）。 “replicate” \
+      = Replicate 官方视觉模型（付费；使用 Replicate API 令\
+      牌）。"
   ollama_url:
     name: Ollama 服务器网址
     description: >-
@@ -228,6 +234,34 @@ configuration:
     description: >-
       要使用的 GPT 模型。gpt-4o-mini 是性价比最高的视觉分析选项。可在 Web 界面的
       AI 标签页中使用“Fetch Models”。
+  huggingface_api_key:
+    name: Hugging Face API 令牌
+    description: "用于“huggingface”AI 提供商和“huggingface”物体检测后\
+      端的 Hugging Face 令牌。请在 https://huggingfac\
+      e.co/settings/tokens 创建一个具有“Make calls t\
+      o Inference Providers”权限的细粒度令牌。请求会向该令牌所属\
+      的账户计费（免费账户没有每月额度——详见文档）。留空则改用下方的 Hugging\
+      Face 令牌。请妥善保密。"
+  huggingface_model:
+    name: Hugging Face 模型
+    description: "AI 提供商为“huggingface”时使用的视觉模型，格式为 org/nam\
+      e，可附加路由后缀：“:cheapest”、“:fastest”（默认）或某个后\
+      端，如“:novita”。在 Web 界面的 AI 标签页中使用“Fetch M\
+      odels”可查看当前可用的模型（按价格从低到高排序并显示价格）。使用上方的 H\
+      ugging Face API 令牌进行身份验证（若为空则使用下方的 Huggi\
+      ng Face 令牌）。"
+  replicate_api_key:
+    name: Replicate API 令牌
+    description: "来自 replicate.com/account/api-tokens 的 AP\
+      I 令牌。AI 提供商为“replicate”时必填。请求会向该令牌所属的账户计\
+      费。请妥善保密。"
+  replicate_model:
+    name: Replicate 模型
+    description: "AI 提供商为“replicate”时使用的 Replicate 官方模型，格式\
+      为 owner/name——例如 openai/gpt-4o-mini（默认）或\
+      google/gemini-2.5-flash。它必须能接收图像和提示词；不支\
+      持社区模型。在 Web 界面的 AI 标签页中使用“Fetch Models”可\
+      查看官方视觉模型。每次请求只能接收一张图像的模型会对每一帧分别请求一次。"
   openai_escalation_model:
     name: OpenAI 升级模型（已弃用）
     description: >-
@@ -360,6 +394,21 @@ configuration:
       线索，而不是仅依赖运动差异启发式方法。首次使用时会下载多个模型（总计
       100MB–800MB 以上），且所需的 CPU/RAM 远高于本插件的其余部分。在 Raspberry
       Pi 5（8GB）或更高配置上运行流畅。默认关闭；不启用此项时分析效果完全相同。
+  ai_vision_backend:
+    name: 物体检测后端
+    description: "增强检测中物体检测阶段的运行位置。“local” = 在本设备上（默认）。“hu\
+      ggingface” = 在 Hugging Face 的服务器上，适用于无法运\
+      行该模型的硬件：抽取的剪辑画面帧会被上传到 Hugging Face，并向 Hu\
+      gging Face API 令牌（或 Hugging Face 令牌）所属的账\
+      户计费。只有检测可以迁出：Hugging Face 没有深度估计模型，也没有可按\
+      边界框提示的分割模型，因此该模式下不会运行深度分析和接触分析；姿态估计、人脸识别\
+      和音频分析仍留在本设备上，无论哪种模式，人脸识别数据都不会离开本设备。启用前请阅\
+      读文档。"
+  ai_remote_detection_model:
+    name: Hugging Face 检测模型
+    description: "物体检测后端为“huggingface”时使用的 Hugging Face 物体\
+      检测模型。其无服务器推理目前提供 facebook/detr-resnet-50\
+      （默认）和 facebook/detr-resnet-101。留空则使用默认值。"
   ai_object_detection_model:
     name: 物体检测模型
     description: >-
@@ -401,11 +450,13 @@ configuration:
       能识别离摄像头更远的人，CPU 开销略有增加。更改后请在“生物识别”标签页重新
       扫描一段剪辑——人脸与相同分辨率下录入的照片匹配效果最好。
   hf_token:
-    name: Hugging Face 令牌（可选）
-    description: >-
-      可选的 Hugging Face 访问令牌，用于验证计算机视觉模型下载身份并提高
-      Hugging Face Hub 的速率限制。可在
-      https://huggingface.co/settings/tokens 创建。请妥善保密。
+    name: Hugging Face 令牌
+    description: "Hugging Face 访问令牌。当一切都在本设备上运行时为可选项，此时它用于\
+      验证计算机视觉模型下载身份并提高 Hugging Face Hub 的速率限制。\
+      若上方的 Hugging Face API 令牌为空，它也会作为“hugging\
+      face”AI 提供商和“huggingface”物体检测后端的凭据，此时必须具\
+      有“Make calls to Inference Providers”权限。请\
+      妥善保密。"
   ai_pose_estimation_enabled:
     name: 启用姿态估计
     description: >-

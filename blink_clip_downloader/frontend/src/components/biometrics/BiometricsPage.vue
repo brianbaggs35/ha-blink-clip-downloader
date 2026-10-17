@@ -28,6 +28,7 @@ const data = ref<FacesResponse | null>(null)
 const finder = ref<InstanceType<typeof FaceFinder> | null>(null)
 
 const available = computed(() => data.value?.available ?? true)
+const remoteVision = computed(() => data.value?.remote_vision === true)
 const frameWidth = computed(() => data.value?.frame_width ?? 640)
 const people = computed<Person[]>(() => groupPeople(data.value?.faces ?? [], frameWidth.value))
 const approvedCount = computed(() => people.value.filter((p) => p.approved).length)
@@ -188,6 +189,12 @@ function scanReportedClip(clipId: string) {
       <strong>🔒 Everything here stays local.</strong> Photos, face data and names never leave this device and are never
       sent to any AI provider — not even a cloud one. Analysis only ever receives a nameless "recognized household
       member" signal; names are used afterwards, locally, to personalize your own notifications.
+      <template v-if="remoteVision">
+        <br /><br />
+        <strong>One exception to know about:</strong> object detection is set to run on Hugging Face, so the sampled
+        frames of each clip — which can show faces — are uploaded to it for that. Recognition itself, and everything
+        enrolled here, still stays on this device.
+      </template>
     </Message>
 
     <Card class="people-card">

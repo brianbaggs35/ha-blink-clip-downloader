@@ -36,9 +36,46 @@ class UsageRoutesMixin(_MediaServerBase):
         app.router.add_get("/api/ai/usage/periods", self._handle_ai_usage_periods)
         app.router.add_delete("/api/ai/usage", self._handle_ai_usage_clear)
 
-    async def _handle_ai_usage(self, _request: web.Request) -> web.Response:
+    async def _pricing_lookup(self) -> Callable[[str], tuple[float, float] | None]:
+        """The function that prices a model name found in the usage rows.
+
+        The configured analyzers get the first say, the static tables
+        (``lookup_model_pricing``) the rest: a provider that learns its rates
+        from its own API (Hugging Face) knows them for every model it
+        serves, which no table in this repo could, while OpenAI and
+        Anthropic rows still fall through to the tables as before. Tier 2 is
+        asked too, since its rows carry its own model name.
+        """
         from ..analyzer import lookup_model_pricing
 
+        analyzers = []
+        if self._analyzer is not None:
+            analyzers.append(self._analyzer)
+            if self._analyzer.escalation_analyzer is not None:
+                analyzers.append(self._analyzer.escalation_analyzer)
+        for analyzer in analyzers:
+            try:
+                await analyzer.refresh_pricing()
+            except Exception:
+                # Prices are a courtesy on this page; a provider that cannot
+                # load its own must cost a row its figure, not the page.
+                _LOGGER.warning(
+                    "Could not load %s's prices; its rows show no cost",
+                    analyzer.provider_name,
+                    exc_info=True,
+                )
+
+        def lookup(model: str) -> tuple[float, float] | None:
+            for analyzer in analyzers:
+                price = analyzer.price_for_model(model)
+                if price is not None:
+                    return price
+            return lookup_model_pricing(model)
+
+        return lookup
+
+    async def _handle_ai_usage(self, _request: web.Request) -> web.Response:
+        lookup_model_pricing = await self._pricing_lookup()
         enabled = self._analyzer is not None
         data: dict = {"enabled": enabled}
         if enabled:
@@ -191,9 +228,9 @@ class UsageRoutesMixin(_MediaServerBase):
         }
 
     async def _handle_ai_usage_periods(self, _request: web.Request) -> web.Response:
-        from ..analyzer import lookup_model_pricing
-
-        return web.json_response(await self._build_period_usage(lookup_model_pricing))
+        return web.json_response(
+            await self._build_period_usage(await self._pricing_lookup())
+        )
 
     async def _handle_ai_usage_clear(self, _request: web.Request) -> web.Response:
         await self._db.clear_ai_usage_stats()

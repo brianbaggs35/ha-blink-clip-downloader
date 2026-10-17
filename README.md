@@ -229,6 +229,40 @@ and performs well for security-camera analysis. `gpt-4o` ($2.50/$10 per 1M token
 offers higher accuracy, while `gpt-4.1-nano` ($0.10/$0.40 per 1M tokens) is the
 lowest-cost option available.
 
+### Hugging Face
+
+Uses [Hugging Face Inference Providers](https://huggingface.co/docs/inference-providers):
+one token, and any vision model the providers behind it currently serve (Qwen,
+Gemma, GLM and more). Billed per token to your Hugging Face account — see its
+[pricing page](https://huggingface.co/docs/inference-providers/pricing), which
+at the time of writing lists no monthly credit for free accounts.
+
+1. Create a fine-grained token with **Make calls to Inference Providers** at
+   <https://huggingface.co/settings/tokens>.
+2. In the add-on settings set:
+   - `ai_provider: huggingface`
+   - `huggingface_api_key: <your-token>` (left blank, `hf_token` is used)
+   - `huggingface_model:` an `org/name`, optionally ending `:cheapest` — use
+     **Fetch Models** in the web UI for the models available now, with prices.
+
+The same token can also run object detection on Hugging Face instead of on the
+device (`ai_vision_backend: huggingface`) — see the
+[documentation](blink_clip_downloader/DOCS.md#running-object-detection-on-hugging-face)
+for what that uploads and what it cannot replace.
+
+### Replicate
+
+Uses [Replicate](https://replicate.com)'s official vision models (Gemini, GPT,
+Claude and more) — see its [documentation](https://replicate.com/docs/get-started/python)
+and [pricing](https://replicate.com/pricing). Billed to your Replicate account.
+
+1. Create an API token at <https://replicate.com/account/api-tokens>.
+2. In the add-on settings set:
+   - `ai_provider: replicate`
+   - `replicate_api_key: <your-api-token>`
+   - `replicate_model:` an official model such as `openai/gpt-4o-mini` (the
+     default) or `google/gemini-2.5-flash`.
+
 ## Protecting your car
 
 With AI analysis on, the **Vehicles** tab is where you tell the add-on which
@@ -326,6 +360,8 @@ The following providers/models have been tested and are working or were fixed:
 | Anthropic models| :x:                |
 | Ollama models   | :x:                |
 | Moondream local | :x:                |
+| Hugging Face    | :x:                |
+| Replicate       | :x:                |
 
 ## Google Drive Backup Setup
 

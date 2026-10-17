@@ -146,6 +146,7 @@ class MediaServer(
         face_recognition_enabled: bool = False,
         face_ignore_unclear: bool = False,
         face_frame_width: int = ANALYSIS_FRAME_WIDTH,
+        remote_vision: bool = False,
         live_view: LiveViewManager | None = None,
         list_camera_names: Callable[[], list[str]] | None = None,
         get_camera_snapshot: Callable[[str], Awaitable[bytes | None]] | None = None,
@@ -209,6 +210,12 @@ class MediaServer(
         # The width recognition matches faces at, which enrollment scans
         # must use too (see vision/faces.py's FACE_RESOLUTION_WIDTHS).
         self._face_frame_width = face_frame_width
+        # Only reported, like the three above: whether object detection runs
+        # on Hugging Face's servers, which the Biometrics tab has to say
+        # next to its promise that face data stays on this device (the
+        # sampled frames it detects in can contain the very faces it
+        # recognizes), and the AI tab shows beside the provider.
+        self._remote_vision = remote_vision
         # Independent from any FaceEmbedder the analyzer's VisionPipeline may
         # hold (see vision/runtime.py) — enrollment is a rare, occasional action, so
         # a second lazily-loaded model instance here is simpler than piping

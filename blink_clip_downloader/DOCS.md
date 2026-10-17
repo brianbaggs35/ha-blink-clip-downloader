@@ -486,7 +486,7 @@ default**; set `ai_analysis_enabled: true` to turn it on.
 
 ### AI Providers
 
-Six providers are supported. Set `ai_provider` to one of the values below:
+Eight providers are supported. Set `ai_provider` to one of the values below:
 
 #### Ollama (Local/LAN) — `ollama`
 
@@ -569,6 +569,97 @@ as the most cost-effective option. The o1/o3/o4-mini reasoning models and the en
 GPT-5 family use `max_completion_tokens` instead of the legacy `max_tokens` parameter;
 this is handled automatically based on the model name.
 
+#### Hugging Face — `huggingface`
+
+Uses [Hugging Face Inference Providers](https://huggingface.co/docs/inference-providers):
+one token, and any vision model the providers behind it (Novita, Together,
+DeepInfra, Scaleway and others) currently serve — Qwen, Gemma, GLM and so on.
+Billed per token to the Hugging Face account the token belongs to.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `huggingface_api_key` | `""` | Hugging Face token with the **Make calls to Inference Providers** permission ([create one](https://huggingface.co/settings/tokens/new?ownUserPermissions=inference.serverless.write&tokenType=fineGrained)). Left blank, the add-on uses `hf_token` instead, so one token can serve both. |
+| `huggingface_model` | `"google/gemma-4-26B-A4B-it"` | A model as `org/name`, optionally with a routing suffix: `:cheapest` (the least expensive provider), `:fastest` (the default if you add nothing) or a provider's name such as `:novita`. Use **Fetch Models** in the web UI to see the vision models available right now, cheapest first, with their price per million tokens. |
+
+**What it costs — read this before choosing it for "free".** Hugging Face's
+[pricing page](https://huggingface.co/docs/inference-providers/pricing) says
+free accounts get no monthly Inference Providers credit: a free account must buy
+credits, PRO includes a small monthly amount, and usage beyond it is
+pay-as-you-go. Hugging Face adds no markup, so the price of a request is the price
+the serving provider lists for the model. When the balance runs out, requests
+fail with HTTP 402; the add-on reports that plainly, stops working through the
+queue, and keeps the clips queued so topping up resumes them. Terms change, so
+check the pricing page rather than relying on this paragraph.
+
+**Notes**
+
+- The default model was picked from the live catalog (a mixture-of-experts model
+  served by several providers at a low price), **not from a benchmark on security
+  footage**. The catalog changes weekly; treat the default as a starting point and
+  judge a model on your own clips.
+- The router passes your request to whichever provider serves it, and providers
+  differ. If the provider rejects a response schema, the add-on asks for JSON in
+  the prompt alone from then on. When a provider's error says a model accepts only
+  one image per request, the log says so and names the fix: set
+  `ai_frame_strategy` to `sequential`.
+- Many models in the catalog think before they answer, and what they think about
+  counts against the 1,024-token allowance for each reply. An answer that is cut
+  off by that limit is treated as a **failed call**, not a verdict: the log says so
+  and the clip is retried, because reading half of a JSON reply as "not suspicious"
+  would hide an event. If it happens on every clip, choose a model that answers
+  directly. (A complete answer that merely ends at the limit is kept.)
+- Costs on the AI Usage tab are **estimates** from the rate listed for the
+  provider that would have been chosen (a provider currently running a model free
+  of charge counts as $0). Your Hugging Face billing page has the actual figure.
+- The health check asks the Hub's `whoami` endpoint, which Hugging Face rate-limits
+  on purpose, so a good result is reused for ten minutes; a failure is rechecked
+  after thirty seconds.
+- The clip frames are sent to Hugging Face and on to the provider serving the
+  model, as they would be for any cloud provider.
+
+#### Replicate — `replicate`
+
+Uses [Replicate](https://replicate.com)'s **official** vision models (Gemini, GPT,
+Claude and others) through its prediction API. See Replicate's
+[documentation](https://replicate.com/docs/get-started/python) and
+[pricing](https://replicate.com/pricing). Billed to the Replicate account the API
+token belongs to. Replicate's documentation says official models are billed by
+their output or input rather than by run time, and the language models by token.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `replicate_api_key` | `""` | API token from [replicate.com/account/api-tokens](https://replicate.com/account/api-tokens) |
+| `replicate_model` | `"openai/gpt-4o-mini"` | An official model written `owner/name`. **Fetch Models** lists the official vision models; community models (which are called by version id) are not supported. |
+
+**How it adapts to a model.** Every Replicate model names its own inputs — Gemini
+takes `images`, the GPT models `image_input`, Claude a single `image` — so the
+add-on reads the model's published input schema once and arranges the clip to
+fit it, which is how a vision model Replicate publishes later works without a new
+release. A model that takes a list of images gets the whole clip in one request. A
+model that takes **one** image (Claude) is asked once per frame and the most
+alarming answer is kept, which costs more requests and more input tokens than a
+single call; seeing several requests for one clip is expected, not a fault. A model with no
+image input, or none for a prompt, is rejected with a message saying so.
+
+**Usage and cost.** Replicate's API carries no prices; each official model's page
+shows its own. The AI Usage tab estimates cost from per-token rates copied from
+those pages (checked 2026-10-12), so they can drift — Replicate does not promise
+they stay fixed, and your Replicate dashboard has what you have actually spent.
+`openai/gpt-5.6-sol` is not priced: its page describes a promotion that has ended
+and its billing data disagrees with that text, so there is no figure to trust,
+and it shows tokens and no cost. Token counts come from the prediction's
+`metrics`, which Replicate lists as optional per model; a model that reports none
+shows no tokens (the log says so once) rather than an estimate. Frames are sent
+as base64 data URIs, which Replicate recommends for files under 1 MB; an analysis
+frame is a 640-pixel JPEG. Each prediction is created with a four-minute
+`Cancel-After`, so a request this add-on stops waiting for is not left running
+indefinitely (Replicate's billing documentation notes that a cancelled run of an
+official model may still be charged).
+
+Replicate lowers the rate it allows an account as its credit runs low and limits
+an account with credit but no payment method to six requests a minute; either
+shows up as rate-limit warnings, and the clips stay queued.
+
 #### Two-tier escalation (any provider)
 
 Most motion clips are not suspicious, so paying for a strong model on every clip is
@@ -580,7 +671,7 @@ opinion, and the tier-2 verdict — not tier 1's — is what gets recorded and a
 | Option | Default | Description |
 |--------|---------|-------------|
 | `ai_escalation_enabled` | `false` | Master on/off switch for two-tier escalation. When off, `ai_escalation_provider`/`ai_escalation_model` below are ignored entirely and analysis runs on tier 1 alone. |
-| `ai_escalation_provider` | `"ollama"` | Tier-2 provider, only used when `ai_escalation_enabled` is on: `"ollama"`, `"ollama_cloud"`, `"moondream_cloud"`, `"moondream_local"`, `"anthropic"`, or `"openai"`. May be a **different** provider than `ai_provider` (e.g. tier 1 = `openai`, tier 2 = `moondream_cloud`) — it reuses that provider's own credential fields already configured above, no separate API key needed. This field always has a value (its dropdown can't be left blank) — `ai_escalation_enabled` is the actual disable switch. |
+| `ai_escalation_provider` | `"ollama"` | Tier-2 provider, only used when `ai_escalation_enabled` is on: `"ollama"`, `"ollama_cloud"`, `"moondream_cloud"`, `"moondream_local"`, `"anthropic"`, `"openai"`, `"huggingface"`, or `"replicate"`. May be a **different** provider than `ai_provider` (e.g. tier 1 = `openai`, tier 2 = `moondream_cloud`) — it reuses that provider's own credential fields already configured above, no separate API key needed. This field always has a value (its dropdown can't be left blank) — `ai_escalation_enabled` is the actual disable switch. |
 | `ai_escalation_model` | `""` | Model ID for the escalation provider (e.g. `"gpt-4o"`, `"claude-opus-4-5"`, or a Moondream fine-tune ID). Leave empty to use that provider's default/base model. Not applicable to `moondream_local`, which has no selectable model. |
 
 Recommended pairings: `gpt-4o-mini` + `gpt-4o`, `gpt-5.4-nano` + `gpt-5.4`, or an
@@ -702,7 +793,7 @@ frame, roughly 2.6× a single call at the defaults.
 |-------|-----------|
 | `"adaptive"` | **(Default since 6.0.6 — recommended.)** Spends the budget on the clip's one busiest stretch rather than spreading it. `"smart"` enforces a minimum gap between picks so they cover the whole timeline, which means a six-second event inside a 60-second clip gets **exactly one frame** — and stays at one however high `ai_max_frames` goes, so the doubled budget a long clip receives buys no extra look at what actually happened. This one takes the peak-motion frame, the first and last for context, then works outward from the peak through the event before spending anything elsewhere. If a clip has no single concentrated event — steady wind, a slow pan, or two separate bursts several seconds apart — it falls back to `"smart"` and picks identically, so it is never the worse choice, only a different one when there is something to aim at. |
 | `"smart"` | Ranks the extracted pool by inter-frame motion-diff (PIL) and sends the peak-motion frame, the first frame and the last frame, then fills any remaining budget by motion score while enforcing a minimum spacing so the picks spread across the clip instead of clustering on one burst. When the budget is smaller than three the peak wins first — a single frame of the scene *before* anything happened is rarely worth sending. It also asks ffmpeg for 2× `ai_max_frames` candidates — which raises the pool above the 60-second coverage floor only if `ai_max_frames` is above 15 at the default interval, but is also what decides how finely a short clip gets sampled. Best accuracy for a given number of API calls. |
-| `"sequential"` | Chooses frames exactly as `"smart"` does, then sends each one as its own AI call and keeps the most alarming answer (suspicious beats non-suspicious; higher confidence breaks a tie). Useful when a model reads one image better than a batch — but note it costs one request per frame rather than one per clip. Works with all six providers. |
+| `"sequential"` | Chooses frames exactly as `"smart"` does, then sends each one as its own AI call and keeps the most alarming answer (suspicious beats non-suspicious; higher confidence breaks a tie). Useful when a model reads one image better than a batch — but note it costs one request per frame rather than one per clip. Works with all eight providers. |
 | `"uniform"` | Skips motion analysis entirely and spaces the frames it sends evenly across the whole extracted pool. Pick this only if you specifically want sampling that ignores what is happening: because it never looks at motion, it can send the AI **no frames of the event at all** when that event was brief. On the same set of simulated clips used to compare the others, that happened on 2 of 14 — a car passing early in the clip, and someone arriving near the end. Kept for existing configurations. |
 
 ### Per-Camera Configuration
@@ -959,6 +1050,8 @@ you'll see them report unavailable there.
 | Option | Default | What it adds |
 |---|---|---|
 | `ai_enhanced_detection_enabled` | `false` | Frame preprocessing (CLAHE contrast enhancement + light denoising, OpenCV), object detection + tracking (YOLO + ByteTrack, via Ultralytics), monocular depth estimation (Depth Anything V2, via transformers), and pixel-level contact segmentation (SAM2, via transformers) — one switch for all four. Depth estimation and contact segmentation have always required object detection to run at all, and there was no real value in toggling preprocessing/detection independently, so earlier versions' four separate settings just multiplied untested on/off combinations without a matching benefit. Adds a code-computed **OBJECT DETECTION** hint (what was detected — people, vehicles, and animals — and how close a detected person or animal is to a detected vehicle), a **TRACKING** hint (lingering/casing vs. briefly passing through, via ByteTrack's frame-to-frame continuity), a **DEPTH ESTIMATE** hint ("overlapping in the 2D frame" vs. "actually at the same distance from the camera" — catches the case where a person or animal only *looks* close to the protected vehicle because of the camera angle), and a **CONTACT ANALYSIS** hint (refining a bounding-box overlap into an actual touching-or-not judgment, e.g. a dog jumping on the car vs. merely standing nearby, using each object's real visible outline). Vehicle-distance/depth/contact language only ever applies on a camera actually designated to view the protected vehicle (`ai_car_cameras`) — other cameras stay isolated even if they happen to detect an unrelated car. Detected objects also show up as a compact chip summary (e.g. "🧍 2 people 🚗 1 car") in the Library clip modal's AI panel — a quick at-a-glance count, not a bounding-box overlay, so it stays out of the way for anyone with this feature off. Each chip's number is how many distinct ones **appeared in the clip**, not how many boxes the detector stored: it runs over every sampled frame, so one parked car across a twelve-frame clip is one car, not twelve. They are counted by the tracker's own identities, the same ones the security layer groups its events by — so the chips and a "2 separate people were tracked" event can never disagree — which also means the count is only as good as the tracking, and tracking is only as good as the number of frames analyzed. Hover a chip for the raw box total behind it and the detector's best confidence. |
+| `ai_vision_backend` | `local` | Where the object-detection stage runs: `local` (on this device) or `huggingface` (on Hugging Face's servers, for hardware that cannot run the model). **`huggingface` uploads the sampled clip frames** — read *Running object detection on Hugging Face* below before turning it on. |
+| `ai_remote_detection_model` | `facebook/detr-resnet-50` | The Hugging Face object-detection model used when `ai_vision_backend` is `huggingface`. Its serverless inference currently serves `facebook/detr-resnet-50` and `facebook/detr-resnet-101`. |
 | `ai_object_detection_model` | `yolo26n.pt` | Which Ultralytics model the detection stage above runs. YOLO26 (`yolo26n/s/m/l/x.pt`) is the current generation — end-to-end inference, lighter and more accurate than YOLO11 at every size — and is the default; `yolo11n/s/m/l/x.pt` remain selectable for compatibility with existing configurations. "n" (nano) is fastest/lightest and the recommended starting point on CPU-only hardware; "s"/"m"/"l"/"x" trade speed for accuracy, with "x" (extra-large) the most accurate and much slower. Small subjects are where the sizes differ most: measured on 75 real dogs rendered into camera clips, a dog about 100px tall in a 1080p frame was found at night 2 times with `yolo26n`, 16 with `yolo26s` and 21 with `yolo26m` (13, 29 and 39 by day), at roughly 2× and 5× nano's detection time, with no more phantom animals in scenes that had none. If a pet or other small animal keeps going unnoticed, try `yolo26s` first. |
 | `ai_depth_estimation_model` | `depth-anything/Depth-Anything-V2-Small-hf` | Which Depth Anything V2 checkpoint the depth-estimation stage above runs. "Small" (default) is fastest/lightest and Apache-2.0 licensed; "Base"/"Large" are more accurate but slower/heavier, and are licensed CC-BY-NC-4.0 (**non-commercial use only**) by their publisher, unlike Small's Apache-2.0 — fine for this add-on's typical personal home-security use, but confirm that licensing fits your own situation before choosing either. |
 | `ai_face_recognition_enabled` | `false` | Local-only face recognition (facenet-pytorch) to suppress alerts for enrolled household members — see below. Kept as its own toggle since it's privacy-sensitive rather than just heavier compute. |
@@ -979,6 +1072,60 @@ runtime and analysis proceeds exactly as if it were disabled.
 place of it — each one produces a bounded, hedged hint appended to the same prompt
 the "SCENE BASELINE" and "ZONE MOTION" hints already use, so the model still judges
 each clip on what it can actually see, with better evidence to work with.
+
+#### Running object detection on Hugging Face
+
+For hardware that cannot run the detector (a Raspberry Pi 4, a board with little
+memory), `ai_vision_backend: huggingface` sends the object-detection stage to
+Hugging Face's serverless inference instead. Set `ai_enhanced_detection_enabled`
+as usual and add a token (`huggingface_api_key`, or `hf_token`) with the
+**Make calls to Inference Providers** permission.
+
+**What moves, and what does not.** Only detection can. Hugging Face's serverless
+tier currently serves object-detection models (DETR) but **no depth-estimation
+model, no box-prompted (SAM-style) segmentation model and no pose model**, so in
+this mode:
+
+- **Object detection runs on Hugging Face.** The scan frames
+  (`ai_temporal_scan_frames` of them per clip, 12 by default) are posted to it,
+  one request each — fewer frames means fewer requests and less to pay for.
+- **Depth estimation and contact segmentation are not run, and are not loaded** —
+  they would pull PyTorch and two large models onto the hardware this mode is
+  for. Both are reported to the AI as unavailable evidence, exactly as on a device
+  that could not run them (see *Running it on a low-powered device* below for what
+  that costs).
+- **Pose estimation, face recognition and audio analysis stay on this device**,
+  under their own switches and with their own requirements. Nothing here sends
+  them anywhere.
+
+**Privacy.** The frames are uploaded, to Hugging Face and the provider that serves
+the model. They are the same frames a cloud AI provider is sent, but if you chose
+a local provider (Ollama, Moondream Local) to keep footage at home, this option
+sends it out again. That is why it is off by default, announced in the log at
+start-up, and noted on the AI tab. Enrolled photos, face embeddings, names and
+audio are **never** sent — the remote detector is given the scan frames and nothing
+else, and face recognition does not run remotely in either mode. The frames can
+contain faces, though, and the Biometrics tab says so while this mode is on.
+
+**What you give up on the detector itself.** The server returns boxes and no
+tracks, so continuity between frames is inferred from how much boxes overlap and
+marked as inferred. Anything that needs a *measured* track under-claims: the
+tracking hint (lingering versus passing through) is not produced, "N separate
+people" is not raised, event confidences are lower, and routine door use cannot
+clear a clip (the add-on warns at start-up if it is switched on). The confidence
+floor (0.5) is this add-on's own choice — sent to Hugging Face as the task's
+`threshold` parameter and applied again to what comes back — and **not** a value
+measured on footage like yours; DETR's scores are not on the same scale as YOLO's,
+and the security layer's thresholds were tuned on YOLO. Treat results as less proven than
+the local detector's until you have compared them on your own clips.
+
+**Cost and failure.** Requests are billed to the Hugging Face account behind the
+token (see the pricing note under the Hugging Face provider; free accounts have no
+monthly credit). A frame that cannot be examined — rate limited, the model still
+loading, a refused token — **fails the clip's detection** rather than reading as
+an empty driveway; transient failures are retried, a refused token or an empty
+balance is not, and the log says which it was. The clip is still analyzed by the
+AI provider with detection reported as unavailable.
 
 #### Audio analysis and privacy
 
@@ -1158,6 +1305,11 @@ estimation or action recognition (striking, kicking, climbing) are deliberately
 absent rather than guessed at.
 
 #### Running it on a low-powered device
+
+(If the device cannot run the detector at all, `ai_vision_backend: huggingface`
+sends detection to Hugging Face — see *Running object detection on Hugging Face*
+above, including what it uploads and what it gives up. It does not provide depth
+or segmentation either.)
 
 Everything above needs only object detection. The depth-estimation and
 contact-segmentation stages are much heavier, and on a Raspberry Pi you may
@@ -1969,6 +2121,11 @@ eye on multiple cameras at once rather than watching one at a time.
   cached — opening this tab (or leaving it open) doesn't ask Blink for
   anything extra beyond what the add-on already does, and it stops making
   any requests the moment you navigate away.
+- A tile only swaps its picture once the new one has fully arrived. If a
+  refresh fails, it keeps showing the previous picture with a small
+  *Couldn't refresh* note until the next one succeeds, rather than going
+  blank. A camera that has no snapshot yet shows *No snapshot available
+  yet*.
 - The **Customize** panel (collapsed by default) lets you pick which
   cameras to show, how many tiles per row (1–3 — beyond 3 a tile shrinks
   too small to make out what it's showing), and how often tiles refresh
