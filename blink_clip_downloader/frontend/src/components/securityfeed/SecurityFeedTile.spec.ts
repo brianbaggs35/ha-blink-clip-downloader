@@ -101,7 +101,7 @@ describe('SecurityFeedTile', () => {
     expect(wrapper.text()).not.toContain('No snapshot available yet')
     // Said quietly, since a stale picture is otherwise indistinguishable
     // from a camera that simply has had no motion.
-    expect(wrapper.find('[role="status"]').text()).toBe("Couldn't refresh")
+    expect(wrapper.find('output').text()).toBe("Couldn't refresh")
     expect(URL.revokeObjectURL).not.toHaveBeenCalled()
   })
 
@@ -113,7 +113,7 @@ describe('SecurityFeedTile', () => {
     await wrapper.setProps({ tick: 2 })
     pending[1].reject(new Error('boom'))
     await flushPromises()
-    expect(wrapper.find('[role="status"]').exists()).toBe(true)
+    expect(wrapper.find('output').exists()).toBe(true)
 
     await wrapper.setProps({ tick: 3 })
     pending[2].resolve(new Blob(['two']))
@@ -122,7 +122,7 @@ describe('SecurityFeedTile', () => {
     expect(wrapper.find('img').attributes('src')).toBe('blob:snapshot-2')
     expect(URL.revokeObjectURL).toHaveBeenCalledTimes(1)
     expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:snapshot-1')
-    expect(wrapper.find('[role="status"]').exists()).toBe(false)
+    expect(wrapper.find('output').exists()).toBe(false)
   })
 
   it('does not start a second request while one is still in flight', async () => {
