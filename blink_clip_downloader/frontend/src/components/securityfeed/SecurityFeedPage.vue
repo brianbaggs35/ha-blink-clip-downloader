@@ -6,16 +6,12 @@ import MultiSelect from 'primevue/multiselect'
 import Message from 'primevue/message'
 import Panel from 'primevue/panel'
 import SelectButton from 'primevue/selectbutton'
-import {
-  getSecurityFeedCameras,
-  getSecurityFeedSettings,
-  saveSecurityFeedSettings,
-  securityFeedSnapshotUrl,
-} from '../../api/securityFeed'
+import { getSecurityFeedCameras, getSecurityFeedSettings, saveSecurityFeedSettings } from '../../api/securityFeed'
 import type { SecurityFeedSettings } from '../../api/types'
 import { useRefreshStore } from '../../stores/refresh'
 import { useToastStore } from '../../stores/toast'
 import LoadingIndicator from '../layout/LoadingIndicator.vue'
+import SecurityFeedTile from './SecurityFeedTile.vue'
 
 // {label, value} pairs, not raw numbers - PrimeVue's SelectButton passes
 // each option through to a ToggleButton whose onLabel/offLabel props
@@ -43,36 +39,23 @@ const draftColumns = ref(2)
 const draftRefreshSeconds = ref(15)
 let loadedDraftSignature = ''
 
-// Bumped on every refresh tick and appended as a cache-busting query
-// param on every tile's <img> src - without it the browser would just
-// keep showing its cached copy of the same URL forever. This never
-// triggers a new Blink snapshot; it only asks our own backend for
-// whatever camera.image_from_cache already holds (see
+// Bumped on every refresh tick; each tile watches it and asks our backend
+// for a newer snapshot. This never triggers a new Blink snapshot; it only
+// asks for whatever camera.image_from_cache already holds (see
 // BlinkDownloader.get_camera_snapshot's docstring).
 const refreshTick = ref(Date.now())
 let refreshTimer: ReturnType<typeof setInterval> | undefined
 let loadSeq = 0
-const tileErrors = ref<Record<string, boolean>>({})
+// Only the first load replaces the page with the loading indicator. Reloads
+// after that (a camera was renamed, the sidebar's Refresh button) run
+// quietly, because swapping the grid out for a spinner tears down every
+// tile and blanks a feed that was showing fine.
+let loadedOnce = false
 
 const displayedCameras = computed(() => {
   const selected = settings.value.cameras.filter((c) => allCameras.value.includes(c))
   return selected.length ? selected : allCameras.value
 })
-
-function tileSrc(camera: string): string {
-  return `${securityFeedSnapshotUrl(camera)}?t=${refreshTick.value}`
-}
-
-function onTileError(camera: string) {
-  tileErrors.value = { ...tileErrors.value, [camera]: true }
-}
-
-function onTileLoad(camera: string) {
-  if (!tileErrors.value[camera]) return
-  const next = { ...tileErrors.value }
-  delete next[camera]
-  tileErrors.value = next
-}
 
 function stopRefreshTimer() {
   clearInterval(refreshTimer)
@@ -93,7 +76,7 @@ watch(
 
 async function load() {
   const seq = ++loadSeq
-  loading.value = true
+  if (!loadedOnce) loading.value = true
   loadError.value = false
   try {
     const [camerasRes, settingsRes] = await Promise.all([getSecurityFeedCameras(), getSecurityFeedSettings()])
@@ -104,6 +87,7 @@ async function load() {
     draftColumns.value = settingsRes.columns
     draftRefreshSeconds.value = settingsRes.refresh_seconds
     loadedDraftSignature = JSON.stringify(settingsRes)
+    loadedOnce = true
   } catch {
     if (seq === loadSeq) loadError.value = true
   } finally {
@@ -121,7 +105,6 @@ async function saveSettings() {
     })
     settings.value = saved
     loadedDraftSignature = JSON.stringify(saved)
-    tileErrors.value = {}
     refreshTick.value = Date.now()
     toast.show('Security Feed settings saved')
   } catch {
@@ -222,20 +205,7 @@ watch(
         No cameras found — make sure Blink is connected and your account has at least one camera.
       </Message>
       <div v-else class="secfeed-grid" :style="{ '--secfeed-columns': settings.columns }">
-        <div v-for="camera in displayedCameras" :key="camera" class="secfeed-tile">
-          <div class="secfeed-tile-image-wrap">
-            <img
-              :src="tileSrc(camera)"
-              :alt="`${camera} snapshot`"
-              class="secfeed-tile-image"
-              :class="{ 'secfeed-tile-image-hidden': tileErrors[camera] }"
-              @error="onTileError(camera)"
-              @load="onTileLoad(camera)"
-            />
-            <div v-if="tileErrors[camera]" class="secfeed-tile-placeholder muted-note">No snapshot available yet</div>
-          </div>
-          <div class="secfeed-tile-name">{{ camera }}</div>
-        </div>
+        <SecurityFeedTile v-for="camera in displayedCameras" :key="camera" :camera="camera" :tick="refreshTick" />
       </div>
     </template>
   </div>
@@ -301,52 +271,6 @@ watch(
      collapsed nav sidebar), no fixed max-width capping it. */
   grid-template-columns: repeat(var(--secfeed-columns, 3), minmax(0, 1fr));
   gap: 1rem;
-}
-
-.secfeed-tile {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
-  box-shadow: var(--shadow-sm);
-}
-
-.secfeed-tile-image-wrap {
-  position: relative;
-  aspect-ratio: 16 / 9;
-  background: #000;
-  overflow: hidden;
-}
-
-.secfeed-tile-image {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.secfeed-tile-image-hidden {
-  display: none;
-}
-
-.secfeed-tile-placeholder {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  padding: 0.5rem;
-}
-
-.secfeed-tile-name {
-  padding: 0.5rem 0.75rem;
-  font-weight: 600;
-  font-size: 0.85rem;
-}
-
-.muted-note {
-  color: var(--muted);
-  font-size: 0.85rem;
 }
 
 @media (max-width: 600px) {
