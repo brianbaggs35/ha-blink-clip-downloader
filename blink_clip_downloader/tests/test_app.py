@@ -1229,6 +1229,22 @@ async def test_reimport_library_logs_when_clips_imported(app):
     mock_import.assert_awaited_once()
 
 
+async def test_reimport_library_reports_restored_clips_whose_video_is_back(app):
+    with (
+        patch("blink_downloader.app.migrate_legacy_sqlite", new=AsyncMock()),
+        patch(
+            "blink_downloader.app.import_existing_clips", new=AsyncMock(return_value=0)
+        ),
+        patch(
+            "blink_downloader.app.reconcile_restored_media",
+            new=AsyncMock(return_value=4),
+        ) as mock_reconcile,
+    ):
+        await app._reimport_library()
+
+    mock_reconcile.assert_awaited_once_with(app._db)
+
+
 async def test_reimport_library_no_log_when_nothing_imported(app):
     with (
         patch("blink_downloader.app.migrate_legacy_sqlite", new=AsyncMock()),

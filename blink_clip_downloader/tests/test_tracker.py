@@ -41,6 +41,45 @@ def test_initial_state_empty(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Merging a restored backup's download history
+# ---------------------------------------------------------------------------
+
+
+def test_merge_downloaded_adds_only_unknown_ids_and_persists_them(tmp_path):
+    t = make_tracker(tmp_path)
+    t.mark_downloaded("known", size_bytes=10)
+    assert t.merge_downloaded(["known", "new-1", "new-2"]) == 2
+    assert t.is_downloaded("new-1")
+    assert t.is_downloaded("new-2")
+    # Written straight away, not left for the next poll's save().
+    assert make_tracker(tmp_path).is_downloaded("new-2")
+
+
+def test_merge_downloaded_leaves_the_statistics_alone(tmp_path):
+    """These clips were downloaded by an earlier install, not this session."""
+    t = make_tracker(tmp_path)
+    t.merge_downloaded(["a", "b", "c"])
+    assert t.stats["total_downloaded"] == 0
+    assert t.stats["total_bytes"] == 0
+
+
+def test_merge_downloaded_ends_a_clips_failed_attempts(tmp_path):
+    t = make_tracker(tmp_path)
+    t.record_failed_attempt("flaky")
+    assert t.is_retrying("flaky")
+    t.merge_downloaded(["flaky"])
+    assert not t.is_retrying("flaky")
+
+
+def test_merge_downloaded_with_nothing_new_does_not_write(tmp_path):
+    t = make_tracker(tmp_path)
+    t.mark_downloaded("known")
+    with patch.object(ClipTracker, "save") as save:
+        assert t.merge_downloaded(["known"]) == 0
+    save.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # Marking downloads
 # ---------------------------------------------------------------------------
 

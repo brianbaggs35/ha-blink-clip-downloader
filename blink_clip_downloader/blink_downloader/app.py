@@ -42,7 +42,7 @@ from .gdrive_queue import GDriveUploadQueue
 from .ha_config import HAConfigWriter
 from .ha_entities import HAEntityPublisher
 from .ha_links import HALinkResolver
-from .library_scanner import import_existing_clips
+from .library_scanner import import_existing_clips, reconcile_restored_media
 from .live_view import LiveViewManager
 from .manifest import ClipManifest
 from .media_server import MediaServer
@@ -277,6 +277,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             ],
             remote_vision=self._remote_vision,
             live_view=self._live_view,
+            merge_downloaded_clip_ids=self._tracker.merge_downloaded,
             list_camera_names=(
                 self._e2e_fixtures.list_camera_names
                 if self._e2e_fixtures is not None
@@ -1576,6 +1577,14 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         imported = await import_existing_clips(self._db, self._config.download_path)
         if imported:
             _LOGGER.info("Library re-import: added %d pre-existing clip(s)", imported)
+        # After the scan, not before: a restored clip's path is already known
+        # to it, so the scan leaves it alone and only this notices its video.
+        reunited = await reconcile_restored_media(self._db)
+        if reunited:
+            _LOGGER.info(
+                "Library re-import: %d restored clip(s) have their video again",
+                reunited,
+            )
 
     async def _backfill_clip_durations(self) -> None:
         """One-time-per-clip catch-up for duration=0 rows already in the DB.

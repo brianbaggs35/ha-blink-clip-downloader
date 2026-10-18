@@ -27,7 +27,14 @@ CREATE TABLE IF NOT EXISTS clips (
     archive_path  TEXT    DEFAULT '',
     gdrive_backed_up   BOOLEAN DEFAULT FALSE,
     gdrive_file_id     TEXT    DEFAULT '',
-    gdrive_uploaded_at TEXT    DEFAULT ''
+    gdrive_uploaded_at TEXT    DEFAULT '',
+    -- Set by a backup restore for a clip whose video (or, once archived, its
+    -- ZIP) is not on this install: the record is kept as history. The
+    -- archiver deletes any row whose file is gone, so without this flag the
+    -- next archive run or startup would erase a restored record and its
+    -- analysis along with it. Cleared at startup once the file turns up
+    -- (see library_scanner.reconcile_restored_media).
+    media_missing      BOOLEAN NOT NULL DEFAULT FALSE
 );
 CREATE INDEX IF NOT EXISTS idx_clips_camera    ON clips (camera);
 CREATE INDEX IF NOT EXISTS idx_clips_timestamp ON clips (timestamp);
@@ -423,4 +430,6 @@ ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS faces_matched INTEGER DEFA
 ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS faces_unclear INTEGER DEFAULT 0;
 ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS face_outcome TEXT DEFAULT '';
 ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS routine_visit_applied BOOLEAN DEFAULT FALSE;
+-- 6.1.3: a clip restored from a backup without its video is kept, not pruned.
+ALTER TABLE clips ADD COLUMN IF NOT EXISTS media_missing BOOLEAN NOT NULL DEFAULT FALSE;
 """

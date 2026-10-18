@@ -59,6 +59,7 @@ from blink_downloader.media_server import faces as media_server_faces
 from blink_downloader.protected_assets import read_assets
 from blink_downloader.security import SecurityEvent, SecurityEventType, Severity
 from blink_downloader.security.vehicles import VehicleSignature
+from blink_downloader.tracker import ClipTracker
 from blink_downloader.vision import DetectedFace, DetectedObject, FaceEmbedder
 
 
@@ -997,6 +998,9 @@ async def _main() -> None:
     # Google) stays unreachable without both a client id and secret saved,
     # which nothing here does.
     gdrive = GDriveClient()
+    # A real tracker (its file is among the paths redirected above), so the
+    # Backup & Restore tab's download history has something real to merge into.
+    tracker = ClipTracker()
     sync_module = _FakeSyncModule()
     # BLINK_E2E_SIGNIN=1: see the module docstring.
     signin_on = os.environ.get("BLINK_E2E_SIGNIN") == "1"
@@ -1016,6 +1020,7 @@ async def _main() -> None:
         get_camera_snapshot=_camera_snapshot,
         live_view=live_view,
         gdrive_client=gdrive,
+        merge_downloaded_clip_ids=tracker.merge_downloaded,
         get_sync_module_snapshot=sync_module.snapshot,
         arm_sync_module=sync_module.arm_module,
         arm_camera=sync_module.arm_camera,

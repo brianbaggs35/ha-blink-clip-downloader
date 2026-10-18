@@ -14,12 +14,13 @@ creates no ordering constraint between the route modules.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
 
+from ..backup import RestoreStaging
 from ..database import ClipDatabase
 from ..face_enrollment import FaceCandidateStore
 from ..vision import FaceEmbedder
@@ -69,6 +70,8 @@ class _MediaServerBase:
     _get_sync_module_snapshot: Callable[[], list[dict[str, Any]]] | None
     _arm_sync_module: Callable[..., Awaitable[bool | None]] | None
     _arm_camera: Callable[..., Awaitable[bool | None]] | None
+    # Records clip ids in the downloader's history (the Backup & Restore tab).
+    _merge_downloaded_clip_ids: Callable[[Iterable[str]], int] | None
 
     # Runtime state.
     _access: AccessControl
@@ -79,6 +82,10 @@ class _MediaServerBase:
     # off or could not start. access.py sends sign-in there when it is set.
     _https_port: int | None
     _camera_configs_lock: asyncio.Lock
+    # The one backup or restore allowed to run at a time, and the upload a
+    # restore is working from.
+    _backup_lock: asyncio.Lock
+    _restore_staging: RestoreStaging
     _moondream_install_task: asyncio.Task | None
     _gdrive_connect_task: asyncio.Task | None
     extra_status: dict

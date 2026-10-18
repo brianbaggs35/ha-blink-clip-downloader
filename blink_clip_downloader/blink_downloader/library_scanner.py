@@ -13,8 +13,10 @@ import asyncio
 import hashlib
 import logging
 import re
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from .database import ClipDatabase
 from .downloader import probe_clip_duration
@@ -24,6 +26,11 @@ _LOGGER = logging.getLogger(__name__)
 _TIMESTAMP_RE = re.compile(r"(\d{8}_\d{6})")
 _DATE_DIR_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _ARCHIVE_DIR = "archives"
+
+#: Every clip this scan creates has an id starting with this. Such a record
+#: was rebuilt from a file name alone, so a backup restore treats it as a
+#: stand-in for the real record rather than a clip with history of its own.
+IMPORTED_CLIP_ID_PREFIX = "import-"
 
 
 async def import_existing_clips(db: ClipDatabase, download_path: Path) -> int:
@@ -80,6 +87,32 @@ async def import_existing_clips(db: ClipDatabase, download_path: Path) -> int:
     return added
 
 
+def clip_media_present(clip: Mapping[str, Any]) -> bool:
+    """Whether the video behind a library row is on this install.
+
+    A clip compressed into a monthly ZIP lives in its ``archive_path``; any
+    other clip is the file at ``file_path``. An empty location is not "the
+    current directory", which ``Path("")`` would otherwise read as.
+    """
+    location = clip["archive_path"] if clip.get("archived") else clip["file_path"]
+    return bool(location) and Path(str(location)).exists()
+
+
+async def reconcile_restored_media(db: ClipDatabase) -> int:
+    """Treat restored clips as ordinary again once their video is back.
+
+    A backup restore keeps a clip whose video is not on this install, flagged
+    ``media_missing`` so the archiver leaves it alone. If the videos are
+    copied back afterwards, this clears the flag, and the clip is archived
+    and pruned like any other from then on. Returns how many were cleared.
+    """
+    flagged = await db.get_media_missing_clips()
+    found = await asyncio.to_thread(
+        lambda: [str(clip["id"]) for clip in flagged if clip_media_present(clip)]
+    )
+    return await db.clear_media_missing(found)
+
+
 def _build_clip_record(download_path: Path, file_path: Path) -> dict:
     """Best-effort reconstruction of clip metadata from a file's path."""
     rel_dirs = file_path.relative_to(download_path).parts[:-1]
@@ -99,7 +132,7 @@ def _build_clip_record(download_path: Path, file_path: Path) -> dict:
         size = 0
 
     clip_id = (
-        "import-"
+        IMPORTED_CLIP_ID_PREFIX
         + hashlib.sha1(str(file_path).encode(), usedforsecurity=False).hexdigest()[:16]
     )
 
