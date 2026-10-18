@@ -283,8 +283,9 @@ def test_a_manifest_that_is_not_right_says_so(raw: bytes, message: str) -> None:
 
 
 def test_a_backup_from_a_newer_format_tells_you_to_update() -> None:
+    raw = _manifest(format_version=FORMAT_VERSION + 1)
     with pytest.raises(BackupError, match="newer version.*Update the add-on"):
-        parse_manifest(_manifest(format_version=FORMAT_VERSION + 1))
+        parse_manifest(raw)
 
 
 def test_a_table_this_version_does_not_know_is_refused_not_ignored() -> None:

@@ -73,12 +73,13 @@ async function sendWithRetry(
 ): Promise<number> {
   for (let attempt = 1; ; attempt++) {
     try {
-      return (await sendPiece(uploadId, offset, piece, signal)).received
+      // Each piece waits for the one before it: the server only takes the next offset.
+      return (await sendPiece(uploadId, offset, piece, signal)).received // NOSONAR
     } catch (error) {
       const resumeAt = resumePoint(error)
       if (resumeAt !== null) return resumeAt
       if (signal?.aborted || attempt >= PIECE_ATTEMPTS || !worthRetrying(error)) throw error
-      await wait(RETRY_DELAY_MS * attempt)
+      await wait(RETRY_DELAY_MS * attempt) // NOSONAR
     }
   }
 }
@@ -104,7 +105,7 @@ export async function uploadBackupFile(
     while (offset < file.size) {
       if (signal?.aborted) throw new DOMException('The upload was cancelled', 'AbortError')
       const piece = file.slice(offset, Math.min(offset + chunkBytes, file.size))
-      offset = await sendWithRetry(uploadId, offset, piece, signal, wait)
+      offset = await sendWithRetry(uploadId, offset, piece, signal, wait) // NOSONAR
       onProgress(Math.min(offset, file.size), file.size)
     }
   } catch (error) {
