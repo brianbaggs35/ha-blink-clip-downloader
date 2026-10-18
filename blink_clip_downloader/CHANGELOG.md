@@ -1,5 +1,115 @@
 # Changelog
 
+## 6.1.3
+
+### Backup & Restore
+
+A new **Backup & Restore** tab saves everything this add-on has learned into one
+ZIP and puts it back, so reinstalling the add-on (or Home Assistant itself) does
+not start you from scratch. Everything lives under `/data`, which Home Assistant
+removes when the add-on is uninstalled; this is the way to keep it.
+
+- **What a backup holds.** The clip library and its AI analysis (clips, analyses,
+  object detections, security events, your thumbs-up/down feedback and face-match
+  reports), the household's enrolled faces, what each camera has learned (vehicle
+  positions, activity baselines, clip-length statistics, scene backgrounds),
+  battery history, the AI Usage reset point — and the settings under `/data`:
+  camera settings, camera rename history, the protected-vehicle description,
+  protected assets, the Security Feed layout, the Moondream fine-tune choice, the
+  clip manifest, the list of clips already downloaded from Blink, and the
+  reference pictures for vehicle zones and assets. The records are written as
+  readable JSON lines rather than as the database's own files, so a backup from
+  one release restores into a later one: columns a newer release added take their
+  defaults.
+- **What it leaves out, on purpose.** Every password and sign-in (Blink, Google
+  Drive, this add-on's own sign-in and the access token Home Assistant's calls
+  carry), the add-on's options (Home Assistant keeps and restores those itself),
+  downloaded models, and the clip **videos** — too large for a backup file, so
+  they stay where they are (`download_path`, `/share/blink-clips` by default).
+  The two work queues (clips waiting for analysis, uploads waiting for Drive) are
+  not carried: the add-on refills them as new clips arrive, and a restored clip
+  that was still waiting can be analysed again from the Library.
+- **Download it, or send it to Google Drive.** **Download backup** makes the ZIP
+  in your browser. **Back up to Google Drive** (once Drive is connected and a
+  folder chosen on the Storage tab) puts the same ZIP in a `Backups` folder inside
+  your chosen Drive folder. The records are read from one consistent snapshot of
+  the library, so a backup made while clips are arriving is still one moment in
+  time.
+- **Restoring is four steps, none automatic.** Choose the file; read a summary of
+  what is in it and exactly what restoring will do; confirm; read what was done.
+  The summary is not an estimate: the add-on runs the real restore without
+  writing anything, so what it promises is what happens. The add-on refuses to
+  restore a file nobody has looked over, even by a direct request.
+- **A restore only adds.** What is already here is never overwritten or deleted,
+  and running it twice changes nothing the second time.
+  A clip whose id is already in the library is left exactly as it is, with its
+  analysis, and so is everything in the backup that belongs to it. A clip whose
+  video file another record already tracks is skipped rather than doubled — except
+  when that record is only the stand-in the library scan made from the file name
+  after a reinstall and nothing has been added to it (no analysis, star or tag),
+  in which case the real record replaces it. Enrolled faces, camera baselines,
+  battery readings and the rest are matched on what identifies them and added only
+  where missing. The list of clips already downloaded is merged into the running
+  downloader's, so clips you already have are not fetched and analysed again; the
+  clip manifest gains only the lines it lacks. A clip that appears while the
+  restore is running (the downloader fetching it again) is left as the add-on
+  wrote it.
+- **Settings are written only where there are none** — or replaced, if you tick
+  **Replace settings and pictures that are already here**. They are read when the
+  add-on starts, so the report says when to restart it.
+- **Verified afterwards.** Every restore ends with checks on its own result: every
+  record in the backup was either restored or deliberately left alone, the clips it
+  added are really in the library (read back after the change was committed), and
+  each file written reads back identical to what the backup held. A restore that
+  fails part-way changes nothing: the database part is one transaction.
+- **A damaged or tampered file is refused before anything is read into the
+  library.** Each part of a backup carries a checksum and a record count, the ZIP
+  may hold nothing its manifest does not list, a backup from a newer version says
+  so and asks you to update first, and nothing in it can name where a file is
+  written.
+
+### Restored clips without their video are kept
+
+The archiver deletes the record of any clip whose video file has gone, and the
+start-up check does the same for an archived clip whose ZIP has gone. A restored
+record with no video on the device would have been erased — analysis and all — by
+the next archive run. Such clips are now flagged (`clips.media_missing`) and both
+leave them alone; they come back as records only, with their analysis, stars and
+tags, and the flag is cleared at start-up once the video is copied back to its
+folder. The summary says how many clips come back without a video before you
+restore.
+
+### Enrolled faces in a backup
+
+The Biometrics tab promises that face data never leaves the device. A backup file
+is a deliberate exception, so the page now says so: **Include enrolled faces**
+(on by default; photos and face data for the people on the Biometrics tab) can be
+switched off for a backup that has none, and the Biometrics banner names the
+Backup & Restore tab as the one way face data can leave. A backup is not
+encrypted; keep it somewhere private.
+
+### Inside
+
+- Uploads to the restore are sent in 4 MiB pieces: Home Assistant's ingress proxy
+  reads a whole request before passing it on and refuses one over 16 MiB (limit
+  read from Supervisor's source), so a backup sent whole would work on the direct
+  port and fail in the sidebar. A piece repeated after a dropped connection is
+  recognised and not written twice.
+- None of the backup endpoints is reachable with the access token Home Assistant's
+  own automations carry.
+- `tests/test_backup_catalogue.py` walks the package for every path it keeps under
+  `/data` and fails until each is either carried by a backup or listed with a
+  reason it is not, the same way the database tests fail for an unclassified table.
+
+### Not yet proven against live accounts
+
+Uploading to Google Drive reuses the Drive client's existing upload and folder
+code and was tested against a stand-in for it, not a real Google account. The
+chunked restore upload was built to Supervisor's request limit and tested over
+real HTTP here, not through a running Home Assistant ingress. Restoring backups
+from Google Drive is not built: download the file from Drive and choose it on the
+Backup & Restore tab.
+
 ## 6.1.2
 
 ### Two new AI providers: Hugging Face and Replicate
