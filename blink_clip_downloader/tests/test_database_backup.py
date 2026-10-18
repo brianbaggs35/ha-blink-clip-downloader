@@ -177,8 +177,9 @@ async def test_snapshot_refuses_a_table_a_backup_does_not_carry(
     db: ClipDatabase,
 ) -> None:
     async with db.backup_snapshot() as snapshot:
+        batches = snapshot.batches("analysis_queue")
         with pytest.raises(KeyError):
-            await anext(snapshot.batches("analysis_queue"))
+            await anext(batches)
 
 
 # ---------------------------------------------------------------------------
@@ -437,20 +438,25 @@ async def test_insert_new_clips_leaves_a_clip_that_appeared_meanwhile_alone(
 
 async def test_a_read_only_session_refuses_every_write(db: ClipDatabase) -> None:
     """The summary asks its questions this way, so a write by mistake fails."""
+    rows = [_clip_row("nope")]
     async with db.restore_session(write=False) as session:
         with pytest.raises(asyncpg.exceptions.ReadOnlySQLTransactionError):
-            await session.insert_rows("clips", [_clip_row("nope")])
+            await session.insert_rows("clips", rows)
 
 
 async def test_a_restore_that_fails_leaves_the_library_untouched(
     db: ClipDatabase,
 ) -> None:
     await _clip(db, "before")
-    with pytest.raises(RuntimeError, match="halfway"):
+
+    async def fail_halfway() -> None:
         async with db.restore_session() as session:
             await session.insert_rows("clips", [_clip_row("halfway-1")])
             await session.delete_clips(["before"])
             raise RuntimeError("failed halfway")
+
+    with pytest.raises(RuntimeError, match="halfway"):
+        await fail_halfway()
     counts = await db.backup_row_counts()
     assert counts["clips"] == 1
     assert (await db.get_clip("before")) is not None

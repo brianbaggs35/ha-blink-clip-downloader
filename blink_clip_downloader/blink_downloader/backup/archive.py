@@ -22,7 +22,6 @@ written to be shown to the person who chose the file.
 from __future__ import annotations
 
 import base64
-import binascii
 import hashlib
 import json
 import zipfile
@@ -159,7 +158,7 @@ def decode_row(line: bytes) -> dict[str, Any]:
         raise BackupError("A record in the backup is far larger than any real one.")
     try:
         row = json.loads(line, object_hook=_revive)
-    except (ValueError, binascii.Error) as exc:
+    except ValueError as exc:  # binascii.Error, a bad $bytes value, is one
         raise BackupError("The backup holds a record that cannot be read.") from exc
     if not isinstance(row, dict):
         raise BackupError("The backup holds a record that is not in the expected form.")
@@ -373,7 +372,7 @@ class BackupArchive:
                 "That file is not a readable backup. It may be damaged, "
                 "or not a backup at all."
             ) from exc
-        except (NotImplementedError, RuntimeError) as exc:
+        except RuntimeError as exc:  # NotImplementedError, an unknown method, is one
             raise _not_valid("it uses a ZIP feature backups never use") from exc
         return cls(path, manifest)
 
