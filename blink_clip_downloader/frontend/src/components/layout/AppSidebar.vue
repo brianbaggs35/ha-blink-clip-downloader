@@ -16,6 +16,7 @@ export type TabName =
   | 'assets'
   | 'biometrics'
   | 'storage'
+  | 'backup'
 
 export const TABS: { name: TabName; label: string; icon: IconName }[] = [
   { name: 'library', label: 'Library', icon: 'tab-library' },
@@ -32,6 +33,7 @@ export const TABS: { name: TabName; label: string; icon: IconName }[] = [
   { name: 'assets', label: 'Assets', icon: 'tab-assets' },
   { name: 'biometrics', label: 'Biometrics', icon: 'tab-biometrics' },
   { name: 'storage', label: 'Storage', icon: 'tab-storage' },
+  { name: 'backup', label: 'Backup & Restore', icon: 'tab-backup' },
 ]
 
 /** Every tab id, for validating a `?tab=` parameter without a second
@@ -412,7 +414,7 @@ onUnmounted(() => {
       v-model:visible="showAbout"
       modal
       dismissable-mask
-      header="About Blink Clips 6.1.2"
+      header="About Blink Clips 6.1.3"
       :style="{ width: '26rem' }"
       :draggable="false"
     >

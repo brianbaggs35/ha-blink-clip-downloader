@@ -974,3 +974,101 @@ export interface AccessStatus {
   user: string | null
   access_token: string
 }
+
+// ---------------------------------------------------------------------------
+// Backup & Restore (media_server/backup.py)
+// ---------------------------------------------------------------------------
+
+export interface BackupTablePreview {
+  name: string
+  label: string
+  rows: number
+  /** Holds face data, which a backup can be made without. */
+  biometric: boolean
+}
+
+/** `items` is 1 or 0 for a file, and the number of pictures for a folder. */
+export interface BackupFilePreview {
+  label: string
+  items: number
+}
+
+/** Whether a backup can go to Google Drive right now. */
+export type BackupDriveState = 'unavailable' | 'not_connected' | 'no_folder' | 'ready'
+
+export interface BackupPreview {
+  tables: BackupTablePreview[]
+  files: BackupFilePreview[]
+  /** Where the clip videos live, which a backup does not carry. */
+  clip_folder: string
+  gdrive: { state: BackupDriveState; folder: string }
+}
+
+export interface BackupDriveResult {
+  name: string
+  size_bytes: number
+  folder: string
+  file_id: string
+}
+
+export interface BackupUpload {
+  upload_id: string
+  chunk_bytes: number
+}
+
+/** What the merge did with one table: `added` is what was (or, in the
+ * summary, would be) written, `skipped` what was already here. */
+export interface RestoreTableRow {
+  name: string
+  label: string
+  rows: number
+  added: number
+  skipped: number
+}
+
+export interface RestoreClipBreakdown {
+  already_here: number
+  /** Skipped because a record already holds the same video file. */
+  same_file: number
+  /** Stand-ins made by the library scan that the real record replaces. */
+  standins_replaced: number
+  with_video: number
+  without_video: number
+}
+
+/** `new`/`exists`/`merge` before a restore; the rest after it. */
+export type RestoreFileStatus =
+  'new' | 'exists' | 'merge' | 'restored' | 'replaced' | 'kept' | 'merged' | 'skipped' | 'failed'
+
+export interface RestoreFileRow {
+  label: string
+  status: RestoreFileStatus
+  detail: string
+}
+
+export interface RestoreSummary {
+  upload_id: string
+  created_at: string
+  addon_version: string
+  clip_folder: string
+  /** How many parts of the backup were checked against their checksums. */
+  verified_parts: number
+  tables: RestoreTableRow[]
+  clips: RestoreClipBreakdown
+  files: RestoreFileRow[]
+}
+
+export interface RestoreCheck {
+  label: string
+  ok: boolean
+  detail: string
+}
+
+export interface RestoreReport {
+  tables: RestoreTableRow[]
+  clips: RestoreClipBreakdown
+  files: RestoreFileRow[]
+  checks: RestoreCheck[]
+  verified: boolean
+  restart_needed: boolean
+}

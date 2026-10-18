@@ -117,6 +117,15 @@ export const TAB_CHECKS = {
     loadedText: "No archived clips yet",
     loadingSelector: ".loading-indicator",
   },
+  backup: {
+    // The sentence that appears once the preview has loaded and reads the same
+    // whatever the install holds, so it is true on this empty container and on
+    // the seeded Home Assistant one alike: an empty-state line would not be,
+    // because settings written by an earlier tab are part of a backup. Must
+    // follow BackupCreateSection.vue's wording.
+    loadedText: "Not included: the clip videos",
+    loadingSelector: ".loading-indicator",
+  },
 };
 
 // Order matches the TABS array in frontend/src/components/layout/AppSidebar.vue.

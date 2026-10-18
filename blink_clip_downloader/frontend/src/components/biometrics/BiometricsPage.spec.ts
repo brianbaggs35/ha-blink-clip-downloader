@@ -128,6 +128,17 @@ describe('BiometricsPage', () => {
     expect(reveal).toHaveBeenCalled()
   })
 
+  it('names the one way face data can leave: a backup the person makes themselves', async () => {
+    // The banner promises nothing leaves this device; a backup can carry
+    // enrolled faces (database/backup.py's biometric tables), so the promise
+    // has to say so. Keep the two in step.
+    stubFetch(() => facesResponse([]))
+    const banner = (await mountPage()).find('.privacy-banner').text()
+    expect(banner).toContain('never leave this device on their own')
+    expect(banner).toContain('backup you make yourself')
+    expect(banner).toContain('Backup & Restore')
+  })
+
   it('says plainly that frames go to Hugging Face when detection runs there, and keeps the promise about enrollment', async () => {
     stubFetch(() => facesResponse([], { remote_vision: true }))
     const wrapper = await mountPage()

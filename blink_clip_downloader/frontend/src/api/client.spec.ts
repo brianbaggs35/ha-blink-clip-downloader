@@ -7,6 +7,7 @@ import {
   apiGetWithHeaders,
   apiPatch,
   apiPost,
+  apiPostForBlob,
   apiPut,
   describeApiError,
 } from './client'
@@ -108,6 +109,39 @@ describe('api client', () => {
       headers: undefined,
       body: undefined,
     })
+  })
+
+  it('apiPostForBlob(): sends a JSON body and hands back the file and its headers', async () => {
+    const blob = new Blob(['zip'])
+    vi.mocked(fetch).mockResolvedValue({
+      ...jsonResponse({}),
+      blob: () => Promise.resolve(blob),
+      headers: new Headers({ 'Content-Disposition': 'attachment; filename="x.zip"' }),
+    } as Response)
+    const result = await apiPostForBlob('/api/backup/create', { include_faces: false })
+    expect(fetch).toHaveBeenCalledWith('/api/backup/create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ include_faces: false }),
+    })
+    expect(result.blob).toBe(blob)
+    expect(result.headers.get('Content-Disposition')).toBe('attachment; filename="x.zip"')
+  })
+
+  it('apiPostForBlob(): sends no body or headers when none is given', async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ...jsonResponse({}),
+      blob: () => Promise.resolve(new Blob([])),
+      headers: new Headers(),
+    } as Response)
+    await apiPostForBlob('/api/backup/create')
+    expect(fetch).toHaveBeenCalledWith('/api/backup/create', { method: 'POST', headers: undefined, body: undefined })
+  })
+
+  it('apiPostForBlob(): fails like any other call, including the sign-in redirect', async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse({ error: 'Sign in', login_required: true }, false, 401))
+    await expect(apiPostForBlob('/api/backup/create')).rejects.toBeInstanceOf(ApiError)
+    expect(goTo).toHaveBeenCalledWith('/login?next=%2F')
   })
 
   it('apiPut(): sends a JSON body via PUT', async () => {

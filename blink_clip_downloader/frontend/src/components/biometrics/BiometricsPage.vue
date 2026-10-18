@@ -186,9 +186,11 @@ function scanReportedClip(clipId: string) {
     </Message>
 
     <Message severity="secondary" size="small" :closable="false" class="privacy-banner">
-      <strong>🔒 Everything here stays local.</strong> Photos, face data and names never leave this device and are never
-      sent to any AI provider — not even a cloud one. Analysis only ever receives a nameless "recognized household
-      member" signal; names are used afterwards, locally, to personalize your own notifications.
+      <strong>🔒 Everything here stays local.</strong> Photos, face data and names never leave this device on their own
+      and are never sent to any AI provider — not even a cloud one. The one exception is a backup you make yourself on
+      the Backup &amp; Restore tab, where you choose whether enrolled faces go into it. Analysis only ever receives a
+      nameless "recognized household member" signal; names are used afterwards, locally, to personalize your own
+      notifications.
       <template v-if="remoteVision">
         <br /><br />
         <strong>One exception to know about:</strong> object detection is set to run on Hugging Face, so the sampled
