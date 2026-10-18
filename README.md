@@ -390,6 +390,23 @@ the full walkthrough — including moving the OAuth consent screen to
 production (recommended; otherwise Google expires the connection weekly),
 choosing a backup policy, and exactly what does and doesn't get uploaded.
 
+## Backup & Restore
+
+Everything the add-on has learned lives under `/data`, which Home Assistant
+removes when the add-on is uninstalled. The **Backup & Restore** tab saves it
+into one ZIP — the clip library and its AI analysis, enrolled faces (optional),
+what each camera has learned, and your settings — to download, or into your
+Google Drive once that is connected. Restoring shows you exactly what is in the
+file and what it will do before anything changes, only ever *adds* what is
+missing (it never overwrites or duplicates what you have, so it is safe to run
+twice), and checks its own result afterwards.
+
+A backup never contains a password or sign-in, and it does not contain the clip
+videos, which are too large for it. See [Backup &
+Restore](blink_clip_downloader/DOCS.md#backup--restore) for what is and is not
+included, how restoring treats clips whose video is not on the device, and when
+to restart the add-on afterwards.
+
 ## Testing and Code Quality
 
 I have setup an extremely thorough CI pipeline that should catch most problems before
