@@ -49,15 +49,31 @@ function signInRequired(status: number, body: string): boolean {
   }
 }
 
-/** Thin typed fetch wrapper mirroring the pre-Vue UI's `api()` helper. */
-async function apiRequest<T>(path: string, opts: RequestInit = {}): Promise<{ data: T; headers: Headers }> {
+/** A successful response, or the ApiError (and sign-in redirect) a failed one earns. */
+async function fetchOk(path: string, opts: RequestInit): Promise<Response> {
   const res = await fetch(INGRESS_ROOT + path, opts)
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText)
     if (signInRequired(res.status, text)) goTo(loginUrl())
     throw new ApiError(res.status, `${res.status}: ${text}`, text)
   }
+  return res
+}
+
+/** Thin typed fetch wrapper mirroring the pre-Vue UI's `api()` helper. */
+async function apiRequest<T>(path: string, opts: RequestInit = {}): Promise<{ data: T; headers: Headers }> {
+  const res = await fetchOk(path, opts)
   return { data: (await res.json()) as T, headers: res.headers }
+}
+
+/** POST that answers with a file rather than JSON (a backup download). */
+export async function apiPostForBlob(path: string, body?: unknown): Promise<{ blob: Blob; headers: Headers }> {
+  const res = await fetchOk(path, {
+    method: 'POST',
+    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  })
+  return { blob: await res.blob(), headers: res.headers }
 }
 
 export async function api<T>(path: string, opts: RequestInit = {}): Promise<T> {
