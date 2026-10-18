@@ -128,6 +128,11 @@ export const ICONS = {
       { x: 4, y: 8, width: 16, height: 12, rx: 1 },
     ],
   },
+  'tab-backup': {
+    // The familiar "restore" arrow looping back round a clock face: a copy
+    // of the past, distinct from tab-storage's box.
+    paths: ['M3 12a9 9 0 1 0 3-6.7', 'M3 4v5h5', 'M12 7v5l3 2'],
+  },
   'empty-box': {
     paths: [
       'M22 12h-6l-2 3h-4l-2-3H2',

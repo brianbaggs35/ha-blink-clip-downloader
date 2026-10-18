@@ -69,6 +69,14 @@ describe('App', () => {
         } else if (url.startsWith('/api/ai/faces/bypass-stats')) {
           body = { total_bypassed: 0, by_name: [], recent: [] }
         } else if (url.startsWith('/api/ai/faces')) body = { available: true, faces: [] }
+        else if (url.startsWith('/api/backup/preview')) {
+          body = {
+            tables: [],
+            files: [],
+            clip_folder: '/share/blink-clips',
+            gdrive: { state: 'unavailable', folder: '' },
+          }
+        }
         return Promise.resolve({ ok: true, json: () => Promise.resolve(body), text: () => Promise.resolve('') })
       }),
     )
@@ -219,6 +227,22 @@ describe('App', () => {
     await flushPromises()
     expect(wrapper.find('#page-storage').classes()).toContain('active')
     expect(wrapper.text()).toContain('Storage')
+    wrapper.unmount()
+  })
+
+  it('switches to the Backup & Restore tab, which is not built until it is opened', async () => {
+    mockArrayAwareFetch()
+    const wrapper = mountApp()
+    expect(wrapper.find('#page-backup .backup-page').exists()).toBe(false)
+
+    const tab = wrapper.find('[data-tab="backup"]')
+    expect(tab.text()).toContain('Backup & Restore')
+    await tab.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('#page-backup').classes()).toContain('active')
+    expect(wrapper.find('#page-storage').classes()).not.toContain('active')
+    expect(wrapper.find('#page-backup h2').text()).toBe('Backup & Restore')
     wrapper.unmount()
   })
 
