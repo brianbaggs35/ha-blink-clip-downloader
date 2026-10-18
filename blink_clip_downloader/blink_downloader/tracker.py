@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -106,6 +107,25 @@ class ClipTracker:
         self._failures.pop(clip_id, None)
         self._stats["total_downloaded"] += 1
         self._stats["total_bytes"] += size_bytes
+
+    def merge_downloaded(self, clip_ids: Iterable[str]) -> int:
+        """Record clips an earlier install already downloaded, and persist them.
+
+        Used when a backup is restored: without these the downloader would
+        fetch (and the analysis queue re-analyze) every clip Blink still
+        holds. Returns how many this tracker did not already know. The
+        statistics are left alone — these were not downloaded this session —
+        and a clip that was failing is no longer owed a download.
+        """
+        added = 0
+        for clip_id in clip_ids:
+            if clip_id not in self._downloaded:
+                self._downloaded[clip_id] = None
+                added += 1
+            self._failures.pop(clip_id, None)
+        if added:
+            self.save()
+        return added
 
     def increment_session_count(self) -> None:
         self._stats["session_count"] += 1

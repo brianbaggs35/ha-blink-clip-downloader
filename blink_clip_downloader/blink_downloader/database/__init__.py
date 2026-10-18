@@ -21,6 +21,7 @@ mixin owns the tables for a single job and can be read on its own:
     queues      the analysis and Google Drive upload work queues
     cameras     battery history, and carrying a rename across every table
     legacy      the one-time import of a pre-5.0.0 SQLite library
+    backup      reading the whole library out for a backup, and merging one in
 
 plus :mod:`.schema` (the DDL) and :mod:`.sql` (pure text/row helpers).
 
@@ -41,6 +42,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from .analysis import AnalysisResultsMixin
+from .backup import BACKUP_TABLES, TRANSIENT_TABLES, BackupMixin
 from .cameras import CameraStateMixin
 from .clips import ClipFilters, ClipLibraryMixin
 from .core import DEFAULT_DSN, ConnectionMixin
@@ -75,6 +77,7 @@ class ClipDatabase(
     QueuesMixin,
     CameraStateMixin,
     LegacyImportMixin,
+    BackupMixin,
 ):
     """Async wrapper around the PostgreSQL clip library."""
 
@@ -127,8 +130,10 @@ class ClipDatabase(
 
 
 __all__ = [
+    "BACKUP_TABLES",
     "DEFAULT_DSN",
     "SUSPICIOUS_PERIODS",
+    "TRANSIENT_TABLES",
     "_MIGRATIONS",
     "_SCHEMA",
     "ClipDatabase",

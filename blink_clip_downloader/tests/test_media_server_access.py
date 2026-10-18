@@ -455,6 +455,16 @@ async def test_the_token_opens_only_its_endpoints(make_client: Any, via: str) ->
         ("POST", "/api/access/token/regenerate"),
         ("POST", "/api/sync-modules/cameras/Front/arm"),
         ("GET", "/api/does-not-exist"),
+        # A backup holds face data and settings: never for a token that
+        # lives in people's automations.
+        ("GET", "/api/backup/preview"),
+        ("POST", "/api/backup/create"),
+        ("POST", "/api/backup/gdrive"),
+        ("POST", "/api/backup/uploads"),
+        ("PUT", "/api/backup/uploads/x"),
+        ("POST", "/api/backup/uploads/x/inspect"),
+        ("POST", "/api/backup/uploads/x/restore"),
+        ("DELETE", "/api/backup/uploads/x"),
     ):
         path, extra = kwargs(other)
         resp = await client.request(method, path, **extra)
