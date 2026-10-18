@@ -1818,6 +1818,10 @@ does receive stays nameless and countless: for a clip where faces were set
 aside it says only that a face "was too unclear to identify" and not to assume
 everyone present is a known resident.
 
+*Backups.* The one way face data can leave the device is a backup you make
+yourself on the **Backup & Restore** tab, which carries enrolled faces unless you
+switch **Include enrolled faces** off. The Biometrics tab's privacy banner says so.
+
 **Reporting recognition accuracy.** A clip's AI panel has a face-recognition
 feedback button, separate from the regular correct/incorrect suspicious-flag
 feedback: "Wrong match" on a clip where the bypass fired (it recognized the
@@ -2025,6 +2029,11 @@ from any browser without leaving Home Assistant.
   account to back clips up, including retrying any upload that failed — see
   [Storage Tab — Google Drive Backup](#storage-tab--google-drive-backup)
   below.
+- **Backup & Restore tab** — save the clip library, its AI analysis, enrolled
+  faces, what each camera has learned and your settings into one ZIP (to
+  download, or into Google Drive), and put one back after a reinstall, after
+  looking over exactly what it would do — see
+  [Backup & Restore](#backup--restore) below.
 - **Automations tab** — builders that generate Home Assistant automations,
   scripts, scenes, helpers, dashboards and blueprints from your own
   thresholds and cameras, plus a **Notification Channels** panel to test-send
@@ -2348,8 +2357,139 @@ and remains eligible for backup later.
   list itself is always this add-on's own upload record, not a live scan of
   the folder's contents — a file you drop into that folder yourself via
   Drive's own app stays completely invisible to this add-on.
-- There's no download/restore-from-Drive feature — clips already live
-  locally; Drive is a backup destination, not a second source to sync from.
+- There's no download/restore-from-Drive feature for clips — they already live
+  locally; Drive is a backup destination, not a second source to sync from. The
+  same goes for the backups the Backup & Restore tab can put in Drive: to restore
+  one, download it from Drive and choose the file there.
+
+---
+
+## Backup & Restore
+
+Everything this add-on has learned is kept under `/data`, which Home Assistant
+removes when the add-on is uninstalled. The **Backup & Restore** tab saves it into
+one ZIP and puts it back, so a reinstall — of the add-on, or of Home Assistant
+itself — does not start you from scratch. Home Assistant's own backups cover the
+add-on's data too; this is a smaller, portable copy that you can keep anywhere,
+move to another install, and look inside before restoring.
+
+### What a backup holds
+
+| Held | What |
+|------|------|
+| The clip library | Clips, their AI analyses, object detections, security events, your thumbs-up/down feedback and face-match reports |
+| Enrolled faces | Photos and face data for the people on the Biometrics tab (optional, see below) |
+| What each camera has learned | Where the protected vehicle parks, hourly activity baselines, clip-length statistics, scene backgrounds, battery history, the AI Usage reset point |
+| Settings | Camera settings, camera rename history, the protected-vehicle description, protected assets, the Security Feed layout, the Moondream fine-tune choice |
+| Reference pictures | The frames vehicle zones and protected assets were drawn on |
+| Download history | The list of clips already fetched from Blink, so a restored install does not fetch and analyse them again; and the clip manifest (`clip_manifest.json`) |
+
+The records are written as readable JSON lines rather than as the database's own
+files, so a backup from one release restores into a later one — columns a newer
+release added simply take their defaults.
+
+**Not in a backup:** every password and sign-in (Blink, Google Drive, this
+add-on's own sign-in and the access token Home Assistant's calls carry — sign in
+again after restoring); the add-on's options (Home Assistant keeps and restores
+those); downloaded models and the Moondream package; the two work queues (clips
+waiting for analysis, uploads waiting for Drive), which the add-on refills as new
+clips arrive — a restored clip that was still waiting can be analysed again from
+the Library; and the clip **videos**. Videos are too large for a backup file; they stay in
+`download_path` (`/share/blink-clips` by default), and Home Assistant's own backup
+of the share folder is how to keep them. A backup is not encrypted: it holds your
+camera descriptions, prompts and — if included — face data, so keep it private.
+
+### Making a backup
+
+**Download backup** makes the ZIP in your browser. **Back up to Google Drive** puts
+the same ZIP in a `Backups` folder inside the folder you chose on the Storage tab;
+it is offered once Drive is connected and a folder is chosen, and each press adds a
+new file (nothing is pruned). The records are read from one consistent snapshot of
+the library, so a backup made while clips are arriving is still one moment in time.
+
+**Include enrolled faces** (on by default, shown when anyone is enrolled) controls
+whether the photos and face data for the people on the Biometrics tab go in the
+file. They never leave the device on their own; a backup is the one way they can,
+which is why it is a switch and why the Biometrics tab names this tab in its
+privacy banner.
+
+### Restoring
+
+1. **Choose the file.** It is sent to the add-on in 4 MiB pieces (Home Assistant's
+   ingress proxy refuses a request body over 16 MiB, so a backup sent whole would
+   work on the direct port and fail in the sidebar), then checked end to end: every
+   part against its checksum and record count, and that the ZIP holds nothing its
+   manifest does not list. A file that is not a backup, was edited, or is from a
+   newer version of the add-on is refused with the reason.
+2. **Look at the summary.** For each kind of record: how many are in the backup,
+   how many would be added, and how many are already here. It names the settings
+   that would be written, the clips that would come back without a video, and
+   whether any enrolled faces are included. This is a real dry run — the add-on
+   runs the restore itself in a read-only transaction — so what it promises is what
+   happens (the numbers can differ by a clip or two if clips arrive in between).
+   The add-on refuses to restore a file that has not been through this step.
+3. **Confirm.** A dialog states how much will be added and that nothing already
+   here is overwritten or deleted.
+4. **Read the report.** What was added, what was already here, what happened to each
+   file, and the verification: every record in the backup was restored or
+   deliberately left alone; the clips it added are really in the library (read back
+   after the change was committed); and each file written reads back identical to
+   what the backup held.
+
+### What a restore does and does not do
+
+A restore **only adds**, and running it twice changes nothing the second time.
+
+- A clip whose id is already in the library is left exactly as it is — analysis,
+  stars and tags included — and so is everything in the backup that belongs to it,
+  so an analysis is never added twice.
+- A clip whose video file another record already tracks is skipped rather than
+  doubled. The one exception is the stand-in the library scan creates when it
+  finds a video with no record (after a reinstall, for everything still in
+  `download_path`): if that record has no analysis, star or tag, the real record
+  replaces it.
+- Enrolled faces (matched on name and photo), camera baselines, vehicle positions,
+  battery readings and the AI Usage reset point are added only where no row with
+  the same identity exists.
+- The list of already-downloaded clips is merged into the running downloader's
+  (written straight away), and the clip manifest gains only the lines it lacks.
+- A settings file or reference picture is written only where there is none. Tick
+  **Replace settings and pictures that are already here** to use the backup's copy
+  instead; that is the one place a restore overwrites anything. Settings are read
+  when the add-on starts, so the report tells you to restart it (Settings → Add-ons
+  → Blink Clip Downloader → Restart) when one was written.
+- The database part is a single transaction: if it fails, it changes nothing, and
+  the error says so. Files are written afterwards, one at a time; one failing is
+  reported against it and does not stop the others.
+- A clip that appears while the restore runs — the downloader fetching it again —
+  is left as the add-on wrote it.
+
+**Clips restored without their video.** If the video is not on the device, the clip
+comes back as a record only: analysis, stars and tags intact, nothing to play. The
+add-on's archiver normally deletes the record of any clip whose video has gone, so
+these clips are flagged to be left alone; the flag clears at start-up once the video
+is back in `download_path`. If you restore your videos too, restore them **before**
+or soon after the backup, to the same paths (the summary says where they were).
+
+**Restore early.** The add-on starts downloading as soon as it is connected to
+Blink. A clip it has already downloaded again keeps its own record rather than the
+backup's, and does not take the backup's analysis. Restoring while it is waiting for
+your Blink verification code, or just after, avoids that.
+
+### Limits
+
+- Restoring a backup stored in Google Drive is not built: download it from Drive
+  (drive.google.com), then choose the file on this tab.
+- Uploading a backup to Drive reads the file into memory before sending it, as clip
+  uploads do; a very large library on a small device is better downloaded.
+- A restore needs the free space of the file (an upload is held in the container's
+  temporary storage until it is restored, cancelled or an hour passes).
+- Restored clip records keep the video paths they had. If this install's
+  `download_path` is not the folder the backup names (the summary and the report
+  say which), the records still point at the old folder: set `download_path` to
+  match, or copy the videos into it, before expecting them to play. The library scan
+  at start-up would otherwise add the videos it finds in the new folder as separate
+  records.
 
 ---
 
@@ -2581,7 +2721,9 @@ Downloaded clips are saved under the `share` folder, accessible via:
 | `/data/web_access.json` | The secret that signs direct-port sign-ins, and the access token Home Assistant's own calls carry (do not edit; delete it to sign every browser out and replace the token) |
 
 > All `/data/` files are stored inside the add-on's private data directory and are
-> automatically removed by the supervisor when the add-on is uninstalled.
+> automatically removed by the supervisor when the add-on is uninstalled. The
+> **Backup & Restore** tab keeps the ones worth keeping — see
+> [Backup & Restore](#backup--restore) for which.
 
 ---
 

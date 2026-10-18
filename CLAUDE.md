@@ -16,7 +16,10 @@ Add-ons → Repositories*). It currently contains a single add-on:
   live-view session, bridged through ffmpeg into HLS — see `live_view.py`),
   and optional AI-based suspicious-activity analysis of clips, including
   local-only face recognition that can auto-clear a clip's suspicious flag
-  for approved household members.
+  for approved household members, and a Backup & Restore tab (6.1.3) that
+  saves the library, its analysis, faces and settings into one ZIP — to
+  download or to Google Drive — and merges one back in without overwriting
+  or duplicating anything.
 
 Almost all work happens inside `blink_clip_downloader/`. **Run all commands
 below from that directory unless noted otherwise** (pyright is the exception —
@@ -54,7 +57,9 @@ architecture.
     (feedback tuning, activity baselines, scene drift), `queues.py` (the
     analysis and Drive upload queues), `cameras.py` (battery history and
     carrying a rename across every camera-keyed table), `legacy.py` (the
-    pre-5.0.0 SQLite import) and `core.py` (pool lifecycle), over
+    pre-5.0.0 SQLite import), `backup.py` (the Backup & Restore tab's
+    database half — see **Backup & Restore** below) and `core.py` (pool
+    lifecycle), over
     `schema.py` (the DDL) and `sql.py` (pure text/row helpers).
     Mixins rather than sub-objects (`db.clips.get(...)`) so that no caller
     or test had to change. Two rules worth knowing: a method that needs a
@@ -354,7 +359,7 @@ architecture.
     token — see below), `library`,
     `status`, `liveview`, `security_feed`, `ai`, `usage`,
     `camera_configs`, `vehicles`, `assets`, `security_events`, `sync_module`,
-    `feedback`, `faces`, `finetune`, `storage`, `automations` — over
+    `feedback`, `faces`, `finetune`, `storage`, `automations`, `backup` — over
     `support.py` (middleware, CSP, JSON parsing, paging, shared error
     strings) and `core.py` (`_MediaServerBase`, which declares the
     dependencies and runtime state every mixin reads, so each one
@@ -546,6 +551,16 @@ architecture.
     gets the plain push it always got. The frontend half is
     `composables/useClipDeepLink.ts`: `?clip=<id>`, or the route Home
     Assistant's panel reports over its postMessage protocol.
+  - `backup/` (6.1.3) — the Backup & Restore tab's logic, split by job:
+    `catalogue.py` (what is carried from `/data` besides the database, and
+    `LEFT_OUT` with a reason for each thing that is not), `archive.py` (the
+    ZIP layout and a reader that trusts nothing in it), `export.py` (making
+    a backup), `restore.py` (previewing and applying one) and `staging.py`
+    (holding an uploaded file between the steps of a restore). The table list
+    and the SQL live in `database/backup.py`; the web API is
+    `media_server/backup.py`. **Read "Backup & Restore" below before
+    changing any of it** — its rules are what keep a restore from losing or
+    doubling data.
   - `event_watcher.py`, `notifier.py`, `notification_channels.py`,
     `digest.py`, `battery_monitor.py`, `archiver.py`, `storage.py`,
     `library_scanner.py`, `tracker.py`, `manifest.py` — supporting modules
@@ -702,14 +717,15 @@ removed in 5.0.0.
   plain path/rect/circle data, not separate `.vue` files — see `AppIcon.vue`),
   and an `#page-X { overflow-y: auto; }` override in `assets/styles/base.css`
   (grouped with `#page-vehicles`/`#page-assets`/`#page-biometrics`/
-  `#page-storage`/`#page-liveview`) unless the page's content is certain to always fit
+  `#page-storage`/`#page-backup`/`#page-liveview`) unless the page's content is certain to always fit
   within the viewport — `.page` defaults to `overflow: hidden` (the
   fixed-height sidebar/content shell), so a page that doesn't opt in just
   clips its content with no scrollbar. The Storage tab shipped without this
   once; it only surfaced via live browser testing under a real Home
   Assistant OS install, not any automated test. Current nav order: Library,
   Live View, Security Feed, Automations, Sync Module, Status, AI, AI Usage,
-  Models, Security Events, Vehicles, Assets, Biometrics, Storage. Note the two
+  Models, Security Events, Vehicles, Assets, Biometrics, Storage, Backup &
+  Restore (tab id `backup`, `components/backup/`). Note the two
   similarly-named tabs are unrelated: **Security Feed** is the grid of
   near-live camera snapshots; **Security Events** is the structured
   security-event timeline (`components/security/`, backed by
@@ -793,7 +809,9 @@ removed in 5.0.0.
   (filter/star/tag/modal, including the clip modal's theater mode/autoplay/
   loop/prev-next-nav/download-link/AI-panel-analyze-now), Vehicles, Status,
   AI (including Test Analysis) + AI Usage, Automations, Sync Module,
-  Models, Security Feed, Security (timeline/filters/evidence/open-clip,
+  Models, Security Feed, Backup & Restore (`backup-create`/`restore-flow`/
+  `restore-rejections`: real downloads and uploads, with backups built byte by
+  byte by `e2e/backup-fixtures.ts`), Security (timeline/filters/evidence/open-clip,
   against directly-seeded `security_events` rows — producing them for real
   would need a running YOLO), and Storage (Archived Clips list/expand/
   camera-filter/delete — all DB-backed; Google Drive only as far as its
@@ -928,6 +946,105 @@ CI folds the first six into the existing Python `lint`/`test` jobs
 "3.13"` matrix leg) rather than as a separate job. `test:e2e:coverage`
 runs in its own `frontend-e2e` job instead (own Postgres service, not
 matrixed).
+
+## Backup & Restore (6.1.3 — read before touching)
+
+A backup is one ZIP: `manifest.json` (a checksum and, for records, a line
+count per part), `database/<table>.jsonl`, `files/<name>`. Records are JSON
+lines (bytes as `{"$bytes": base64}`), not the database's own files, so a
+backup from one release restores into a later one: `insert_rows` names only
+columns this database has *and* every row supplies, the rest take defaults.
+
+Rules that are each a real hazard, with where they are pinned:
+
+- **A restore only adds.** It never overwrites or deletes what is here, and
+  running it twice changes nothing — the add-on is usually already running
+  and downloading when someone gets to the tab. A clip id already here is
+  left alone *with everything that belongs to it* (`clip_child` tables are
+  restored only with a clip this run added, so an analysis is never doubled);
+  a clip whose `file_path` another record holds is skipped, except a
+  library-scan stand-in (`library_scanner.IMPORTED_CLIP_ID_PREFIX`) with no
+  analysis, star or tag, which the real record replaces; everything else
+  matches on `BackupTable.key`. Settings are written only where absent unless
+  "Replace" is ticked. `tests/test_backup_restore.py` holds each of these,
+  including the twice-run and the clip-appears-mid-restore cases
+  (`insert_new_clips` is `ON CONFLICT DO NOTHING RETURNING id`, so it knows
+  which clips it really added).
+- **The preview and the restore are one code path.** `preview_restore` runs
+  `restore._Merge` with `apply=False` in a read-only transaction
+  (`restore_session(write=False)`); `restore_backup` runs the same class with
+  `apply=True`. Never fork the decisions into a second implementation: the
+  summary the person reads has to be what the restore does. The routes refuse
+  `restore` for an upload whose `archive` is unset, i.e. one `inspect` has not
+  passed.
+- **Nothing after the database commit may raise.** The merge is one
+  transaction (an exception means nothing changed — the routes say so); files,
+  the downloader hook and the verification run afterwards and record failures
+  in the result. Keep it that way, or a caller that sees an exception will
+  believe nothing happened when something did.
+- **`clips.media_missing` exists because the archiver deletes rows.**
+  `ClipArchiver._archive_month` deletes a clip whose file is gone and
+  `prune_orphaned_archives` deletes an archived clip whose ZIP is gone, both
+  cascading to its analysis; a metadata-only restore would be erased by the
+  next archive run or start-up. A restored clip whose video/ZIP is absent is
+  flagged, `get_clips_to_archive` and `get_archived_clip_records` skip
+  flagged rows, and `library_scanner.reconcile_restored_media` (called from
+  `app._reimport_library`) clears the flag once the file reappears.
+  `test_without_the_flag_the_archiver_really_would_erase_them` is the control.
+  Any new code that deletes a row because its file is missing must respect it.
+- **What is carried is classified, and tests fail until it is.**
+  `tests/test_database_backup.py` fails for a table in neither `BACKUP_TABLES`
+  nor `TRANSIENT_TABLES` (with a reason); `tests/test_backup_catalogue.py`
+  walks the package for every `/data` path (the way conftest's `data_dir` does)
+  and fails for one in neither `DATA_FILES`/`DATA_DIRS` nor `LEFT_OUT`.
+  **Credentials are never carried** (Blink, Google, web access secret, alert
+  key, `options.json`); `test_no_credential_is_carried` and the e2e spec grep
+  for them. `DATA_DIR` in `catalogue.py` is a module constant for the
+  `data_dir` fixture's sake — tests must read `catalogue.DATA_DIR`, not a name
+  imported from it.
+- **Live state is changed through the running object, never its file.**
+  `downloaded_clips.json` is held by `ClipTracker` and rewritten from memory on
+  every save and at shutdown, so a restore that replaced the file would be
+  undone. `MediaServer(merge_downloaded_clip_ids=tracker.merge_downloaded)`
+  hands the ids over, called on the event-loop thread (the tracker is not
+  thread-safe). Settings files are read at start-up, so the report says to
+  restart; do not claim they take effect live.
+- **The upload is chunked because ingress is.** Supervisor's ingress handler
+  reads a POST/PUT body with `request.read()` and its API app has
+  `client_max_size = 16 MiB` (`supervisor/api/__init__.py` `MAX_CLIENT_SIZE`)
+  unless the add-on opts into `ingress_stream`, which this one deliberately
+  does not (it changes how every POST is proxied). So `PUT
+  /api/backup/uploads/{id}?offset=N` takes 4 MiB pieces (`CHUNK_BYTES`), an
+  out-of-order piece answers 409 with `received` so a retry after a lost reply
+  resumes instead of writing twice, and `RestoreStaging` keeps one upload for
+  an hour. Responses over ~4 MB are streamed by ingress, so downloads are
+  unaffected. Checked against Supervisor's source, **not** against a live
+  ingress here.
+- **A hostile or damaged file costs time, not integrity.** `BackupArchive.open`
+  allow-lists member names through `catalogue.classify_member` (nothing is ever
+  extracted by name), requires the ZIP to hold exactly the manifest's members,
+  bounds member count, declared size and record size, and checks every part's
+  size, SHA-256 and line count. A backup from a newer format or with unknown
+  tables is refused with "update the add-on", never half-read.
+- **Not reachable with the access token.** `access_control.TOKEN_ROUTES` must
+  never list a `/api/backup/` route (a backup holds face data and settings);
+  `tests/test_media_server_access.py` asserts it.
+- **Face data and the privacy banner.** `face_enrollments` is the one
+  `biometric` table: a backup can be made without it (the "Include enrolled
+  faces" switch), and the Biometrics banner says a backup is the one way face
+  data can leave the device. A backup is a deliberate exception to "never
+  leaves this device", so the banner, `DOCS.md` and the switch must stay in
+  step (`BiometricsPage.spec.ts` pins the sentence).
+- **Drive upload reuses `GDriveClient.upload_file`** (whole file into memory,
+  as for clips) into `<connected folder>/Backups`. There is no restore-from-Drive:
+  `drive.file` only shows files the app made, and whether they stay visible
+  after a re-authorisation could not be checked without a live account.
+
+The UI side (`components/backup/`) was checked on a width x theme x state
+matrix (320-1280px, both themes, six states, axe + overflow probes): the numbers
+tables stack at narrow *container* widths (`@container`, not a media query),
+numbers are bold in the text colour (the accent colour fails 4.5:1), and the
+file picker has no `accept` because PrimeVue's filter rejects silently.
 
 ## Face-recognition suspicious-flag bypass (safety-critical — read before touching)
 
