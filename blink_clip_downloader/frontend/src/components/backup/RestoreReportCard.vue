@@ -39,20 +39,19 @@ const added = computed(() => totalAdded(props.report.tables))
     </ul>
 
     <h4 class="report-heading">What was added</h4>
-    <!-- Explicit roles: see RestoreSummaryCard, which lays this out the same way. -->
-    <table class="report-table" role="table">
-      <thead role="rowgroup">
-        <tr role="row">
-          <th scope="col" role="columnheader">Records</th>
-          <th scope="col" role="columnheader">Added</th>
-          <th scope="col" role="columnheader">Already here</th>
+    <table class="report-table">
+      <thead>
+        <tr>
+          <th scope="col">Records</th>
+          <th scope="col">Added</th>
+          <th scope="col">Already here</th>
         </tr>
       </thead>
-      <tbody role="rowgroup">
-        <tr v-for="table in tables" :key="table.name" :data-table="table.name" role="row">
-          <th scope="row" role="rowheader">{{ table.label }}</th>
-          <td role="cell" data-label="Added" class="added">{{ table.added.toLocaleString() }}</td>
-          <td role="cell" data-label="Already here">{{ table.skipped.toLocaleString() }}</td>
+      <tbody>
+        <tr v-for="table in tables" :key="table.name" :data-table="table.name">
+          <th scope="row">{{ table.label }}</th>
+          <td data-label="Added" class="added">{{ table.added.toLocaleString() }}</td>
+          <td data-label="Already here">{{ table.skipped.toLocaleString() }}</td>
         </tr>
       </tbody>
     </table>

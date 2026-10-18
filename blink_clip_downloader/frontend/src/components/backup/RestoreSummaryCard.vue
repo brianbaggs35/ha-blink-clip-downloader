@@ -44,24 +44,21 @@ function made(iso: string): string {
     </Message>
 
     <h4 class="summary-heading">What restoring will do</h4>
-    <!-- The roles are explicit because on a narrow card the table is laid out as
-         stacked rows (see the container query below), and a browser drops a
-         table's semantics from an element once its display is no longer a table's. -->
-    <table class="summary-table" role="table">
-      <thead role="rowgroup">
-        <tr role="row">
-          <th scope="col" role="columnheader">Records</th>
-          <th scope="col" role="columnheader">In the backup</th>
-          <th scope="col" role="columnheader">Will be added</th>
-          <th scope="col" role="columnheader">Already here</th>
+    <table class="summary-table">
+      <thead>
+        <tr>
+          <th scope="col">Records</th>
+          <th scope="col">In the backup</th>
+          <th scope="col">Will be added</th>
+          <th scope="col">Already here</th>
         </tr>
       </thead>
-      <tbody role="rowgroup">
-        <tr v-for="table in tables" :key="table.name" :data-table="table.name" role="row">
-          <th scope="row" role="rowheader">{{ table.label }}</th>
-          <td role="cell" data-label="In the backup">{{ table.rows.toLocaleString() }}</td>
-          <td role="cell" data-label="Will be added" class="added">{{ table.added.toLocaleString() }}</td>
-          <td role="cell" data-label="Already here">{{ table.skipped.toLocaleString() }}</td>
+      <tbody>
+        <tr v-for="table in tables" :key="table.name" :data-table="table.name">
+          <th scope="row">{{ table.label }}</th>
+          <td data-label="In the backup">{{ table.rows.toLocaleString() }}</td>
+          <td data-label="Will be added" class="added">{{ table.added.toLocaleString() }}</td>
+          <td data-label="Already here">{{ table.skipped.toLocaleString() }}</td>
         </tr>
       </tbody>
     </table>
