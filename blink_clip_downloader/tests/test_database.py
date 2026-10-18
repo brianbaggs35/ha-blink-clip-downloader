@@ -672,6 +672,94 @@ async def test_get_clips_to_archive(db: ClipDatabase) -> None:
     assert "new" not in ids
 
 
+async def _flag_media_missing(db: ClipDatabase, *clip_ids: str) -> None:
+    """What a backup restore does to a clip whose video it could not find."""
+    assert db._pool is not None
+    await db._pool.execute(
+        "UPDATE clips SET media_missing=TRUE WHERE id = ANY($1::text[])",
+        list(clip_ids),
+    )
+
+
+async def test_get_clips_to_archive_skips_clips_restored_without_their_video(
+    db: ClipDatabase,
+) -> None:
+    """The archiver deletes the row of any clip whose file is gone, so a
+    restored record must never be offered to it."""
+    old_ts = (datetime.now(UTC) - timedelta(days=100)).isoformat()
+    await db.add_clip(_make_clip("plain", timestamp=old_ts))
+    await db.add_clip(_make_clip("restored", timestamp=old_ts))
+    await _flag_media_missing(db, "restored")
+    assert [c["id"] for c in await db.get_clips_to_archive(30)] == ["plain"]
+
+
+async def test_get_media_missing_clips_lists_only_the_flagged(
+    db: ClipDatabase,
+) -> None:
+    await db.add_clip(_make_clip("plain"))
+    await db.add_clip(_make_clip("restored"))
+    await _flag_media_missing(db, "restored")
+    (flagged,) = await db.get_media_missing_clips()
+    assert flagged["id"] == "restored"
+    assert flagged["file_path"] == "/share/blink-clips/restored.mp4"
+    assert flagged["archived"] is False
+
+
+async def test_clear_media_missing_unflags_only_the_given_clips(
+    db: ClipDatabase,
+) -> None:
+    for clip_id in ("a", "b", "c"):
+        await db.add_clip(_make_clip(clip_id))
+    await _flag_media_missing(db, "a", "b", "c")
+    assert await db.clear_media_missing(["a", "b"]) == 2
+    assert [c["id"] for c in await db.get_media_missing_clips()] == ["c"]
+
+
+async def test_clear_media_missing_with_nothing_to_clear_touches_nothing(
+    db: ClipDatabase,
+) -> None:
+    await db.add_clip(_make_clip("a"))
+    await _flag_media_missing(db, "a")
+    assert await db.clear_media_missing([]) == 0
+    assert len(await db.get_media_missing_clips()) == 1
+
+
+async def test_media_missing_queries_without_init() -> None:
+    d = ClipDatabase()
+    assert await d.get_media_missing_clips() == []
+    assert await d.clear_media_missing(["a"]) == 0
+
+
+async def test_a_new_clip_is_not_flagged_media_missing(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("fresh"))
+    clip = await db.get_clip("fresh")
+    assert clip is not None
+    assert clip["media_missing"] is False
+
+
+async def test_upgrading_an_existing_database_gains_media_missing(
+    db: ClipDatabase,
+) -> None:
+    """6.1.3 adds the column to a table every earlier install already has, so
+    it must come from _MIGRATIONS and every row already there must read as an
+    ordinary clip."""
+    assert db._pool is not None
+    await db._pool.execute("ALTER TABLE clips DROP COLUMN media_missing")
+    await db._pool.execute(
+        "INSERT INTO clips (id, camera, file_path, timestamp, downloaded_at) "
+        "VALUES ('legacy', 'Front Door', '/share/blink-clips/legacy.mp4', "
+        "'2026-01-01T09:00:00+00:00', '2026-01-01T09:01:00+00:00')"
+    )
+    upgraded = ClipDatabase(TEST_DB_DSN)
+    await upgraded.init()
+    try:
+        clip = await upgraded.get_clip("legacy")
+        assert clip is not None
+        assert clip["media_missing"] is False
+    finally:
+        await upgraded.close()
+
+
 async def test_get_clips_archive_path_filter(db: ClipDatabase) -> None:
     await db.add_clip(_make_clip("c1"))
     await db.add_clip(_make_clip("c2"))
@@ -830,6 +918,20 @@ async def test_get_archived_clip_records_includes_camera_and_file_path(
     records = await db.get_archived_clip_records()
     assert records[0]["camera"] == clip["camera"]
     assert records[0]["file_path"] == clip["path"]
+
+
+async def test_get_archived_clip_records_skips_clips_restored_without_their_zip(
+    db: ClipDatabase,
+) -> None:
+    """prune_orphaned_archives deletes a row whose ZIP is gone; a restored
+    record's ZIP is expected to be missing, so it must not be listed."""
+    await db.add_clip(_make_clip("archived-1"))
+    await db.add_clip(_make_clip("restored-1"))
+    await db.mark_archived("archived-1", "/archives/2024-06.zip")
+    await db.mark_archived("restored-1", "/archives/2024-06.zip")
+    await _flag_media_missing(db, "restored-1")
+    records = await db.get_archived_clip_records()
+    assert [r["id"] for r in records] == ["archived-1"]
 
 
 async def test_get_archived_clip_records_without_init() -> None:

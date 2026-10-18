@@ -245,6 +245,8 @@ async def test_a_real_previous_release_database_upgrades_in_place() -> None:
             assert clip is not None
             assert clip["starred"] is True
             assert clip["duration"] == 8
+            # 6.1.3's column: every pre-existing clip is an ordinary one.
+            assert clip["media_missing"] is False
             analysis = await db.get_analysis_for_clip("legacy-1")
             assert analysis is not None
             assert analysis["summary"] == "Someone at the door"

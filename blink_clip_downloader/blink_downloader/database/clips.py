@@ -472,13 +472,19 @@ class ClipLibraryMixin(_DatabaseBase):
         return {r["file_path"] for r in rows}
 
     async def get_clips_to_archive(self, older_than_days: int) -> list[dict[str, Any]]:
+        """Clips old enough to compress into a monthly ZIP.
+
+        A clip restored from a backup without its video (``media_missing``) is
+        left out: there is nothing to compress, and the archiver deletes the
+        row of any clip whose file has gone.
+        """
         if self._pool is None:
             return []
         cutoff = (datetime.now(UTC) - timedelta(days=older_than_days)).isoformat()
         rows = await self._pool.fetch(
             _qm(
-                "SELECT * FROM clips WHERE archived=FALSE AND timestamp < ? "
-                "ORDER BY timestamp"
+                "SELECT * FROM clips WHERE archived=FALSE AND media_missing=FALSE "
+                "AND timestamp < ? ORDER BY timestamp"
             ),
             cutoff,
         )
@@ -497,16 +503,41 @@ class ClipLibraryMixin(_DatabaseBase):
         ``f"{camera}/{Path(file_path).name}"``) to check for. ``file_path``
         still holds the pre-archive path even after the source file is
         deleted — ``mark_archived`` never touches that column.
+
+        Clips flagged ``media_missing`` (restored from a backup without their
+        ZIP) are left out: their missing archive is expected, and pruning
+        them would delete the restored record.
         """
         if self._pool is None:
             return []
         rows = await self._pool.fetch(
             _qm(
                 "SELECT id, archive_path, camera, file_path FROM clips "
-                "WHERE archived=TRUE"
+                "WHERE archived=TRUE AND media_missing=FALSE"
             )
         )
         return [_row_to_dict(r) for r in rows]
+
+    async def get_media_missing_clips(self) -> list[dict[str, Any]]:
+        """``{id, file_path, archived, archive_path}`` of every clip a restore
+        kept without its video, for startup to see which have since turned up."""
+        if self._pool is None:
+            return []
+        rows = await self._pool.fetch(
+            "SELECT id, file_path, archived, archive_path FROM clips "
+            "WHERE media_missing=TRUE"
+        )
+        return [_row_to_dict(r) for r in rows]
+
+    async def clear_media_missing(self, clip_ids: list[str]) -> int:
+        """Treat *clip_ids* as ordinary clips again. Returns how many changed."""
+        if self._pool is None or not clip_ids:
+            return 0
+        status = await self._pool.execute(
+            "UPDATE clips SET media_missing=FALSE WHERE id = ANY($1::text[])",
+            clip_ids,
+        )
+        return _affected(status)
 
     async def get_clips_pending_gdrive_backup(
         self, include_unarchived: bool

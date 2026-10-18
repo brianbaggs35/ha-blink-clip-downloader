@@ -23,6 +23,7 @@ module to open is the one named after the tab you are changing:
     finetune         Moondream Cloud fine-tuning
     storage          archived clips and Google Drive backup
     automations      writing HA config objects, notification tests
+    backup           backing up and restoring the library and settings
 
 over :mod:`.support` (middleware, JSON parsing, paging, shared strings),
 :mod:`.access_control` (the sign-in rules, with no routing in them) and
@@ -39,12 +40,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import ssl
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
 
+from ..backup import RestoreStaging
 from ..database import ClipDatabase
 from ..face_enrollment import FaceCandidateStore
 from ..ffmpeg_output import ANALYSIS_FRAME_WIDTH
@@ -55,6 +57,7 @@ from .ai import AiRoutesMixin
 from .app_shell import AppShellMixin
 from .assets import AssetsRoutesMixin
 from .automations import AutomationRoutesMixin
+from .backup import BackupRoutesMixin
 from .camera_configs import CameraConfigsRoutesMixin
 from .faces import FaceRoutesMixin
 from .feedback import FeedbackRoutesMixin
@@ -103,6 +106,7 @@ class MediaServer(
     FineTuneRoutesMixin,
     StorageRoutesMixin,
     AutomationRoutesMixin,
+    BackupRoutesMixin,
 ):
     """aiohttp web server: clip library REST API + Video.js browser UI."""
 
@@ -154,6 +158,7 @@ class MediaServer(
         get_sync_module_snapshot: Callable[[], list[dict[str, Any]]] | None = None,
         arm_sync_module: Callable[..., Awaitable[bool | None]] | None = None,
         arm_camera: Callable[..., Awaitable[bool | None]] | None = None,
+        merge_downloaded_clip_ids: Callable[[Iterable[str]], int] | None = None,
         direct_access_login: bool = False,
         supervisor_token: str = "",
         clip_storage_dir: Path = Path("/share/blink-clips"),
@@ -191,6 +196,12 @@ class MediaServer(
         self._get_sync_module_snapshot = get_sync_module_snapshot
         self._arm_sync_module = arm_sync_module
         self._arm_camera = arm_camera
+        # Hands a restored backup's list of already-downloaded clips to the
+        # running downloader. A narrow callable like the rest, and for a
+        # reason beyond tidiness: the downloader rewrites its own history
+        # file from memory, so a restore that replaced the file behind its
+        # back would be undone by the next save.
+        self._merge_downloaded_clip_ids = merge_downloaded_clip_ids
         # Used only to stand up a MoondreamFineTuneManager for the Fine-Tuning
         # API/panel when provider == "moondream_cloud" — see _handle_finetune_*.
         self._moondream_api_key = moondream_api_key
@@ -232,6 +243,10 @@ class MediaServer(
         )
         self._runner: web.AppRunner | None = None
         self._camera_configs_lock = asyncio.Lock()
+        # One backup or restore at a time, and the uploaded file a restore
+        # reads from (see backup/staging.py).
+        self._backup_lock = asyncio.Lock()
+        self._restore_staging = RestoreStaging()
         self.extra_status: dict = {}
         # Holds a strong reference to the background moondream-install task —
         # asyncio only keeps a weak reference internally, so an unreferenced
@@ -306,6 +321,7 @@ class MediaServer(
             await self._runner.cleanup()
             self._runner = None
         self._https_port = None
+        self._restore_staging.discard()
 
     # ------------------------------------------------------------------
     # App factory
@@ -354,6 +370,7 @@ class MediaServer(
         self._register_finetune_routes(app)
         self._register_storage_routes(app)
         self._register_automations_routes(app)
+        self._register_backup_routes(app)
         return app
 
     # A camera rename has to reach three different areas at once — its

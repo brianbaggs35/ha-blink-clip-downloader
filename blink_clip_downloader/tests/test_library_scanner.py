@@ -10,8 +10,11 @@ import pytest
 
 from blink_downloader.database import ClipDatabase
 from blink_downloader.library_scanner import (
+    IMPORTED_CLIP_ID_PREFIX,
     _timestamp_from_filename,
+    clip_media_present,
     import_existing_clips,
+    reconcile_restored_media,
 )
 
 
@@ -265,3 +268,80 @@ async def test_import_stores_probed_duration(db: ClipDatabase, tmp_path: Path) -
     args = mock_exec.call_args.args
     assert args[0] == "ffprobe"
     assert str(clip_path) in args
+
+
+# ---------------------------------------------------------------------------
+# The ids the scan mints, and clips a backup restore kept without their video
+# ---------------------------------------------------------------------------
+
+
+async def test_imported_clips_carry_the_placeholder_prefix(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """A backup restore tells a rebuilt stand-in from a real record by this."""
+    download_path = tmp_path / "clips"
+    _touch(download_path / "Front_Door_20240601_080000.mp4")
+    await import_existing_clips(db, download_path)
+    (clip,) = await db.get_clips()
+    assert clip["id"].startswith(IMPORTED_CLIP_ID_PREFIX)
+
+
+def test_clip_media_present_follows_the_file_for_an_ordinary_clip(
+    tmp_path: Path,
+) -> None:
+    video = tmp_path / "clip.mp4"
+    clip = {"file_path": str(video), "archived": False, "archive_path": ""}
+    assert clip_media_present(clip) is False
+    video.write_bytes(b"x")
+    assert clip_media_present(clip) is True
+
+
+def test_clip_media_present_follows_the_zip_for_an_archived_clip(
+    tmp_path: Path,
+) -> None:
+    """An archived clip's own file is deleted by design; its ZIP is its video."""
+    archive = tmp_path / "blink_archive_2024-06.zip"
+    clip = {
+        "file_path": str(tmp_path / "gone.mp4"),
+        "archived": True,
+        "archive_path": str(archive),
+    }
+    assert clip_media_present(clip) is False
+    archive.write_bytes(b"x")
+    assert clip_media_present(clip) is True
+
+
+def test_clip_media_present_is_false_for_an_empty_location() -> None:
+    """Path("") is the current directory, which does exist."""
+    assert clip_media_present({"file_path": "", "archived": False}) is False
+    assert (
+        clip_media_present({"file_path": "x", "archived": True, "archive_path": ""})
+        is False
+    )
+
+
+async def test_reconcile_clears_only_clips_whose_video_is_back(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    assert db._pool is not None
+    back, still_gone = tmp_path / "back.mp4", tmp_path / "gone.mp4"
+    for clip_id, path in (("back", back), ("gone", still_gone)):
+        await db.add_clip(
+            {
+                "id": clip_id,
+                "camera": "Front Door",
+                "path": str(path),
+                "timestamp": "2024-06-01T08:00:00+00:00",
+            }
+        )
+    await db._pool.execute("UPDATE clips SET media_missing=TRUE")
+    back.write_bytes(b"x")
+
+    assert await reconcile_restored_media(db) == 1
+    assert [c["id"] for c in await db.get_media_missing_clips()] == ["gone"]
+
+
+async def test_reconcile_with_nothing_flagged_changes_nothing(
+    db: ClipDatabase,
+) -> None:
+    assert await reconcile_restored_media(db) == 0
