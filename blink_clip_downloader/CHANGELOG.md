@@ -88,6 +88,29 @@ switched off for a backup that has none, and the Biometrics banner names the
 Backup & Restore tab as the one way face data can leave. A backup is not
 encrypted; keep it somewhere private.
 
+### Bug fixes
+
+- **Security Feed: tiles that stayed black, or showed only the top of a picture.**
+  6.1.2 stopped a tile going black when a refresh *failed*; this is the other
+  cause, which nothing ever reports as a failure. blinkpy keeps whatever bytes
+  Blink returned for a camera's thumbnail and fetches that thumbnail only once, so
+  a picture Blink was still writing when it was fetched (this add-on polls fastest
+  right after motion) stayed cached until the camera's next event. A browser draws
+  a JPEG that ends early without any error and leaves the rows that never arrived
+  empty, so the tile showed its black backing: everything under the top part of
+  the picture, or all of it, with no text and no *Couldn't refresh* note. Every new
+  image is now decoded in full before the Security Feed serves it. A damaged one
+  is replaced by that camera's last whole picture, and the thumbnail is downloaded
+  again (up to four times, thirty seconds apart, and only while the latest one is
+  damaged) so a picture that was merely unfinished is picked up once Blink has it.
+  When Blink never gives a whole one the add-on log says so, once per picture, with
+  the reason and the size. Why Blink hands out an unfinished thumbnail is not
+  known; the check does not depend on the reason.
+- **Security Feed: a tile waiting for its first picture was an empty black box.**
+  It now says *Loading snapshot…*. The text on a tile (that, and *No snapshot
+  available yet*) is a fixed light colour: the theme's grey was about 4:1 against
+  the tile's black in the light theme, under the 4.5:1 minimum.
+
 ### Inside
 
 - Uploads to the restore are sent in 4 MiB pieces: Home Assistant's ingress proxy

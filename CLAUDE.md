@@ -476,6 +476,34 @@ architecture.
     (`cameras`/`columns`/`refresh_seconds`) persist to
     `/data/security_feed_settings.json`, same convention as
     `vehicle_settings.json`.
+    `snapshots.py` (6.1.3) decides which picture a tile may show, and its
+    rules are each a real bug. blinkpy caches whatever bytes Blink returned
+    for a thumbnail, unchecked, and fetches a given thumbnail once, so a
+    picture Blink was still writing stays cached until the camera's next
+    event. **A browser draws a JPEG that ends early with no error** —
+    Chromium's `img.decode()` resolves (only WebKit's rejects), `complete` is
+    true, the natural size comes from the header — and leaves the missing rows
+    transparent, i.e. the tile's hard-coded black backing: a tile black under
+    its top part, or wholly black, with no text and no *Couldn't refresh*. That
+    is why 6.1.2's fetch-then-swap in `SecurityFeedTile.vue` could not cover it
+    and why only the server can: `SnapshotKeeper` decodes each new cached
+    object once (by identity, in a thread) with Pillow's strict mode before it
+    may be served, keeps the last whole picture to show meanwhile, and
+    re-downloads the thumbnail at most `RECOVERY_ATTEMPTS` times,
+    `RECOVERY_INTERVAL_SECONDS` apart, while the latest is damaged. Pinned by
+    tests: a verdict is recorded only after the decode finishes (a cancelled
+    request must not mark a picture examined); a per-camera lock means two
+    open tabs share one decode and one download; and Pillow's own strictness is
+    relied on (`ImageFile.LOAD_TRUNCATED_IMAGES` must stay off — checked in
+    ultralytics, transformers and facenet-pytorch, none sets it), which also
+    rejects a JPEG missing only its final end marker that a browser would draw.
+    The 4 attempts / 30 s are judgement calls, not measurements, and that Blink
+    serves unfinished thumbnails (likeliest, since the add-on polls fastest
+    right after motion) is inferred, not observed: the symptom was reproduced
+    in Chromium and WebKit with cut-short JPEGs, the cause upstream was not.
+    A tile with no picture yet says *Loading snapshot…*; its text is a fixed
+    light colour because it sits on that black backing (`--muted` is 4.0:1 on
+    black in the light theme).
   - Sync Module tab arming has no dedicated module either: `BlinkDownloader`'s
     `get_sync_module_snapshot`/`set_sync_module_armed`/`set_camera_armed`
     plus `media_server/sync_module.py`. Rules that were each a real bug:
