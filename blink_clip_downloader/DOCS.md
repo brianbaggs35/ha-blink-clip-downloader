@@ -2129,12 +2129,24 @@ eye on multiple cameras at once rather than watching one at a time.
 - Each tile shows whatever image the add-on's own poll cycle most recently
   cached — opening this tab (or leaving it open) doesn't ask Blink for
   anything extra beyond what the add-on already does, and it stops making
-  any requests the moment you navigate away.
+  any requests the moment you navigate away. The one exception is a
+  damaged picture, below.
 - A tile only swaps its picture once the new one has fully arrived. If a
   refresh fails, it keeps showing the previous picture with a small
   *Couldn't refresh* note until the next one succeeds, rather than going
-  blank. A camera that has no snapshot yet shows *No snapshot available
-  yet*.
+  blank. A tile still waiting for its first picture says *Loading
+  snapshot…*, and a camera that has no snapshot yet shows *No snapshot
+  available yet*.
+- A picture that Blink handed over unfinished is never shown. A browser
+  draws such a JPEG without any error — the missing part of the tile is
+  simply black — so the add-on decodes each new image in full before a tile
+  may have it. A damaged one is replaced by that camera's last whole
+  picture, and the add-on asks Blink for the thumbnail again (up to four
+  times, thirty seconds apart, and only while the latest one is damaged) in
+  case it was merely unfinished when first fetched. If Blink never gives a
+  whole one, the add-on log says so — once per picture, with the reason and
+  its size — and the tile keeps the last whole picture until the camera
+  records something new.
 - The **Customize** panel (collapsed by default) lets you pick which
   cameras to show, how many tiles per row (1–3 — beyond 3 a tile shrinks
   too small to make out what it's showing), and how often tiles refresh

@@ -37,6 +37,39 @@ test('shows a real snapshot for a camera with one cached, and the placeholder fo
   await expect(garageTile.getByText('No snapshot available yet')).toBeVisible()
 })
 
+test('a tile says it is loading until its first snapshot arrives, rather than sitting there black @standalone', async ({
+  page,
+}) => {
+  // A slow camera used to leave its tile as a black box with nothing written
+  // in it until the picture came, which looks the same as a broken one. The
+  // request is held open so the wait can be seen, then let go.
+  let release!: () => void
+  const held = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  await page.route('**/api/security-feed/snapshot/Backyard*', async (route) => {
+    await held
+    await route.continue()
+  })
+  await page.reload()
+  await page.locator('.app-nav-tab[data-tab="securityfeed"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="securityfeed"]')
+
+  const tile = page.locator('.secfeed-tile', { hasText: 'Backyard' })
+  const loading = tile.getByText('Loading snapshot…')
+  await expect(loading).toBeVisible()
+  await expect(tile.getByText('No snapshot available yet')).toHaveCount(0)
+  // Readable on the tile's black backing in either theme (the theme's own
+  // muted colour is only 4:1 against black in the light one).
+  await expect(loading).toHaveCSS('color', 'rgb(207, 207, 214)')
+
+  release()
+  await expect(loading).toHaveCount(0)
+  await expect(tile.locator('img')).toBeVisible()
+  await expect(tile.locator('img')).not.toHaveClass(/secfeed-tile-image-hidden/)
+  await page.unroute('**/api/security-feed/snapshot/Backyard*')
+})
+
 test('a refresh that fails keeps the last picture instead of blacking the tile out @standalone', async ({ page }) => {
   // The reported fault: a tile in the grid turns black and flickers. Every
   // refresh tick re-requests each snapshot, and one request failing used to
