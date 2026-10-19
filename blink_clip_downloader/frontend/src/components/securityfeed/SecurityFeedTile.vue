@@ -14,6 +14,8 @@ const props = defineProps<{
 // what it had instead of going black until the next tick happens to work.
 const shownUrl = ref('')
 // No picture yet and the last attempt failed: the tile has nothing to show.
+// With no picture and no failure either, the first request is still on its way
+// and the tile says so, rather than sitting there as an unexplained black box.
 const unavailable = ref(false)
 // A picture is showing but the last refresh failed, so it may be out of date.
 const stale = ref(false)
@@ -61,7 +63,8 @@ onUnmounted(() => {
         class="secfeed-tile-image"
         :class="{ 'secfeed-tile-image-hidden': !shownUrl }"
       />
-      <div v-if="unavailable" class="secfeed-tile-placeholder muted-note">No snapshot available yet</div>
+      <div v-if="unavailable" class="secfeed-tile-placeholder">No snapshot available yet</div>
+      <div v-else-if="!shownUrl" class="secfeed-tile-placeholder">Loading snapshot…</div>
       <!-- <output> is itself a polite live region, so no role="status" is needed. -->
       <output v-if="stale" class="secfeed-tile-stale">Couldn't refresh</output>
     </div>
@@ -103,6 +106,10 @@ onUnmounted(() => {
   justify-content: center;
   text-align: center;
   padding: 0.5rem;
+  /* On the wrapper's black in both themes: the theme's muted colour is only
+     about 4:1 against black in the light one. */
+  color: #cfcfd6;
+  font-size: 0.85rem;
 }
 
 .secfeed-tile-stale {
@@ -120,11 +127,6 @@ onUnmounted(() => {
 .secfeed-tile-name {
   padding: 0.5rem 0.75rem;
   font-weight: 600;
-  font-size: 0.85rem;
-}
-
-.muted-note {
-  color: var(--muted);
   font-size: 0.85rem;
 }
 </style>

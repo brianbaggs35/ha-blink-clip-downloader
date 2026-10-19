@@ -16,6 +16,7 @@ from blinkpy.auth import LoginError, TokenRefreshFailed, UnauthorizedError
 
 from blink_downloader.app import BlinkClipDownloaderApp
 from blink_downloader.downloader import AuthenticationError, TwoFARequired
+from tests.snapshot_helpers import whole_jpeg
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -2246,14 +2247,15 @@ def test_ci_e2e_mode_replaces_only_external_media_server_collaborators(
 async def test_media_server_get_camera_snapshot_reaches_real_camera(app):
     from requests.structures import CaseInsensitiveDict
 
+    picture = whole_jpeg()
     camera = MagicMock()
-    camera.image_from_cache = b"snapshot-bytes"
+    camera.image_from_cache = picture
     fake_blink = MagicMock()
     fake_blink.cameras = CaseInsensitiveDict({"Front Door": camera})
     app._downloader._blink = fake_blink
 
     result = await app._media_server._get_camera_snapshot("Front Door")
-    assert result == b"snapshot-bytes"
+    assert result is picture
 
 
 async def test_run_skips_import_when_library_db_disabled(app, tmp_path):

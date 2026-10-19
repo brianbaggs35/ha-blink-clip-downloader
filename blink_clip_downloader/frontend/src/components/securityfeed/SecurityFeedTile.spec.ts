@@ -40,7 +40,7 @@ describe('SecurityFeedTile', () => {
     URL.revokeObjectURL = vi.fn()
   })
 
-  it('shows neither a picture nor the placeholder while the first snapshot is loading', async () => {
+  it('says it is loading, not that there is no snapshot, while the first one is on its way', async () => {
     holdRequests()
     const wrapper = mountTile()
     await flushPromises()
@@ -48,6 +48,8 @@ describe('SecurityFeedTile', () => {
     expect(snapshot).toHaveBeenCalledWith('Front Door', expect.any(AbortSignal))
     expect(wrapper.find('img').classes()).toContain('secfeed-tile-image-hidden')
     expect(wrapper.find('img').attributes('src')).toBeUndefined()
+    // A black box with no words in it is what a slow camera used to look like.
+    expect(wrapper.find('.secfeed-tile-placeholder').text()).toBe('Loading snapshot…')
     expect(wrapper.text()).not.toContain('No snapshot available yet')
     expect(wrapper.text()).toContain('Front Door')
   })
@@ -64,7 +66,7 @@ describe('SecurityFeedTile', () => {
     expect(img.attributes('src')).toBe('blob:snapshot-1')
     expect(img.attributes('alt')).toBe('Front Door snapshot')
     expect(img.classes()).not.toContain('secfeed-tile-image-hidden')
-    expect(wrapper.text()).not.toContain('No snapshot available yet')
+    expect(wrapper.find('.secfeed-tile-placeholder').exists()).toBe(false)
     expect(wrapper.text()).not.toContain("Couldn't refresh")
   })
 
@@ -75,13 +77,29 @@ describe('SecurityFeedTile', () => {
     await flushPromises()
 
     expect(wrapper.find('img').classes()).toContain('secfeed-tile-image-hidden')
-    expect(wrapper.text()).toContain('No snapshot available yet')
+    expect(wrapper.find('.secfeed-tile-placeholder').text()).toBe('No snapshot available yet')
 
+    // Asking again does not turn the answer back into "loading": it is still
+    // true that there is no snapshot, until one arrives.
     await wrapper.setProps({ tick: 2 })
+    expect(wrapper.find('.secfeed-tile-placeholder').text()).toBe('No snapshot available yet')
     pending[1].resolve(new Blob(['jpeg']))
     await flushPromises()
 
-    expect(wrapper.text()).not.toContain('No snapshot available yet')
+    expect(wrapper.find('.secfeed-tile-placeholder').exists()).toBe(false)
+    expect(wrapper.find('img').attributes('src')).toBe('blob:snapshot-1')
+  })
+
+  it('never says it is loading over a picture that is already showing', async () => {
+    const pending = holdRequests()
+    const wrapper = mountTile()
+    pending[0].resolve(new Blob(['jpeg']))
+    await flushPromises()
+
+    await wrapper.setProps({ tick: 2 })
+
+    expect(snapshot).toHaveBeenCalledTimes(2)
+    expect(wrapper.find('.secfeed-tile-placeholder').exists()).toBe(false)
     expect(wrapper.find('img').attributes('src')).toBe('blob:snapshot-1')
   })
 
@@ -98,7 +116,7 @@ describe('SecurityFeedTile', () => {
     const img = wrapper.find('img')
     expect(img.attributes('src')).toBe('blob:snapshot-1')
     expect(img.classes()).not.toContain('secfeed-tile-image-hidden')
-    expect(wrapper.text()).not.toContain('No snapshot available yet')
+    expect(wrapper.find('.secfeed-tile-placeholder').exists()).toBe(false)
     // Said quietly, since a stale picture is otherwise indistinguishable
     // from a camera that simply has had no motion.
     expect(wrapper.find('output').text()).toBe("Couldn't refresh")

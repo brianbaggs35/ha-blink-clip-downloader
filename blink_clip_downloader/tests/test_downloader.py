@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import aiohttp
 import pytest
 from aiohttp import web
-from aiohttp.test_utils import TestServer
+from aiohttp.test_utils import TestClient, TestServer
 from blinkpy.auth import (
     BlinkTwoFARequiredError,
     LoginError,
@@ -36,6 +36,7 @@ from blink_downloader.downloader import (
     _QuotaReachedError,
     probe_clip_duration,
 )
+from blink_downloader.media_server import MediaServer
 from blink_downloader.storage import StorageManager
 from blink_downloader.tracker import (
     GIVE_UP_AFTER,
@@ -43,6 +44,7 @@ from blink_downloader.tracker import (
     RETRY_BACKOFF_MAX,
     ClipTracker,
 )
+from tests.snapshot_helpers import cut_short, whole_jpeg
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -4116,8 +4118,9 @@ async def test_get_camera_snapshot_returns_none_for_unknown_camera(
 async def test_get_camera_snapshot_prefers_cached_image(dl: BlinkDownloader) -> None:
     """No network call at all when a cached image is already available —
     the whole point of not calling snap_picture()."""
+    picture = whole_jpeg()
     camera = MagicMock()
-    camera.image_from_cache = b"cached-jpeg-bytes"
+    camera.image_from_cache = picture
     camera.get_thumbnail = AsyncMock()
     fake_blink = MagicMock()
     fake_blink.cameras = CaseInsensitiveDict({"Front Door": camera})
@@ -4125,18 +4128,19 @@ async def test_get_camera_snapshot_prefers_cached_image(dl: BlinkDownloader) -> 
 
     result = await dl.get_camera_snapshot("Front Door")
 
-    assert result == b"cached-jpeg-bytes"
+    assert result is picture
     camera.get_thumbnail.assert_not_awaited()
 
 
 async def test_get_camera_snapshot_falls_back_to_downloading_thumbnail(
     dl: BlinkDownloader,
 ) -> None:
+    picture = whole_jpeg()
     camera = MagicMock()
     camera.image_from_cache = None
     response = MagicMock()
     response.status = 200
-    response.read = AsyncMock(return_value=b"downloaded-jpeg-bytes")
+    response.read = AsyncMock(return_value=picture)
     camera.get_thumbnail = AsyncMock(return_value=response)
     fake_blink = MagicMock()
     fake_blink.cameras = CaseInsensitiveDict({"Front Door": camera})
@@ -4144,7 +4148,7 @@ async def test_get_camera_snapshot_falls_back_to_downloading_thumbnail(
 
     result = await dl.get_camera_snapshot("Front Door")
 
-    assert result == b"downloaded-jpeg-bytes"
+    assert result == picture
     camera.get_thumbnail.assert_awaited_once()
 
 
@@ -4246,6 +4250,108 @@ async def test_get_camera_snapshot_empty_download_is_none(
     dl._blink = fake_blink
 
     assert await dl.get_camera_snapshot("Front Door") is None
+
+
+def _front_door(dl: BlinkDownloader, cached: bytes | None) -> MagicMock:
+    """A Front Door camera holding *cached*, whose thumbnail has not been fetched."""
+    camera = MagicMock()
+    camera.image_from_cache = cached
+    camera.get_thumbnail = AsyncMock(return_value=None)
+    fake_blink = MagicMock()
+    fake_blink.cameras = CaseInsensitiveDict({"Front Door": camera})
+    dl._blink = fake_blink
+    return camera
+
+
+def _thumbnail_response(body: bytes) -> MagicMock:
+    response = MagicMock()
+    response.status = 200
+    response.read = AsyncMock(return_value=body)
+    return response
+
+
+async def test_get_camera_snapshot_replaces_a_cached_image_that_ends_early(
+    dl: BlinkDownloader, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The reported fault: a cached picture cut short is drawn by a browser as
+    a tile that is black, or black below its top part. It must never be served,
+    and the thumbnail is fetched again in its place."""
+    whole = whole_jpeg(2)
+    camera = _front_door(dl, cut_short(whole_jpeg(1)))
+    camera.get_thumbnail = AsyncMock(return_value=_thumbnail_response(whole))
+
+    with caplog.at_level(logging.WARNING):
+        first = await dl.get_camera_snapshot("Front Door")
+        second = await dl.get_camera_snapshot("Front Door")
+
+    assert first == whole
+    assert second == whole
+    camera.get_thumbnail.assert_awaited_once()
+    assert "not a whole picture" in caplog.text
+
+
+async def test_get_camera_snapshot_keeps_the_last_whole_picture_when_the_next_ends_early(
+    dl: BlinkDownloader,
+) -> None:
+    earlier = whole_jpeg(1)
+    camera = _front_door(dl, earlier)
+    assert await dl.get_camera_snapshot("Front Door") is earlier
+
+    camera.image_from_cache = cut_short(whole_jpeg(2))
+
+    assert await dl.get_camera_snapshot("Front Door") is earlier
+
+
+async def test_get_camera_snapshot_does_not_trust_a_thumbnail_blink_served_cut_short(
+    dl: BlinkDownloader,
+) -> None:
+    """A download that ends early with the length it promised is a valid HTTP
+    response, so aiohttp reads it without complaint: only decoding the picture
+    shows it is not all there. Real aiohttp objects on both ends, to show it."""
+    short = cut_short(whole_jpeg())
+
+    async def thumbnail(_request: web.Request) -> web.Response:  # NOSONAR
+        return web.Response(body=short, content_type="image/jpeg")
+
+    app = web.Application()
+    app.router.add_get("/thumb", thumbnail)
+    async with TestServer(app) as server, aiohttp.ClientSession() as session:
+
+        async def get_thumbnail() -> aiohttp.ClientResponse:
+            return await session.get(server.make_url("/thumb"))
+
+        camera = _front_door(dl, None)
+        camera.get_thumbnail = get_thumbnail
+
+        assert await dl.get_camera_snapshot("Front Door") is None
+
+        # The server really did hand over a 200 with exactly those bytes.
+        response = await get_thumbnail()
+        assert response.status == 200
+        assert await response.read() == short
+
+
+async def test_the_security_feed_route_never_sends_an_image_that_ends_early(
+    dl: BlinkDownloader, db
+) -> None:
+    """The whole chain as the browser meets it: the route, the downloader and
+    blinkpy's cache."""
+    whole = whole_jpeg()
+    camera = _front_door(dl, cut_short(whole))
+    server = MediaServer(db=db, port=0, get_camera_snapshot=dl.get_camera_snapshot)
+    client = TestClient(TestServer(server._build_app()))
+    await client.start_server()
+    try:
+        damaged = await client.get("/api/security-feed/snapshot/Front%20Door")
+        assert damaged.status == 404
+
+        camera.image_from_cache = whole
+        good = await client.get("/api/security-feed/snapshot/Front%20Door")
+        assert good.status == 200
+        assert good.headers["Content-Type"] == "image/jpeg"
+        assert await good.read() == whole
+    finally:
+        await client.close()
 
 
 # ---------------------------------------------------------------------------

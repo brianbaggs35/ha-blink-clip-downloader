@@ -30,6 +30,7 @@ from blinkpy.sync_module import BlinkLotus, BlinkOwl
 
 from .config import AppConfig
 from .database import ClipDatabase
+from .snapshots import SnapshotKeeper
 from .storage import StorageManager
 from .tracker import GIVE_UP_AFTER, ClipTracker, as_utc
 
@@ -180,6 +181,9 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         self._pending_camera_renames: set[tuple[str, str]] = set()
         self._pending_camera_replacements: set[str] = set()
         self._camera_refresh_skip_warned = False
+        # Which picture the Security Feed may show for each camera -- see
+        # get_camera_snapshot().
+        self._snapshots = SnapshotKeeper()
         # Auth state exposed to the web UI.
         self.auth_state: str = "disconnected"
         self.auth_message: str = ""
@@ -1098,21 +1102,33 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         rate-limited API call that live_view.py's session polling has
         already shown can fail under throttling (see its module docstring).
         Prefers camera.image_from_cache (populated by the normal sync
-        cycle's update_images(), zero additional network calls) and only
-        falls back to downloading camera.thumbnail's URL fresh when nothing
-        is cached yet — e.g. right after startup, before the first sync has
-        completed. This means the Security Feed tab adds no Blink API load
-        beyond what this add-on's existing poll cycle already does; camera
-        images only actually change on whatever cadence that cycle (and
-        event_watcher.py's faster motion-triggered poll) already refreshes
-        them.
+        cycle's update_images(), zero additional network calls). That cache
+        is whatever bytes Blink returned, unchecked, and blinkpy never asks
+        for the same thumbnail twice, so a picture Blink was still writing
+        stays there until the camera's next event -- and a browser draws one
+        that ends early as a tile that is black, or black below its top part
+        (see snapshots.py). So nothing is served until it has decoded in
+        full; a damaged one is replaced by the last whole picture, and the
+        thumbnail is downloaded again, a few times and not continually. That
+        same download covers nothing cached yet -- e.g. right after startup,
+        before the first sync has completed. Apart from those few downloads,
+        the Security Feed tab adds no Blink API load beyond what this add-on's
+        existing poll cycle already does; camera images only actually change
+        on whatever cadence that cycle (and event_watcher.py's faster
+        motion-triggered poll) already refreshes them.
         """
         camera = self.get_camera(name)
         if camera is None:
             return None
-        cached = camera.image_from_cache
-        if cached:
-            return cached
+        return await self._snapshots.latest(
+            name,
+            camera.image_from_cache,
+            lambda: self._download_snapshot(camera, name),
+        )
+
+    @staticmethod
+    async def _download_snapshot(camera: BlinkCamera, name: str) -> bytes | None:
+        """Fetch *camera*'s current thumbnail from Blink, or None if that fails."""
         try:
             response = await camera.get_thumbnail()
             if response is None or response.status != 200:
@@ -1124,8 +1140,7 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         except Exception as exc:  # noqa: BLE001
             _LOGGER.warning("Could not fetch snapshot for camera %r: %s", name, exc)
             return None
-        # An empty body is no snapshot; served as one it is an image that
-        # cannot be drawn.
+        # An empty body is no snapshot.
         return image or None
 
     # ------------------------------------------------------------------
