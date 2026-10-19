@@ -595,10 +595,10 @@ const header = computed(() => (props.asset ? `Edit “${props.asset.name}”` : 
 /* Not scoped: the dialog is teleported to <body>, outside this component's
    scope. On a phone the editor is the whole screen — drawing round a door
    with a fingertip needs every pixel of the frame, not a card floating in a
-   margin. */
+   margin. The width itself is the Dialog's `breakpoints` prop (an inline
+   `style` width can only be beaten by the rule PrimeVue injects for it). */
 @media (max-width: 640px) {
   .p-dialog.asset-editor {
-    width: 100vw !important;
     max-width: 100vw;
     height: 100dvh;
     max-height: 100dvh;
