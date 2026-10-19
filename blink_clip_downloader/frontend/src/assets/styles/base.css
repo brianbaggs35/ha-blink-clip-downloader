@@ -1052,15 +1052,18 @@ body.nav-collapsed {
 .video-js-wrap {
   display: contents;
 }
-.video-js {
-  width: 100% !important;
+/* Video.js writes its own width into a <style> it appends to <head> after this
+   file (".<id>-dimensions", one class), so the rule has to out-rank one class
+   rather than lean on load order. */
+.video-js-wrap .video-js {
+  width: 100%;
   max-height: 62vh;
 }
 .modal.theater .video-js {
   max-height: 82vh;
 }
-.video-hidden {
-  display: none !important;
+.video-js-wrap.video-hidden {
+  display: none;
 }
 /* Holds the video area at the shape it will settle into while the clip
    is still loading. Without it the un-initialised <video> element is a
@@ -1164,26 +1167,33 @@ body.nav-collapsed {
   text-align: center;
   padding: 0 1rem;
 }
-.vjs-big-play-button {
-  border-radius: 50% !important;
-  width: 60px !important;
-  height: 60px !important;
-  line-height: 60px !important;
-  border: 2px solid rgba(255, 255, 255, 0.7) !important;
-  background: rgba(124, 124, 245, 0.35) !important;
+/* Video.js styles its controls as ".video-js .vjs-x" and restyles some of them
+   on ":hover" / ":focus" (up to three classes' worth), and its stylesheet loads
+   with whichever page opens a player first. Every selector below is therefore
+   written under ".video-js-wrap" (each player here sits in one) and out-ranks
+   the Video.js rule it replaces, in every state, whatever the load order. */
+.video-js-wrap .video-js .vjs-big-play-button,
+.video-js-wrap .video-js:hover .vjs-big-play-button,
+.video-js-wrap .video-js .vjs-big-play-button:focus {
+  border-radius: 50%;
+  width: 60px;
+  height: 60px;
+  line-height: 60px;
+  border: 2px solid rgba(255, 255, 255, 0.7);
+  background: rgba(124, 124, 245, 0.35);
 }
-.video-js .vjs-control-bar {
-  background: rgba(10, 10, 15, 0.78) !important;
+.video-js-wrap .video-js .vjs-control-bar {
+  background: rgba(10, 10, 15, 0.78);
   backdrop-filter: blur(6px);
 }
-.video-js .vjs-play-progress,
-.video-js .vjs-volume-level {
-  background: var(--accent) !important;
+.video-js-wrap .video-js .vjs-play-progress,
+.video-js-wrap .video-js .vjs-volume-level {
+  background: var(--accent);
 }
-.video-js .vjs-slider:focus,
-.video-js button:focus {
-  outline: none !important;
-  box-shadow: none !important;
+.video-js-wrap .video-js .vjs-slider:focus,
+.video-js-wrap .video-js button:focus {
+  outline: none;
+  box-shadow: none;
 }
 
 /* Prev/next navigation arrows over the video */
