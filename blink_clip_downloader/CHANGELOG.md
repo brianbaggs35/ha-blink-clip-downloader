@@ -7,6 +7,7 @@
 # Backend Updates
 
 - Updated python-dateutil to 3.0.0
+- Updated pillow to 13.0.0
 
 ## 6.1.3
 
