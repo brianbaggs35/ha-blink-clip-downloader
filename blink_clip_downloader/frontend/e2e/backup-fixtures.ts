@@ -83,7 +83,7 @@ export function backupZip({ tables, formatVersion = 1, tamper = false }: BackupO
   const manifest = {
     format: 'blink-clip-downloader-backup',
     format_version: formatVersion,
-    addon_version: '6.1.3',
+    addon_version: '6.1.4',
     created_at: '2026-10-18T12:00:00+00:00',
     clip_folder: '/share/blink-clips',
     tables: manifestTables,

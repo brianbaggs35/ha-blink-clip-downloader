@@ -26,7 +26,7 @@ def media_dir(tmp_path: Path) -> Path:
 async def _made(db: ClipDatabase, tmp_path: Path, **options: bool) -> BackupArchive:
     target = tmp_path / "backup.zip"
     await create_backup(
-        db, target, addon_version="6.1.3", clip_folder="/share/blink-clips", **options
+        db, target, addon_version="6.1.4", clip_folder="/share/blink-clips", **options
     )
     return BackupArchive.open(target)
 
@@ -53,7 +53,7 @@ async def test_the_manifest_says_where_it_came_from(
     db: ClipDatabase, tmp_path: Path
 ) -> None:
     archive = await _made(db, tmp_path)
-    assert archive.manifest.addon_version == "6.1.3"
+    assert archive.manifest.addon_version == "6.1.4"
     assert archive.manifest.clip_folder == "/share/blink-clips"
     assert archive.manifest.created_at.endswith("+00:00")
 
@@ -178,7 +178,7 @@ async def test_a_file_that_cannot_be_read_stops_the_backup(
     monkeypatch.setattr(export.shutil, "copyfile", refuse)
     with pytest.raises(PermissionError):
         await create_backup(
-            db, tmp_path / "b.zip", addon_version="6.1.3", clip_folder="/share"
+            db, tmp_path / "b.zip", addon_version="6.1.4", clip_folder="/share"
         )
 
 

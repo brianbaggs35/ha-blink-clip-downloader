@@ -55,7 +55,7 @@ async def _backup(db: ClipDatabase, folder: Path, **options: bool) -> BackupArch
     folder.mkdir(exist_ok=True)
     target = folder / "backup.zip"
     await create_backup(
-        db, target, addon_version="6.1.3", clip_folder="/share/blink-clips", **options
+        db, target, addon_version="6.1.4", clip_folder="/share/blink-clips", **options
     )
     return BackupArchive.open(target)
 
@@ -1131,7 +1131,7 @@ async def test_the_summary_describes_the_backup_and_what_restoring_would_do(
     summary = summarize(
         archive, await preview_restore(db, archive), preview_files(archive)
     )
-    assert summary["addon_version"] == "6.1.3"
+    assert summary["addon_version"] == "6.1.4"
     assert summary["clip_folder"] == "/share/blink-clips"
     assert summary["verified_parts"] == len(archive.manifest.members())
     assert {t["name"] for t in summary["tables"]} == {t.name for t in BACKUP_TABLES}

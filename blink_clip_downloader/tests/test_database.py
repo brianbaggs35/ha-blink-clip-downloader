@@ -740,7 +740,7 @@ async def test_a_new_clip_is_not_flagged_media_missing(db: ClipDatabase) -> None
 async def test_upgrading_an_existing_database_gains_media_missing(
     db: ClipDatabase,
 ) -> None:
-    """6.1.3 adds the column to a table every earlier install already has, so
+    """6.1.4 adds the column to a table every earlier install already has, so
     it must come from _MIGRATIONS and every row already there must read as an
     ordinary clip."""
     assert db._pool is not None

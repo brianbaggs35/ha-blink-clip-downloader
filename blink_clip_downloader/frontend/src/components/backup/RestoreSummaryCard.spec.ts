@@ -18,7 +18,7 @@ function mountCard(s: RestoreSummary = summary(), replaceSettings = false) {
 describe('RestoreSummaryCard', () => {
   it('says where the backup came from and that it was checked', () => {
     const text = mountCard().text()
-    expect(text).toContain('by version 6.1.3')
+    expect(text).toContain('by version 6.1.4')
     expect(text).toContain('All 14 parts checked against their checksums')
   })
 

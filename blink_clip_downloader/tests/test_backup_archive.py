@@ -116,7 +116,7 @@ def test_a_good_archive_opens_and_reads_back(path: Path) -> None:
         files={"camera_configs.json": b"[]"},
     )
     archive = BackupArchive.open(path)
-    assert archive.manifest.addon_version == "6.1.3"
+    assert archive.manifest.addon_version == "6.1.4"
     assert archive.manifest.clip_folder == "/share/blink-clips"
     assert archive.manifest.tables["clips"].rows == 2
     assert archive.read_file("camera_configs.json") == b"[]"
@@ -162,7 +162,7 @@ def test_write_archive_puts_the_manifest_first(tmp_path: Path) -> None:
     source = tmp_path / "s.json"
     source.write_bytes(b"{}")
     manifest = BackupManifest(
-        "6.1.3",
+        "6.1.4",
         "now",
         "/share",
         {},
@@ -230,7 +230,7 @@ def _manifest(**changes: Any) -> bytes:
     document: dict[str, Any] = {
         "format": FORMAT_NAME,
         "format_version": FORMAT_VERSION,
-        "addon_version": "6.1.3",
+        "addon_version": "6.1.4",
         "created_at": "now",
         "clip_folder": "/share",
         "tables": {},
