@@ -1,5 +1,9 @@
 # Changelog
 
+## 6.1.4
+
+### Dependency Updates
+
 ## 6.1.3
 
 ### Backup & Restore

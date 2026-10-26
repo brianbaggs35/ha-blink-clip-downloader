@@ -48,7 +48,7 @@ def make_archive(
     tables = tables or {}
     files = files or {}
     manifest = BackupManifest(
-        addon_version="6.1.3",
+        addon_version="6.1.4",
         created_at=NOW,
         clip_folder="/share/blink-clips",
         tables={

@@ -21,7 +21,7 @@ export function summary(overrides: Partial<RestoreSummary> = {}): RestoreSummary
   return {
     upload_id: 'u1',
     created_at: '2026-10-18T12:00:00+00:00',
-    addon_version: '6.1.3',
+    addon_version: '6.1.4',
     clip_folder: '/share/blink-clips',
     verified_parts: 14,
     tables: [

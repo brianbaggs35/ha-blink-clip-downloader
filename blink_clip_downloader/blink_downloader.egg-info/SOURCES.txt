@@ -31,6 +31,7 @@ blink_downloader/notifier.py
 blink_downloader/prompt_segments.py
 blink_downloader/protected_assets.py
 blink_downloader/rich_alerts.py
+blink_downloader/snapshots.py
 blink_downloader/sqlite_migration.py
 blink_downloader/storage.py
 blink_downloader/tracker.py
@@ -107,10 +108,10 @@ blink_downloader/security/tracks.py
 blink_downloader/security/vehicles.py
 blink_downloader/static/favicon.svg
 blink_downloader/static/index.html
-blink_downloader/static/assets/index-CtR84mVk.js
-blink_downloader/static/assets/index-CtR84mVk.js.gz
-blink_downloader/static/assets/index-DC018xyy.css
-blink_downloader/static/assets/index-DC018xyy.css.gz
+blink_downloader/static/assets/index--jtzWrge.css
+blink_downloader/static/assets/index--jtzWrge.css.gz
+blink_downloader/static/assets/index-DhPsJrsA.js
+blink_downloader/static/assets/index-DhPsJrsA.js.gz
 blink_downloader/static/assets/inter-cyrillic-400-normal-HOLc17fK.woff
 blink_downloader/static/assets/inter-cyrillic-400-normal-obahsSVq.woff2
 blink_downloader/static/assets/inter-cyrillic-500-normal-BasfLYem.woff2
@@ -265,6 +266,7 @@ tests/test_security_scoring.py
 tests/test_security_sounds.py
 tests/test_security_tracks.py
 tests/test_security_vehicles.py
+tests/test_snapshots.py
 tests/test_sqlite_migration.py
 tests/test_standalone_server_noise_filter.py
 tests/test_storage.py

@@ -31,7 +31,7 @@ test('shows what a backup would do before anything is changed', async ({ page })
 
   const summary = page.locator('.restore-summary')
   await expect(summary).toContainText('What restoring will do')
-  await expect(summary).toContainText('by version 6.1.3')
+  await expect(summary).toContainText('by version 6.1.4')
   await expect(summary).toContainText('All 2 parts checked against their checksums')
   // In the backup, will be added, already here.
   const clips = summary.locator('tr[data-table="clips"] td')

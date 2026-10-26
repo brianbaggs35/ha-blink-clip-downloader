@@ -75,7 +75,7 @@ def _drive(**overrides: Any) -> MagicMock:
 async def _backup_bytes(api: _Api, tmp_path: Path, **options: bool) -> bytes:
     target = tmp_path / "made.zip"
     await create_backup(
-        api.db, target, addon_version="6.1.3", clip_folder="/share/x", **options
+        api.db, target, addon_version="6.1.4", clip_folder="/share/x", **options
     )
     return target.read_bytes()
 
@@ -497,7 +497,7 @@ async def test_a_backup_is_looked_over_and_then_restored(
 
     assert looked.status == 200
     assert summary["upload_id"] == upload_id
-    assert summary["addon_version"] == "6.1.3"
+    assert summary["addon_version"] == "6.1.4"
     assert summary["verified_parts"] > 0
     clips = next(t for t in summary["tables"] if t["name"] == "clips")
     assert (clips["rows"], clips["added"], clips["skipped"]) == (3, 3, 0)
@@ -617,7 +617,7 @@ async def test_a_backup_that_was_tampered_with_is_refused(
 ) -> None:
     await seed_library(api.db, api.media)
     made = tmp_path / "made.zip"
-    await create_backup(api.db, made, addon_version="6.1.3", clip_folder="/share")
+    await create_backup(api.db, made, addon_version="6.1.4", clip_folder="/share")
     with zipfile.ZipFile(made) as source:
         members = {n: source.read(n) for n in source.namelist()}
     members["database/clips.jsonl"] = members["database/clips.jsonl"].replace(
