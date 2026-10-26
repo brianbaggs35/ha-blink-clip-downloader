@@ -11,6 +11,7 @@
 - Updated anthropic to 2.3.0
 - Updated openai to 3.3.7
 - Updated pytest-asyncio to 1.4.1
+- Updated ultralytics to 8.4.189
 
 ## 6.1.3
 
