@@ -153,7 +153,7 @@ jobs:
         continue-on-error: true
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          version: v0.76.0
+          version: v0.76.1
           image-ref: ${{ steps.tags.outputs.tag_version }}
           scanners: vuln
           severity: MEDIUM,HIGH,CRITICAL
