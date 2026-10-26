@@ -4,6 +4,10 @@
 
 ### Dependency Updates
 
+# Github Action Updates
+
+- Updated trivy to 0.76.1
+
 # Backend Updates
 
 - Updated python-dateutil to 3.0.0
