@@ -18,7 +18,7 @@ Requires-Dist: numpy>=2.5.4
 Requires-Dist: PyYAML>=6.0.3
 Provides-Extra: test
 Requires-Dist: pytest>=9.1.1; extra == "test"
-Requires-Dist: pytest-asyncio>=1.4.0; extra == "test"
+Requires-Dist: pytest-asyncio>=1.4.1; extra == "test"
 Requires-Dist: pytest-cov>=7.1.0; extra == "test"
 Requires-Dist: aioresponses>=0.7.9; extra == "test"
 Provides-Extra: vision
