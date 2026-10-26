@@ -9,6 +9,7 @@
 - Updated python-dateutil to 3.0.0
 - Updated pillow to 13.0.0
 - Updated anthropic to 2.3.0
+- Updated openai to 3.3.7
 
 ## 6.1.3
 
