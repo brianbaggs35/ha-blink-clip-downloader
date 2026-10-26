@@ -4,6 +4,10 @@
 
 ### Dependency Updates
 
+# Backend Updates
+
+- Updated python-dateutil to 3.0.0
+
 ## 6.1.3
 
 ### Backup & Restore
