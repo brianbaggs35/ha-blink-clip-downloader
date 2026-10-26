@@ -10,6 +10,7 @@
 - Updated pillow to 13.0.0
 - Updated anthropic to 2.3.0
 - Updated openai to 3.3.7
+- Updated pytest-asyncio to 1.4.1
 
 ## 6.1.3
 
