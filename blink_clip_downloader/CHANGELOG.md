@@ -12,6 +12,7 @@
 - Updated openai to 3.3.7
 - Updated pytest-asyncio to 1.4.1
 - Updated ultralytics to 8.4.189
+- Updated transformers to 5.20.2
 
 ## 6.1.3
 
