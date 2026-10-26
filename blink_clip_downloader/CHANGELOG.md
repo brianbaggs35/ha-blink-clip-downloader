@@ -17,6 +17,7 @@
 - Updated pytest-asyncio to 1.4.1
 - Updated ultralytics to 8.4.189
 - Updated transformers to 5.20.2
+- Require filelock 4.2.1 or newer to fix CVE-2026-112940.
 
 ## 6.1.3
 
