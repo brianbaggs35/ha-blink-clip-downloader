@@ -255,6 +255,7 @@ RUN ( \
         && rm -rf /usr/lib/python3/dist-packages/wheel \
             /usr/lib/python3/dist-packages/wheel-*.dist-info \
         && pip3 install --no-cache-dir \
+            "filelock>=4.2.1" \
             "ultralytics>=8.4.175,<9" \
             # lap isn't in ultralytics' own declared dependencies (`pip show
             # ultralytics` doesn't list it) — it's an optional extra
