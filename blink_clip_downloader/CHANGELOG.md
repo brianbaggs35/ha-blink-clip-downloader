@@ -13,7 +13,7 @@
 - Updated python-dateutil to 3.0.0
 - Updated pillow to 13.0.0
 - Updated anthropic to 2.3.0
-- Updated openai to 3.3.7
+- Updated openai to 3.41.0
 - Updated pytest-asyncio to 1.4.1
 - Updated ultralytics to 8.4.189
 - Updated transformers to 5.20.2
