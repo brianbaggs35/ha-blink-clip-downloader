@@ -27,6 +27,10 @@
 - Updated video.js to 8.24.2
 - Updated vue to 3.5.44
 
+# Dev Dependency Updates
+
+- Updated @playwright/test to 1.64.1
+
 ## 6.1.3
 
 ### Backup & Restore
