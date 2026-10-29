@@ -19,6 +19,10 @@
 - Updated transformers to 5.20.2
 - Require filelock 4.2.1 or newer to fix CVE-2026-112940.
 
+# Frontend Updates
+
+- Updated @primeuix/themes to 3.1.0
+
 ## 6.1.3
 
 ### Backup & Restore
