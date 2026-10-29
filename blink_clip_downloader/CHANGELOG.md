@@ -22,6 +22,7 @@
 # Frontend Updates
 
 - Updated @primeuix/themes to 3.1.0
+- Updated pinia to 4.1.0
 
 ## 6.1.3
 
