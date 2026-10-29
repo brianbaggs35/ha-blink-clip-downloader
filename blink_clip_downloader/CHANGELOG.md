@@ -34,6 +34,7 @@
 - Updated @vitest/coverage-v8 to 5.0.5
 - Updated vitest to 5.0.5
 - Updated eslint to 10.13.0
+- Updated eslint-plugin-vue to 10.12.0
 
 ### Frontend Test Fixes
 
