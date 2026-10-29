@@ -24,6 +24,7 @@
 - Updated @primeuix/themes to 3.1.0
 - Updated pinia to 4.1.0
 - Updated primevue to 5.0.4
+- Updated video.js to 8.24.2
 
 ## 6.1.3
 
