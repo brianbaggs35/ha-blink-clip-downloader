@@ -36,6 +36,7 @@
 - Updated eslint to 10.13.0
 - Updated eslint-plugin-vue to 10.12.0
 - Updated js-yaml to 5.5.0
+- Updated jsdom to 30.1.3
 
 ### Frontend Test Fixes
 
