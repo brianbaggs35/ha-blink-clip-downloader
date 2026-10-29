@@ -38,6 +38,7 @@
 - Updated js-yaml to 5.5.0
 - Updated jsdom to 30.1.3
 - Updated typescript-eslint to 8.72.1
+- Updated vite to 8.3.5
 
 ### Frontend Test Fixes
 
