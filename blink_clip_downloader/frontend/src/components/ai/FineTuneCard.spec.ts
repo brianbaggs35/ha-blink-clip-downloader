@@ -15,7 +15,7 @@ async function selectOption(
   const opt = [...document.body.querySelectorAll('[role="option"]')].find(
     (el) => el.getAttribute('aria-label') === optionLabel,
   ) as HTMLElement
-  await new DOMWrapper(opt).trigger('mousedown')
+  await new DOMWrapper(opt).trigger('click')
   await flushPromises()
 }
 

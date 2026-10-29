@@ -290,7 +290,7 @@ describe('AssetEditorDialog', () => {
     expect(options).toHaveLength(9)
     expect(options[4].text()).toBe('Package spot')
     expect(options[4].find('.pi-box').exists()).toBe(true)
-    await options[4].trigger('mousedown')
+    await options[4].trigger('click')
     await flushPromises()
     expect(body().find('.p-select-label').text()).toBe('Package spot')
 
