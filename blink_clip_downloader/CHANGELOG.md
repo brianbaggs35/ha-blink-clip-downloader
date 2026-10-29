@@ -25,6 +25,7 @@
 - Updated pinia to 4.1.0
 - Updated primevue to 5.0.4
 - Updated video.js to 8.24.2
+- Updated vue to 3.5.44
 
 ## 6.1.3
 
