@@ -30,6 +30,7 @@
 # Dev Dependency Updates
 
 - Updated @playwright/test to 1.64.1
+- Updated @types/node to 26.6.6
 
 ## 6.1.3
 
