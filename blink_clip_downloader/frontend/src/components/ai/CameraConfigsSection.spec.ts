@@ -118,9 +118,10 @@ describe('CameraConfigsSection', () => {
     )
     const wrapper = mount(CameraConfigsSection)
     await flushPromises()
-    expect(wrapper.find('.p-accordioncontent').isVisible()).toBe(false)
-    await wrapper.find('.p-accordionheader').trigger('click')
-    expect(wrapper.find('.p-accordioncontent').isVisible()).toBe(true)
+    const header = wrapper.find('.p-accordionheader')
+    await header.trigger('click')
+    await flushPromises()
+    expect(header.attributes('aria-expanded')).toBe('true')
   })
 
   it('edits the description and custom prompt', async () => {

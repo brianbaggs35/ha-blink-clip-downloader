@@ -6,8 +6,7 @@ import { useToastStore } from '../../stores/toast'
 import type { AiStatus } from '../../api/types'
 
 // PrimeVue's Select opens a teleported (to <body>) overlay on click and
-// selects an option on `mousedown` (not `click`) — see primevue/select's
-// option template.
+// selects an option on click — see primevue/select's option template.
 async function selectOption(
   wrapper: ReturnType<typeof mount<typeof AiConnectionCard>>,
   selectId: string,
@@ -18,7 +17,7 @@ async function selectOption(
   const opt = [...document.body.querySelectorAll('[role="option"]')].find(
     (el) => el.getAttribute('aria-label') === optionLabel,
   ) as HTMLElement
-  await new DOMWrapper(opt).trigger('mousedown')
+  await new DOMWrapper(opt).trigger('click')
   await flushPromises()
 }
 

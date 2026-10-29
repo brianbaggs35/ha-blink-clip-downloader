@@ -7,15 +7,15 @@ import { useRefreshStore } from '../../stores/refresh'
 import { useToastStore } from '../../stores/toast'
 
 // PrimeVue's Select opens a teleported (to <body>) overlay on click and
-// selects an option on `mousedown` (not `click`) — see primevue/select's
-// option template, and LibraryPage.spec.ts's identical helper.
+// selects an option on click — see primevue/select's option template, and
+// LibraryPage.spec.ts's identical helper.
 async function selectFaceReportName(wrapper: ReturnType<typeof mount>, optionLabel: string) {
   await wrapper.find('#clip-ai-face-report-name .p-select-label').trigger('click')
   await flushPromises()
   const opt = [...document.body.querySelectorAll('[role="option"]')].find(
     (el) => el.getAttribute('aria-label') === optionLabel,
   ) as HTMLElement
-  await new DOMWrapper(opt).trigger('mousedown')
+  await new DOMWrapper(opt).trigger('click')
   await flushPromises()
 }
 
@@ -1233,7 +1233,7 @@ describe('ClipAiPanel', () => {
       const casey = [...document.body.querySelectorAll('[role="option"]')].find(
         (el) => el.getAttribute('aria-label') === 'Casey',
       ) as HTMLElement
-      await new DOMWrapper(casey).trigger('mousedown')
+      await new DOMWrapper(casey).trigger('click')
       await flushPromises()
       await wrapper
         .findAll('button')

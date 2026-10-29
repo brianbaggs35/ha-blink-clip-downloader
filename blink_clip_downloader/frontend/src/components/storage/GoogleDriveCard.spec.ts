@@ -727,7 +727,7 @@ describe('GoogleDriveCard', () => {
     const opt = [...document.body.querySelectorAll('[role="option"]')].find(
       (el) => el.getAttribute('aria-label') === 'All clips (archived + regular downloads)',
     ) as HTMLElement
-    await new DOMWrapper(opt).trigger('mousedown')
+    await new DOMWrapper(opt).trigger('click')
     await flushPromises()
 
     const saveBtn = wrapper.findAll('button').find((b) => b.text() === 'Save Setup')

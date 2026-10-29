@@ -10,15 +10,14 @@ function body() {
 }
 
 // PrimeVue's Select opens a teleported (to <body>) overlay on click and
-// selects an option on `mousedown` (not `click`) — see primevue/select's
-// option template.
+// selects an option on click — see primevue/select's option template.
 async function selectOption(wrapper: ReturnType<typeof mountLibrary>, selectId: string, optionLabel: string) {
   await wrapper.find(`#${selectId} .p-select-label`).trigger('click')
   await flushPromises()
   const opt = [...document.body.querySelectorAll('[role="option"]')].find(
     (el) => el.getAttribute('aria-label') === optionLabel,
   ) as HTMLElement
-  await new DOMWrapper(opt).trigger('mousedown')
+  await new DOMWrapper(opt).trigger('click')
   await flushPromises()
 }
 
