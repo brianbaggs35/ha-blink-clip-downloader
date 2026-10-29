@@ -43,6 +43,7 @@
 # E2E Dependency Updates
 
 - Updated playwright to 1.64.1
+- Updated eslint to 10.13.0
 
 ### Frontend Test Fixes
 
