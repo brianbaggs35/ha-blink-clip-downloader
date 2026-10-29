@@ -40,6 +40,10 @@
 - Updated typescript-eslint to 8.72.1
 - Updated vite to 8.3.5
 
+# E2E Dependency Updates
+
+- Updated playwright to 1.64.1
+
 ### Frontend Test Fixes
 
 - Updated PrimeVue Select and Accordion tests for the dependency updates.
