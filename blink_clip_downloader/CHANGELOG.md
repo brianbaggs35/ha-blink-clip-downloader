@@ -33,6 +33,7 @@
 - Updated @types/node to 26.6.6
 - Updated @vitest/coverage-v8 to 5.0.5
 - Updated vitest to 5.0.5
+- Updated eslint to 10.13.0
 
 ### Frontend Test Fixes
 
