@@ -1,5 +1,46 @@
 # Changelog
 
+## 6.1.5
+
+### Dependency Updates
+
+# Backend Updates
+
+- Updated anthropic to 2.6.0
+- Updated openai to 3.46.0
+- Updated python-dateutil to 4.0.0
+- Updated ultralytics to 8.4.208 (optional vision extra)
+- Updated transformers to 5.22.2 (optional vision extra)
+- Synced requirements.txt with pyproject.toml. Its minimum versions for anthropic, openai, python-dateutil and Pillow had fallen behind.
+
+# Frontend Updates
+
+- Updated vue to 3.5.45
+- Removed the js-beautify override. @vue/test-utils now depends on js-beautify 2.x itself.
+
+# Dev Dependency Updates
+
+- Updated @playwright/test to 1.65.0
+- Updated @vitest/coverage-v8 to 5.1.0
+- Updated vitest to 5.1.0
+- Updated vite to 8.3.6
+- Updated vue-tsc to 3.3.14
+- Updated eslint to 10.14.0
+- Updated globals to 17.14.0
+- Updated jsdom to 31.0.0
+- Updated pytest to 9.2.0
+- Updated ruff to 0.17.4 in CI, and removed the unused noqa comments it reports.
+
+# E2E Dependency Updates
+
+- Updated playwright to 1.65.0
+- Updated eslint to 10.14.0
+- Updated globals to 17.14.0
+
+### Frontend Test Fixes
+
+- Updated the RestoreSection upload test for jsdom 31, which gives an element that is not attached to the document no computed style.
+
 ## 6.1.4
 
 ### Dependency Updates
