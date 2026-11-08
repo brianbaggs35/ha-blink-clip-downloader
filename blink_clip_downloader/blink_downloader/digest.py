@@ -46,7 +46,7 @@ class DailyDigest:
 
         # Digest scheduling deliberately uses naive local wall-clock time —
         # digest_time is documented as local HH:MM, matching ai_schedule_*.
-        today = date.today()  # noqa: DTZ011
+        today = date.today()
         if self._last_sent == today:
             return
 
@@ -56,7 +56,7 @@ class DailyDigest:
             _LOGGER.warning("Invalid digest_time %r; skipping", self._digest_time)
             return
 
-        now = datetime.now()  # noqa: DTZ005
+        now = datetime.now()
         if now.hour * 60 + now.minute < h * 60 + m:
             return  # Not yet time today.
 
@@ -75,7 +75,7 @@ class DailyDigest:
         starred = stats.get("starred_count", 0)
 
         lines = [
-            f"📅 {date.today().strftime('%A, %B %-d')}",  # noqa: DTZ011
+            f"📅 {date.today().strftime('%A, %B %-d')}",
             f"  New clips today   : {today_count}",
             f"  Library total     : {total_count} clips ({total_mb:.0f} MB)",
             f"  Starred           : {starred}",
