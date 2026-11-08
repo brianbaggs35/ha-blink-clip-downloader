@@ -340,7 +340,7 @@ class AnalysisQueue:
         # ai_schedule_start/end are documented as local HH:MM (matching
         # digest_time elsewhere in the app) — use local wall-clock time, not
         # UTC, or the analysis window silently runs on the wrong hours.
-        now = datetime.now().time()  # noqa: DTZ005
+        now = datetime.now().time()
         start = self._schedule_start
         end = self._schedule_end
 
