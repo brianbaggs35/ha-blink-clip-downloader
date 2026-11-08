@@ -62,7 +62,7 @@ function localPoint(e: PointerEvent, box: DOMRect): Point {
 
 function currentRect(width: number, height: number): Rect | null {
   const zone = props.modelValue
-  if (!zone || zone.shape !== 'rect') return null
+  if (zone?.shape !== 'rect') return null
   return fractionToRect(zone, width, height)
 }
 
@@ -163,7 +163,7 @@ const shown = computed<AssetZone | null>(() => {
 
 const handles = computed(() => {
   const zone = shown.value
-  if (props.tool !== 'rect' || !zone || zone.shape !== 'rect') return []
+  if (props.tool !== 'rect' || zone?.shape !== 'rect') return []
   return [
     { id: 'nw', left: zone.x_min, top: zone.y_min },
     { id: 'ne', left: zone.x_max, top: zone.y_min },

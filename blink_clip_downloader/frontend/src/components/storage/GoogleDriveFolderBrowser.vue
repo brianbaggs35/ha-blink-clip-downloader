@@ -32,8 +32,9 @@ const newFolderName = ref('')
 const creatingFolder = ref(false)
 let loadSeq = 0
 
-const currentParentId = computed(() => path.value[path.value.length - 1].id)
-const currentFolderName = computed(() => path.value[path.value.length - 1].name)
+// path always holds at least the root entry, so the last one is never missing.
+const currentParentId = computed(() => path.value.at(-1)!.id)
+const currentFolderName = computed(() => path.value.at(-1)!.name)
 
 const breadcrumbHome = computed(() => ({ label: path.value[0].name, command: () => navigateTo(0) }))
 const breadcrumbItems = computed(() =>

@@ -7,7 +7,7 @@ import type { FeedbackStats } from '../../api/types'
 const stats = ref<FeedbackStats | null>(null)
 
 const accuracyPct = computed(() => {
-  if (!stats.value || !stats.value.total) return null
+  if (!stats.value?.total) return null
   return Math.round((stats.value.correct / stats.value.total) * 100)
 })
 const accuracyColor = computed(() => {

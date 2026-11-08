@@ -268,7 +268,7 @@ const days = computed(() => {
   for (const row of rows.value) {
     const key = dayKey(row.clip_timestamp)
     const open = groups.at(-1)
-    if (open && open.key === key) open.rows.push(row)
+    if (open?.key === key) open.rows.push(row)
     else groups.push({ key, label: formatDay(row.clip_timestamp), rows: [row] })
   }
   return groups
