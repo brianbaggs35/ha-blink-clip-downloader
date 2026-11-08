@@ -1,5 +1,17 @@
 # Changelog
 
+## 6.1.6
+
+### Code Quality
+
+- Fixed the 19 open SonarCloud findings, all in the web UI, without changing what the app does.
+- Replaced `a && a.b` and `!a || a.b` guards with optional chaining in the Assets zone canvas, the Vehicles zone picker, the Security Events timeline, the AI analysis and camera configuration saves, the Vehicles save, and the adaptive learning card.
+- Marked the fire-and-forget calls in the face scanner and the two-factor sign-in overlay explicitly with `void`.
+- A rejected play request from the clip modal's Space shortcut is now caught, instead of being left as an unhandled promise rejection.
+- The activity chart sorts its dates with an explicit `localeCompare` comparison. The dates are ISO format, so their order is unchanged.
+- The Google Drive folder browser reads the current folder with `.at(-1)`.
+- Decorative SVG overlays and icons are hidden from screen readers with `aria-hidden`. They had no accessible name before, so no information is removed.
+
 ## 6.1.5
 
 ### Dependency Updates
