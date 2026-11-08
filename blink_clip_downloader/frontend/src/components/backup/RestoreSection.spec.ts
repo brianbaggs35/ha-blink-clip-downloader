@@ -32,7 +32,9 @@ function deferred<T>() {
 type Wrapper = ReturnType<typeof mountSection>
 
 function mountSection() {
-  return mount(RestoreSection)
+  // Attached to the document, as in a browser: jsdom 31 gives a detached element
+  // no computed style, so isVisible() would count a v-show'd panel as shown.
+  return mount(RestoreSection, { attachTo: document.body })
 }
 
 async function choose(wrapper: Wrapper, ...names: string[]) {
