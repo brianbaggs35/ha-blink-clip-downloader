@@ -5,7 +5,7 @@ import Card from 'primevue/card'
 import Dialog from 'primevue/dialog'
 import Message from 'primevue/message'
 import ToggleSwitch from 'primevue/toggleswitch'
-import { getCameraConfigs, resolveCameraAlias, updateCameraConfigs } from '../../api/ai'
+import { findRenamedCamera, getCameraConfigs, updateCameraConfigs } from '../../api/ai'
 import type { CameraConfig } from '../../api/types'
 import { useToastStore } from '../../stores/toast'
 import { useRefreshStore } from '../../stores/refresh'
@@ -79,16 +79,8 @@ async function save() {
     // sections since this modal opened are not overwritten by a stale snapshot.
     const requestedByCamera = new Map(configs.value.map((config) => [config.camera, config]))
     const { configs: payload } = await updateCameraConfigs((latest, aliases) => {
+      const { renamedRemote, renamedLocal } = findRenamedCamera(latest, configs.value, requestedByCamera, aliases)
       const latestCameras = new Set(latest.map((config) => config.camera))
-      const localOnly = configs.value.filter((config) => !latestCameras.has(config.camera))
-      const latestOnly = latest.filter((config) => !requestedByCamera.has(config.camera))
-      const renamedRemote = latestOnly[0]
-      const renamedLocal =
-        localOnly.length === 1 &&
-        latestOnly.length === 1 &&
-        resolveCameraAlias(localOnly[0].camera, aliases).toLowerCase() === renamedRemote?.camera.toLowerCase()
-          ? localOnly[0]
-          : undefined
       const merged = latest.map((config) => {
         const requested = requestedByCamera.get(config.camera) || (renamedRemote === config ? renamedLocal : undefined)
         return requested ? { ...config, auto_analyze: requested.auto_analyze } : config

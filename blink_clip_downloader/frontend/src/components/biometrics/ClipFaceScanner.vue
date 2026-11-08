@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import Button from 'primevue/button'
 import Message from 'primevue/message'
 import ProgressBar from 'primevue/progressbar'
@@ -106,8 +106,10 @@ async function loadClips(append = false) {
 }
 
 // Fire-and-forget: each load catches its own failures, and the list shows its own loading state.
-void loadCameras()
-void loadClips()
+onMounted(() => {
+  void loadCameras()
+  void loadClips()
+})
 watch([camera, lookbackHours], () => loadClips())
 watch(
   () => refresh.tick,

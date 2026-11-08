@@ -9,6 +9,7 @@ import {
   deleteFinetune,
   fetchAiModels,
   fetchEscalationModels,
+  findRenamedCamera,
   getAiStatus,
   getAiUsage,
   getCameraConfigs,
@@ -35,6 +36,7 @@ import {
   updateCameraConfigs,
 } from './ai'
 import type { CameraNameAliases } from './ai'
+import type { CameraConfig } from './types'
 
 function jsonResponse(body: unknown, headers: HeadersInit = {}) {
   return {
@@ -176,6 +178,55 @@ describe('ai api', () => {
     })
 
     expect(seenAliases).toEqual({})
+  })
+
+  describe('findRenamedCamera', () => {
+    const named = (cameras: string[]) => cameras.map((camera) => ({ camera }) as CameraConfig)
+    const cases: {
+      case: string
+      latest: string[]
+      live: string[]
+      aliases: CameraNameAliases
+      renamedRemote?: string
+      renamedLocal?: string
+    }[] = [
+      {
+        case: 'pairs the one camera this screen lost with the one the server renamed it to',
+        latest: ['Entryway'],
+        live: ['Front Door'],
+        aliases: { 'front door': 'Entryway' },
+        renamedRemote: 'Entryway',
+        renamedLocal: 'Front Door',
+      },
+      {
+        case: 'finds nothing when no camera was renamed',
+        latest: ['Front Door'],
+        live: ['Front Door'],
+        aliases: {},
+      },
+      {
+        case: 'attaches nothing when two cameras went missing at once',
+        latest: ['Entryway'],
+        live: ['Front Door', 'Garage'],
+        aliases: { 'front door': 'Entryway' },
+        renamedRemote: 'Entryway',
+      },
+      {
+        case: 'attaches nothing when the alias table does not link the two',
+        latest: ['Driveway'],
+        live: ['Front Door'],
+        aliases: {},
+        renamedRemote: 'Driveway',
+      },
+    ]
+
+    it.each(cases)('$case', ({ latest, live, aliases, renamedRemote, renamedLocal }) => {
+      const localConfigs = named(live)
+      const snapshot = new Map(localConfigs.map((config) => [config.camera, config]))
+      const result = findRenamedCamera(named(latest), localConfigs, snapshot, aliases)
+      expect(result.renamedRemote?.camera).toBe(renamedRemote)
+      expect(result.renamedLocal?.camera).toBe(renamedLocal)
+    })
   })
 
   describe('resolveCameraAlias', () => {

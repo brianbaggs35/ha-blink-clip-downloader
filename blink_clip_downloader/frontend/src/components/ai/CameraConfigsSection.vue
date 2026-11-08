@@ -8,7 +8,7 @@ import Button from 'primevue/button'
 import InputText from 'primevue/inputtext'
 import Message from 'primevue/message'
 import Tag from 'primevue/tag'
-import { getCameraConfigs, resolveCameraAlias, updateCameraConfigs } from '../../api/ai'
+import { findRenamedCamera, getCameraConfigs, updateCameraConfigs } from '../../api/ai'
 import type { CameraConfig } from '../../api/types'
 import { useToastStore } from '../../stores/toast'
 import { useRefreshStore } from '../../stores/refresh'
@@ -106,16 +106,8 @@ async function save() {
     // after the AI Analysis Configuration modal changes it.
     const localByCamera = new Map(configs.value.map((config) => [config.camera, config]))
     const { configs: payload } = await updateCameraConfigs((latest, aliases) => {
+      const { renamedRemote, renamedLocal } = findRenamedCamera(latest, configs.value, localByCamera, aliases)
       const latestCameras = new Set(latest.map((config) => config.camera))
-      const localOnly = configs.value.filter((config) => !latestCameras.has(config.camera))
-      const latestOnly = latest.filter((config) => !localByCamera.has(config.camera))
-      const renamedRemote = latestOnly[0]
-      const renamedLocal =
-        localOnly.length === 1 &&
-        latestOnly.length === 1 &&
-        resolveCameraAlias(localOnly[0].camera, aliases).toLowerCase() === renamedRemote?.camera.toLowerCase()
-          ? localOnly[0]
-          : undefined
       const merged: CameraConfig[] = latest.map((config) => {
         const local = localByCamera.get(config.camera) || (renamedRemote === config ? renamedLocal : undefined)
         return local
