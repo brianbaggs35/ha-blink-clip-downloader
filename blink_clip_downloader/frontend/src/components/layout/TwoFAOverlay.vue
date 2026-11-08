@@ -56,7 +56,7 @@ function onKeydown(e: KeyboardEvent) {
 }
 
 function submit() {
-  auth.submitTwoFA(code.value)
+  void auth.submitTwoFA(code.value)
 }
 </script>
 

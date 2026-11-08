@@ -17,7 +17,7 @@ const days = computed<DayBar[]>(() => {
   for (const { date, count } of props.rows) {
     byDate.set(date, (byDate.get(date) ?? 0) + count)
   }
-  const dates = [...byDate.keys()].sort().reverse()
+  const dates = [...byDate.keys()].sort((a, b) => a.localeCompare(b)).reverse()
   // Every `d`/`date` below comes from byDate's own keys(), so .get() always
   // returns the defined count that was just set for it -- the `?? 0`
   // fallbacks are unreachable in practice, kept only for type narrowing

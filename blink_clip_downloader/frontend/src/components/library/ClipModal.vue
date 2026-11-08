@@ -351,7 +351,7 @@ function onKeydown(e: KeyboardEvent) {
   switch (e.key) {
     case ' ':
       e.preventDefault()
-      if (player.paused()) player.play()
+      if (player.paused()) player.play()?.catch(() => {})
       else player.pause()
       break
     case 'ArrowLeft':

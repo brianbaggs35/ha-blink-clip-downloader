@@ -97,8 +97,7 @@ async function saveCameras() {
       const renamedLocal =
         localOnly.length === 1 &&
         latestOnly.length === 1 &&
-        renamedRemote &&
-        resolveCameraAlias(localOnly[0].camera, aliases).toLowerCase() === renamedRemote.camera.toLowerCase()
+        resolveCameraAlias(localOnly[0].camera, aliases).toLowerCase() === renamedRemote?.camera.toLowerCase()
           ? localOnly[0]
           : undefined
       const merged = latest.map((config) => {

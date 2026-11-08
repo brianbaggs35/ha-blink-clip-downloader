@@ -12,7 +12,7 @@ const def = computed<IconDef>(() => ICONS[props.name])
 </script>
 
 <template>
-  <svg class="icon" :class="{ filled: def.filled }" viewBox="0 0 24 24">
+  <svg class="icon" :class="{ filled: def.filled }" viewBox="0 0 24 24" aria-hidden="true">
     <rect
       v-for="(r, i) in def.rects"
       :key="'r' + i"

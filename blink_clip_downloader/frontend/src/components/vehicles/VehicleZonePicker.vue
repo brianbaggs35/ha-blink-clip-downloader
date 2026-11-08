@@ -364,7 +364,7 @@ const previewSnapshotUrl = computed(() => `${vehicleZoneSnapshotUrl(props.camera
 const previewRectStyle = computed(() => {
   const zone = savedZone.value
   const { width, height } = containerSize.value
-  if (!zone || zone.shape !== 'rect' || !width || !height) return null
+  if (zone?.shape !== 'rect' || !width || !height) return null
   const r = fractionToRect(zone, width, height)
   return { left: `${r.x}px`, top: `${r.y}px`, width: `${r.width}px`, height: `${r.height}px` }
 })
@@ -372,7 +372,7 @@ const previewRectStyle = computed(() => {
 const previewPolygonAttr = computed(() => {
   const zone = savedZone.value
   const { width, height } = containerSize.value
-  if (!zone || zone.shape !== 'polygon' || !width || !height) return ''
+  if (zone?.shape !== 'polygon' || !width || !height) return ''
   return pointsToSvgAttr(fractionToPolygonPoints(zone, width, height))
 })
 </script>
@@ -389,7 +389,7 @@ const previewPolygonAttr = computed(() => {
         />
         <div class="picker-overlay picker-overlay-static">
           <div v-if="previewRectStyle" class="zone-rect" :style="previewRectStyle" />
-          <svg v-if="previewPolygonAttr" class="zone-svg">
+          <svg v-if="previewPolygonAttr" class="zone-svg" aria-hidden="true">
             <polygon :points="previewPolygonAttr" class="zone-polygon" />
           </svg>
         </div>
@@ -472,7 +472,7 @@ const previewPolygonAttr = computed(() => {
               <span class="zone-handle sw" />
               <span class="zone-handle se" />
             </div>
-            <svg v-if="drawShape === 'polygon' && freeformPath.length > 1" class="zone-svg">
+            <svg v-if="drawShape === 'polygon' && freeformPath.length > 1" class="zone-svg" aria-hidden="true">
               <polygon :points="freeformPointsAttr" class="zone-polygon" />
             </svg>
           </div>

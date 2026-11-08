@@ -105,14 +105,15 @@ async function loadClips(append = false) {
   }
 }
 
-loadCameras() // NOSONAR — fire-and-forget; the list renders its own loading state
-loadClips() // NOSONAR
+// Fire-and-forget: each load catches its own failures, and the list shows its own loading state.
+void loadCameras()
+void loadClips()
 watch([camera, lookbackHours], () => loadClips())
 watch(
   () => refresh.tick,
   () => {
-    loadCameras()
-    loadClips()
+    void loadCameras()
+    void loadClips()
   },
 )
 
