@@ -142,6 +142,34 @@ export function resolveCameraAlias(camera: string, aliases: CameraNameAliases): 
   return current
 }
 
+/**
+ * Works out which local camera a server-side rename left behind, for a camera-config save.
+ *
+ * `latest` is the server's list as the save found it, `live` the configs this screen holds
+ * now, and `snapshot` the same configs keyed by camera as they were when the save started.
+ * `renamedRemote` is the first camera the server lists that the snapshot did not have.
+ * `renamedLocal` is set only when exactly one local camera is missing from the server and
+ * the alias table links it to `renamedRemote`; otherwise nothing is reattached.
+ */
+export function findRenamedCamera(
+  latest: CameraConfig[],
+  live: CameraConfig[],
+  snapshot: Map<string, CameraConfig>,
+  aliases: CameraNameAliases,
+): { renamedRemote: CameraConfig | undefined; renamedLocal: CameraConfig | undefined } {
+  const latestCameras = new Set(latest.map((config) => config.camera))
+  const localOnly = live.filter((config) => !latestCameras.has(config.camera))
+  const latestOnly = latest.filter((config) => !snapshot.has(config.camera))
+  const renamedRemote = latestOnly[0]
+  const renamedLocal =
+    localOnly.length === 1 &&
+    latestOnly.length === 1 &&
+    resolveCameraAlias(localOnly[0].camera, aliases).toLowerCase() === renamedRemote?.camera.toLowerCase()
+      ? localOnly[0]
+      : undefined
+  return { renamedRemote, renamedLocal }
+}
+
 export function getFeedbackStats(camera?: string): Promise<FeedbackStats> {
   const query = camera ? `?camera=${encodeURIComponent(camera)}` : ''
   return apiGet(`/api/ai/feedback/stats${query}`)
