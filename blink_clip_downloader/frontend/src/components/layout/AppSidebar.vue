@@ -210,7 +210,7 @@ async function pollCameras() {
       // `total` (which churns on every download and isn't a topology
       // change) is excluded from the signature.
       .map((camera) => camera.camera)
-      .sort()
+      .sort((a, b) => a.localeCompare(b))
       .join('\u0001')
     const changed = cameraListInitialized && signature !== cameraSignature
     if (library.currentCamera !== 'all' && !cameras.some((camera) => camera.camera === library.currentCamera)) {
