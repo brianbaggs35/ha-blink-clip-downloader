@@ -56,7 +56,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e "blink_clip_downloader[test]"
-          pip install pyright yamllint "ruff==0.16.6" "bandit[toml]"
+          pip install pyright yamllint "ruff==0.17.4" "bandit[toml]"
 
       - name: Run Home Assistant add-on linter
         uses: frenck/action-addon-linter@v2
