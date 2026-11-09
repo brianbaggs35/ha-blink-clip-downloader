@@ -1560,7 +1560,13 @@ work).
   `ObjectTrack`s by, so the chips and the security events can never
   disagree about how many people were in a clip), floored by the per-frame
   peak so rows stored with no `track_id` still count. `detections` keeps
-  the raw box total.
+  the raw box total. The counting is `object_counts.py`, not SQL, because
+  of one correction (6.1.8): for any label except `person`, track ids whose
+  boxes overlap at `SAME_PLACE_IOU` (0.5, a judgement call) and that never
+  share a frame are one object left where it was — the tracker renames a
+  parked car it lost and found again, which showed 8 cars for 6. It is for
+  the chips only: never merge people there (the "N separate people" events
+  count the same ids) and never feed it back into `security/tracks.py`.
 - Distance has two meanings in this codebase and they answer different
   questions: `box_gap` is outline-to-outline (negative when boxes overlap) and
   is what contact rules need; `ground_gap` is feet-to-ground-line with vertical
