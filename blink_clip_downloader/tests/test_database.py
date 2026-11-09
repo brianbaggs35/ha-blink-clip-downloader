@@ -2073,6 +2073,32 @@ async def test_detected_objects_summary_counts_two_that_never_share_a_frame(
     assert summary[0]["detections"] == 6
 
 
+async def test_detected_objects_summary_counts_a_renamed_parked_car_once(
+    db: ClipDatabase,
+) -> None:
+    """A parked car the tracker lost and found again comes back under a new
+    track id. It is still one car: counting ids alone showed 8 cars for a
+    clip holding 6 (see tests/test_object_counts.py for the rule itself)."""
+    await db.add_clip(_make_clip("c1"))
+    await db.save_detected_objects(
+        "c1",
+        [
+            DetectedObject(
+                label="car",
+                confidence=0.8,
+                box=(10.0, 10.0, 110.0, 70.0),
+                track_id=1 if frame < 3 else 7,
+                frame_index=frame,
+            )
+            for frame in (0, 1, 2, 5, 6)
+        ],
+    )
+
+    summary = await db.get_detected_objects_summary("c1")
+    assert summary[0]["count"] == 1
+    assert summary[0]["detections"] == 5
+
+
 async def test_detected_objects_summary_counts_one_moving_subject_once(
     db: ClipDatabase,
 ) -> None:
