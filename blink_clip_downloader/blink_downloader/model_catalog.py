@@ -110,6 +110,9 @@ _GPT_56_LUNA = "gpt-5.6-luna"
 #: out separately rather than inheriting from the GPT-5 entry.
 _GPT_6_ASTRA = "gpt-6-astra"
 _GPT_6_LUNA = "gpt-6-luna"
+#: GPT-6.1 Sol and Terra, named on the same footing as the tiers above.
+_GPT_61_SOL = "gpt-6.1-sol"
+_GPT_61_TERRA = "gpt-6.1-terra"
 
 # OpenAI model pricing: (input_$/1M_tokens, output_$/1M_tokens)
 # Source: https://developers.openai.com/api/docs/pricing (standard tier)
@@ -153,6 +156,11 @@ _OPENAI_MODEL_PRICING: dict[str, tuple[float, float]] = {
     # 2026-11-09 (standard tier: $0.10 input, $0.50 output; cached input $0.01).
     # Batch and Fast rates are not modelled, as for the other entries here.
     _GPT_6_LUNA: (0.10, 0.50),
+    # GPT-6.1 Sol and Terra. Checked against the pricing page on 2026-11-09
+    # (standard tier: Sol $2 input, $10 output, cached input $0.10; Terra $1
+    # input, $5 output, cached input $0.05). Batch and Fast rates are not modelled.
+    _GPT_61_SOL: (2.00, 10.00),
+    _GPT_61_TERRA: (1.00, 5.00),
     "gpt-5.4-nano": (0.20, 1.25),  # NOSONAR
     "gpt-5.4-mini": (0.75, 4.50),  # NOSONAR
     "gpt-5-nano": (0.05, 0.40),
@@ -218,6 +226,8 @@ _OPENAI_STRUCTURED_OUTPUT_SCHEMA: dict[str, Any] = {
 # purely because '-' sorts before '.' in ASCII, which looked like a
 # recommendation for the oldest, most expensive model in the lineup.
 _OPENAI_MODEL_DISPLAY_ORDER: list[str] = [
+    _GPT_61_SOL,
+    _GPT_61_TERRA,
     _GPT_6_ASTRA,
     _GPT_6_LUNA,
     _GPT_56_SOL,

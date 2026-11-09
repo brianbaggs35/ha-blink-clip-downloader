@@ -5,6 +5,7 @@
 ### Pricing
 
 - GPT-6 Luna now has a price, so the AI Usage page shows its cost instead of only its tokens. The price is OpenAI's standard rate: $0.10 per million input tokens and $0.50 per million output tokens.
+- GPT-6.1 Sol and Terra now have prices too: $2 / $10 and $1 / $5 per million tokens at the standard rate, checked against OpenAI's pricing page on 2026-11-09.
 - Claude Opus 5.5 was priced at Opus 5's $5 / $25 rate on the AI Usage page. It is now $4 / $20 per million tokens.
 - Claude Sonnet 5.5 now has its own price entry, $2 / $10 per million tokens, the same as Sonnet 5.
 - Claude Haiku 5.5 now has a price, $0.10 per million input tokens and $0.50 per million output tokens for prompts up to 100K tokens. Above 100K tokens the rate is higher, which the price table does not model.

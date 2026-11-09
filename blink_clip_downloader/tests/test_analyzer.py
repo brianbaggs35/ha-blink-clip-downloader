@@ -3752,6 +3752,8 @@ def test_openai_model_default() -> None:
         ("gpt-5.6-terra", 2.00, 12.00),
         ("gpt-5.6-luna", 0.20, 1.20),
         ("gpt-6-luna", 0.10, 0.50),
+        ("gpt-6.1-sol", 2.00, 10.00),
+        ("gpt-6.1-terra", 1.00, 5.00),
     ],
 )
 def test_openai_model_pricing(
@@ -3816,6 +3818,8 @@ def test_is_openai_vision_model_gpt5_family() -> None:
     assert is_openai_vision_model("gpt-5.6-terra") is True
     assert is_openai_vision_model("gpt-5.6-luna") is True
     assert is_openai_vision_model("gpt-6-luna") is True
+    assert is_openai_vision_model("gpt-6.1-sol") is True
+    assert is_openai_vision_model("gpt-6.1-terra") is True
 
 
 def test_is_openai_vision_model_excludes_pro_suffix() -> None:
@@ -4017,6 +4021,7 @@ def test_openai_model_rank_unknown_model_sorts_last() -> None:
     assert _openai_model_rank("gpt-5.7") == len(_OPENAI_MODEL_DISPLAY_ORDER)
     assert _openai_model_rank("gpt-4-turbo") < _openai_model_rank("gpt-5.7")
     assert _openai_model_rank("gpt-6-luna") < _openai_model_rank("gpt-5.7")
+    assert _openai_model_rank("gpt-6.1-sol") < _openai_model_rank("gpt-6-astra")
 
 
 async def test_openai_fetch_models_unknown_model_sorts_after_known_ones(
