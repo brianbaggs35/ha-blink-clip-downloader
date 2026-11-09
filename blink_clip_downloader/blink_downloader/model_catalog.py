@@ -149,9 +149,9 @@ _OPENAI_MODEL_PRICING: dict[str, tuple[float, float]] = {
     _GPT_56_LUNA: (0.20, 1.20),
     # GPT-6 (Astra). Verified live against the pricing page 2026-09-17.
     _GPT_6_ASTRA: (10.00, 50.00),
-    # GPT-6 Luna, the budget tier of GPT-6. From third-party price listings
-    # (2026-11-09): OpenAI's pricing page was not reachable from the session
-    # that added it, so check it there before relying on this figure.
+    # GPT-6 Luna, the budget tier of GPT-6. Checked against the pricing page on
+    # 2026-11-09 (standard tier: $0.10 input, $0.50 output; cached input $0.01).
+    # Batch and Fast rates are not modelled, as for the other entries here.
     _GPT_6_LUNA: (0.10, 0.50),
     "gpt-5.4-nano": (0.20, 1.25),  # NOSONAR
     "gpt-5.4-mini": (0.75, 4.50),  # NOSONAR
