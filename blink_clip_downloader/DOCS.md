@@ -118,10 +118,10 @@ can change which host port it maps to under the add-on's **Network** section).
 
 ### Verifying the release image
 
-Each release image is published with a build provenance attestation: a signed record of the repository, commit and workflow that built it. To check that a release came from this repository's release workflow, install the [GitHub CLI](https://cli.github.com/) and run the following, replacing `6.1.7` with the version you want to check:
+Each release image is published with a build provenance attestation: a signed record of the repository, commit and workflow that built it. To check that a release came from this repository's release workflow, install the [GitHub CLI](https://cli.github.com/) and run the following, replacing `v6.1.7` with the version you want to check:
 
 ```bash
-gh attestation verify oci://ghcr.io/brianbaggs35/blink_clip_downloader:6.1.7 --owner brianbaggs35
+gh attestation verify oci://ghcr.io/brianbaggs35/blink_clip_downloader:v6.1.7 --owner brianbaggs35
 ```
 
 If no attestation matches the image, the command fails and says so. Releases published before the release workflow attested them have none. An attestation shows where an image was built. It does not vouch for what the code does.
