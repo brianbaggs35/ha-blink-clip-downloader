@@ -153,6 +153,16 @@ def test_relevance_matching_respects_word_boundaries() -> None:
     assert is_relevant_label("Car") is True
 
 
+def test_the_umbrella_animal_label_is_not_reported_on_its_own() -> None:
+    """AudioSet's "Animal" is the parent of every animal sound, and it can
+    score above the floor on a clip with no animal in it. Reported alone it
+    put "an animal" in the hint, so only the specific sounds count."""
+    assert is_relevant_label("Animal") is False
+    assert is_relevant_label("Domestic animals, pets") is False
+    for specific in ("Dog", "Cat", "Bark"):
+        assert is_relevant_label(specific) is True
+
+
 def test_rms_of_empty_audio_is_zero() -> None:
     assert _rms(np.array([], dtype=np.float32)) == 0.0
 
@@ -673,6 +683,39 @@ async def test_a_sound_is_heard_whatever_the_clip_length(
 async def test_no_audio_track_produces_no_tags(tmp_path: Path) -> None:
     clip = _make_clip(tmp_path / "mute.mp4", audio="none")
     assert await AudioTagger().tag(str(clip)) is None
+
+
+@needs_ffmpeg
+async def test_a_bare_animal_umbrella_label_never_reaches_the_hint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The classifier can rate the umbrella "Animal" above the floor on a
+    clip with no animal in it. That label must not reach the AUDIO hint,
+    while a specific animal sound at the same level still does."""
+    monkeypatch.setattr(
+        "blink_downloader.vision.runtime.torch_cpu_compatible", lambda: True
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "transformers",
+        _fake_transformers(
+            [
+                {"label": "Animal", "score": 0.6},
+                {"label": "Dog", "score": 0.3},
+            ]
+        ),
+    )
+    clip = _make_clip(tmp_path / "umbrella.mp4", audio="tone")
+    tagger = AudioTagger()
+    assert await tagger.ensure_ready() is True
+    tags = await tagger.tag(str(clip))
+
+    assert tags is not None
+    assert tags.labels == [("Dog", 0.3)]
+    hint = build_audio_hint(tags)
+    assert hint is not None
+    assert "dog (30%)" in hint
+    assert "animal" not in hint.lower()
 
 
 @needs_ffmpeg
