@@ -6,6 +6,9 @@
 
 ### Dependency Updates
 
+- Updated npm to 12.2.2, in the image's frontend build stage and in CI.
+- Updated trivy to 0.76.2 in the CI and release workflows.
+
 ### Release Workflow
 
 ## 6.1.7
