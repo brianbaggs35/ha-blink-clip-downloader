@@ -14,6 +14,10 @@
 
 ### Release Workflow
 
+- A release no longer adds three `sha256-…` entries to the image's package page on GitHub. They were the build provenance attestations, which the 6.1.7 release workflow also pushed to the registry, where each one is listed as a package version of its own. The attestations are still made and signed, and are kept in the repository's attestation store on GitHub, which is where `gh attestation verify` looks.
+- The command under "Verifying the release image" in DOCS.md named the image tag without its `v`. The published tags are `v6.1.8`-style.
+- The add-on itself is unchanged by either.
+
 ## 6.1.7
 
 ### Pricing
