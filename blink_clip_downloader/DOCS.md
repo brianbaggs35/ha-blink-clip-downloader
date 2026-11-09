@@ -2058,7 +2058,10 @@ from any browser without leaving Home Assistant.
   **Full response** toggle.
 - **AI Usage tab** — per-provider token usage statistics including prompt tokens,
   completion tokens, per-model breakdown, and estimated API cost (for Anthropic and
-  OpenAI, priced per model). Moondream Cloud shows request count with a billing note.
+  OpenAI, priced per model). A model the add-on has no rate for shows its tokens and
+  no cost. The rates are copied from the providers' published price lists in each
+  release, so they can lag a price change; the provider's billing page has the actual
+  spend. Moondream Cloud shows request count with a billing note.
   When `ai_escalation_enabled` is on, escalated analyses appear as their own row
   and count toward a separate "Escalations" total.
   A **Clear Stats** button resets these counters — handy after switching providers

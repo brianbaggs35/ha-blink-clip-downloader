@@ -109,6 +109,12 @@ _GPT_56_LUNA = "gpt-5.6-luna"
 #: so every place that recognizes a model family by prefix needs it spelled
 #: out separately rather than inheriting from the GPT-5 entry.
 _GPT_6_ASTRA = "gpt-6-astra"
+_GPT_6_LUNA = "gpt-6-luna"
+#: GPT-6.1 Sol and Terra, named on the same footing as the tiers above.
+_GPT_61_SOL = "gpt-6.1-sol"
+_GPT_61_TERRA = "gpt-6.1-terra"
+#: GPT-6 Sol, the middle tier of the first GPT-6 release, between Astra and Luna.
+_GPT_6_SOL = "gpt-6-sol"
 
 # OpenAI model pricing: (input_$/1M_tokens, output_$/1M_tokens)
 # Source: https://developers.openai.com/api/docs/pricing (standard tier)
@@ -148,6 +154,18 @@ _OPENAI_MODEL_PRICING: dict[str, tuple[float, float]] = {
     _GPT_56_LUNA: (0.20, 1.20),
     # GPT-6 (Astra). Verified live against the pricing page 2026-09-17.
     _GPT_6_ASTRA: (10.00, 50.00),
+    # GPT-6 Sol. Checked against the pricing page on 2026-11-09 (standard tier:
+    # $2 input, $10 output, cached input $0.20). Batch and Fast rates are not modelled.
+    _GPT_6_SOL: (2.00, 10.00),
+    # GPT-6 Luna, the budget tier of GPT-6. Checked against the pricing page on
+    # 2026-11-09 (standard tier: $0.10 input, $0.50 output; cached input $0.01).
+    # Batch and Fast rates are not modelled, as for the other entries here.
+    _GPT_6_LUNA: (0.10, 0.50),
+    # GPT-6.1 Sol and Terra. Checked against the pricing page on 2026-11-09
+    # (standard tier: Sol $2 input, $10 output, cached input $0.10; Terra $1
+    # input, $5 output, cached input $0.05). Batch and Fast rates are not modelled.
+    _GPT_61_SOL: (2.00, 10.00),
+    _GPT_61_TERRA: (1.00, 5.00),
     "gpt-5.4-nano": (0.20, 1.25),  # NOSONAR
     "gpt-5.4-mini": (0.75, 4.50),  # NOSONAR
     "gpt-5-nano": (0.05, 0.40),
@@ -156,6 +174,11 @@ _OPENAI_MODEL_PRICING: dict[str, tuple[float, float]] = {
     "gpt-5.5": (5.00, 30.00),  # NOSONAR
     "gpt-5.2": (1.75, 14.00),
     "gpt-5.1": (1.25, 10.00),
+    # GPT-5.3 Codex and GPT-5 Search API. Checked against the pricing page on
+    # 2026-11-09 (standard tier, token rates only: the Search API's per-call fee
+    # is not modelled). Both contain "gpt-5", so they sit above it.
+    "gpt-5.3-codex": (1.75, 14.00),
+    "gpt-5-search-api": (1.25, 10.00),
     "gpt-5": (1.25, 10.00),
 }
 
@@ -213,7 +236,11 @@ _OPENAI_STRUCTURED_OUTPUT_SCHEMA: dict[str, Any] = {
 # purely because '-' sorts before '.' in ASCII, which looked like a
 # recommendation for the oldest, most expensive model in the lineup.
 _OPENAI_MODEL_DISPLAY_ORDER: list[str] = [
+    _GPT_61_SOL,
+    _GPT_61_TERRA,
     _GPT_6_ASTRA,
+    _GPT_6_SOL,
+    _GPT_6_LUNA,
     _GPT_56_SOL,
     _GPT_56_TERRA,
     _GPT_56_LUNA,
@@ -221,11 +248,13 @@ _OPENAI_MODEL_DISPLAY_ORDER: list[str] = [
     "gpt-5.4",
     "gpt-5.4-mini",
     "gpt-5.4-nano",
+    "gpt-5.3-codex",
     "gpt-5.2",
     "gpt-5.1",
     "gpt-5",
     "gpt-5-mini",
     "gpt-5-nano",
+    "gpt-5-search-api",
     "o4-mini",
     "o3",
     "o3-mini",
@@ -317,11 +346,21 @@ _ANTHROPIC_MODEL_PRICING: dict[str, tuple[float, float]] = {
     "claude-mythos-5-1": (10.00, 50.00),
     "claude-fable-5": (10.00, 50.00),
     "claude-mythos-5": (10.00, 50.00),
+    # Opus 5.5 is $4/$20, below Opus 5. It is listed before "claude-opus-5",
+    # which is a substring of its id, so lookup_model_pricing() would
+    # otherwise price it at Opus 5's rate. Checked against the pricing page
+    # on 2026-11-09 (base input $4, output $20).
+    "claude-opus-5-5": (4.00, 20.00),
     "claude-opus-5": (5.00, 25.00),
     "claude-opus-4-8": (5.00, 25.00),
     "claude-opus-4-7": (5.00, 25.00),
     "claude-opus-4-6": (5.00, 25.00),
     "claude-opus-4-5": (5.00, 25.00),
+    # Sonnet 5.5 is priced the same as Sonnet 5. It would match "claude-sonnet-5"
+    # by substring anyway; it is listed so that a later change to Sonnet 5's
+    # price does not silently change this one. Checked against the pricing page
+    # on 2026-11-09 (base input $2, output $10).
+    "claude-sonnet-5-5": (2.00, 10.00),
     # $2/$10 was announced at launch as introductory pricing through
     # 2026-08-31, originally scheduled to rise to $3/$15 on 2026-09-01 —
     # Anthropic since cancelled that increase and made $2/$10 the permanent
@@ -331,6 +370,14 @@ _ANTHROPIC_MODEL_PRICING: dict[str, tuple[float, float]] = {
     "claude-sonnet-5": (2.00, 10.00),
     "claude-sonnet-4-6": (3.00, 15.00),
     "claude-sonnet-4-5": (3.00, 15.00),
+    # Haiku 5.5 charges $0.10 / $0.50 for prompts up to 100K input tokens and
+    # $0.50 / $2.50 above that. A flat rate cannot express the step. A clip
+    # sends a few frames (ai_max_frames defaults to 5), far below 100K, so the
+    # short-prompt rate is the one this add-on pays by default. A configuration
+    # that sends a prompt over 100K is priced low. The page counts each request's
+    # cache reads and writes toward the 100K threshold; this table does not model
+    # that. Checked against the pricing page on 2026-11-09.
+    "claude-haiku-5-5": (0.10, 0.50),
     "claude-haiku-4-5": (1.00, 5.00),
 }
 
