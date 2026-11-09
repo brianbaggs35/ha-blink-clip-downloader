@@ -109,6 +109,7 @@ _GPT_56_LUNA = "gpt-5.6-luna"
 #: so every place that recognizes a model family by prefix needs it spelled
 #: out separately rather than inheriting from the GPT-5 entry.
 _GPT_6_ASTRA = "gpt-6-astra"
+_GPT_6_LUNA = "gpt-6-luna"
 
 # OpenAI model pricing: (input_$/1M_tokens, output_$/1M_tokens)
 # Source: https://developers.openai.com/api/docs/pricing (standard tier)
@@ -148,6 +149,10 @@ _OPENAI_MODEL_PRICING: dict[str, tuple[float, float]] = {
     _GPT_56_LUNA: (0.20, 1.20),
     # GPT-6 (Astra). Verified live against the pricing page 2026-09-17.
     _GPT_6_ASTRA: (10.00, 50.00),
+    # GPT-6 Luna, the budget tier of GPT-6. From third-party price listings
+    # (2026-11-09): OpenAI's pricing page was not reachable from the session
+    # that added it, so check it there before relying on this figure.
+    _GPT_6_LUNA: (0.10, 0.50),
     "gpt-5.4-nano": (0.20, 1.25),  # NOSONAR
     "gpt-5.4-mini": (0.75, 4.50),  # NOSONAR
     "gpt-5-nano": (0.05, 0.40),
@@ -214,6 +219,7 @@ _OPENAI_STRUCTURED_OUTPUT_SCHEMA: dict[str, Any] = {
 # recommendation for the oldest, most expensive model in the lineup.
 _OPENAI_MODEL_DISPLAY_ORDER: list[str] = [
     _GPT_6_ASTRA,
+    _GPT_6_LUNA,
     _GPT_56_SOL,
     _GPT_56_TERRA,
     _GPT_56_LUNA,
@@ -317,11 +323,21 @@ _ANTHROPIC_MODEL_PRICING: dict[str, tuple[float, float]] = {
     "claude-mythos-5-1": (10.00, 50.00),
     "claude-fable-5": (10.00, 50.00),
     "claude-mythos-5": (10.00, 50.00),
+    # Opus 5.5 is $4/$20, below Opus 5. It is listed before "claude-opus-5",
+    # which is a substring of its id, so lookup_model_pricing() would
+    # otherwise price it at Opus 5's rate. From third-party price listings
+    # (2026-11-09); Anthropic's pricing page was not reachable from the
+    # session that added it, so check it there before relying on this figure.
+    "claude-opus-5-5": (4.00, 20.00),
     "claude-opus-5": (5.00, 25.00),
     "claude-opus-4-8": (5.00, 25.00),
     "claude-opus-4-7": (5.00, 25.00),
     "claude-opus-4-6": (5.00, 25.00),
     "claude-opus-4-5": (5.00, 25.00),
+    # Sonnet 5.5 is priced the same as Sonnet 5. It would match "claude-sonnet-5"
+    # by substring anyway; it is listed so that a later change to Sonnet 5's
+    # price does not silently change this one. Same source caveat as Opus 5.5.
+    "claude-sonnet-5-5": (2.00, 10.00),
     # $2/$10 was announced at launch as introductory pricing through
     # 2026-08-31, originally scheduled to rise to $3/$15 on 2026-09-01 —
     # Anthropic since cancelled that increase and made $2/$10 the permanent
@@ -331,6 +347,12 @@ _ANTHROPIC_MODEL_PRICING: dict[str, tuple[float, float]] = {
     "claude-sonnet-5": (2.00, 10.00),
     "claude-sonnet-4-6": (3.00, 15.00),
     "claude-sonnet-4-5": (3.00, 15.00),
+    # Haiku 5.5 charges $0.10 / $0.50 for prompts up to 100K input tokens and
+    # $0.50 / $2.50 above that. A flat rate cannot express the step. A clip
+    # sends a few frames (ai_max_frames defaults to 5), far below 100K, so the
+    # short-prompt rate is the one this add-on pays by default. A configuration
+    # that sends a prompt over 100K is priced low. Same source caveat as Opus 5.5.
+    "claude-haiku-5-5": (0.10, 0.50),
     "claude-haiku-4-5": (1.00, 5.00),
 }
 
