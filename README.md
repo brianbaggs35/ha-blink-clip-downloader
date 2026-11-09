@@ -299,7 +299,9 @@ classifies what a clip *sounds* like — breaking glass, a raised voice, a car a
 door, footsteps, a power tool, a dog — and passes that to the AI as one more piece of
 evidence to reconcile against the frames. Clips from a camera with no microphone, or
 with it switched off, are skipped. What it heard shows up as chips under
-**What was heard** in the Library clip modal's AI panel.
+**What was heard** in the Library clip modal's AI panel. A general "animal" label on its
+own is never reported, because the classifier can rate it above its floor on a clip with
+no animal in it; a dog, a cat or a bark is.
 
 **It classifies sound and never transcribes speech.** There is no speech-to-text model
 anywhere in this path, no transcript is produced or stored, and the sound labels are the

@@ -184,11 +184,13 @@ _RELEVANT_KEYWORDS: frozenset[str] = frozenset(
         "gunfire",
         "explosion",
         "fire",
-        # Animals, which explain a lot of night-time motion
+        # Animals, which explain a lot of night-time motion. Not AudioSet's
+        # umbrella "Animal" class: it can score above the floor on a clip
+        # with no animal in it, and reported alone it put "an animal" in the
+        # hint. The specific sounds below still report, and name the animal.
         "dog",
         "bark",
         "cat",
-        "animal",
     }
 )
 

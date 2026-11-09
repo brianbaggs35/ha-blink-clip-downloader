@@ -17,6 +17,10 @@
 - An attestation step that fails does not stop the release. It shows as failed in the workflow run, and the images are still published.
 - The add-on itself is unchanged apart from its version number.
 
+### Bug fixes
+
+- The audio analysis no longer reports "an animal" from AudioSet's general "Animal" label on its own. The classifier can rate that label above its floor on a clip with no animal in it, so a quiet clip could be described as having one. A specific animal sound, such as a dog, a cat or a bark, is still reported when it is heard.
+
 ## 6.1.6
 
 ### Code Quality
