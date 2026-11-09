@@ -11,6 +11,12 @@
 - Claude Sonnet 5.5 now has its own price entry, $2 / $10 per million tokens, the same as Sonnet 5.
 - Claude Haiku 5.5 now has a price, $0.10 per million input tokens and $0.50 per million output tokens for prompts up to 100K tokens. Above 100K tokens the rate is higher, which the price table does not model.
 
+### Release Workflow
+
+- Each published release image now gets a build provenance attestation: one for each architecture image, and one for the multi-arch image that Home Assistant pulls. The release workflow signs them and pushes them to the registry beside the images, which are not changed. The DOCS.md section "Verifying the release image" shows how to check one.
+- An attestation step that fails does not stop the release. It shows as failed in the workflow run, and the images are still published.
+- The add-on itself is unchanged apart from its version number.
+
 ## 6.1.6
 
 ### Code Quality
