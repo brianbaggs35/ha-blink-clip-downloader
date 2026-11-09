@@ -11,16 +11,16 @@
 - Claude Sonnet 5.5 now has its own price entry, $2 / $10 per million tokens, the same as Sonnet 5.
 - Claude Haiku 5.5 now has a price, $0.10 per million input tokens and $0.50 per million output tokens for prompts up to 100K tokens. Above 100K tokens the rate is higher, which the price table does not model.
 
+### Storage: a Refresh button for Google Drive
+
+- Once Google Drive is connected, its card on the Storage tab has a **Refresh** button. It re-reads the account, the quota, the backup queue and the folder list, so a folder created in another open tab appears without reloading the page.
+- A folder made in Google Drive's own website still does not appear in the folder browser, because the add-on's `drive.file` permission only covers folders it creates. DOCS.md explains this under Storage Tab — Google Drive Backup.
+
 ### Release Workflow
 
 - Each published release image now gets a build provenance attestation: one for each architecture image, and one for the multi-arch image that Home Assistant pulls. The release workflow signs them and pushes them to the registry beside the images, which are not changed. The DOCS.md section "Verifying the release image" shows how to check one.
 - An attestation step that fails does not stop the release. It shows as failed in the workflow run, and the images are still published.
 - The add-on itself is unchanged apart from its version number.
-
-### Storage: a Refresh button for Google Drive
-
-- Once Google Drive is connected, its card on the Storage tab has a **Refresh** button. It re-reads the account, the quota, the backup queue and the folder list, so a folder created in another open tab appears without reloading the page.
-- A folder made in Google Drive's own website still does not appear in the folder browser, because the add-on's `drive.file` permission only covers folders it creates. DOCS.md explains this under Storage Tab — Google Drive Backup.
 
 ## 6.1.6
 
