@@ -91,7 +91,7 @@ jobs:
           cache-dependency-path: blink_clip_downloader/frontend/package-lock.json
 
       - name: Update npm
-        run: npm install -g npm@12.0.2
+        run: npm install -g npm@12.2.2
 
       - name: Install frontend dependencies
         working-directory: blink_clip_downloader/frontend
@@ -224,7 +224,7 @@ jobs:
           cache-dependency-path: blink_clip_downloader/frontend/package-lock.json
 
       - name: Update npm
-        run: npm install -g npm@12.0.2
+        run: npm install -g npm@12.2.2
 
       - name: Install frontend dependencies
         working-directory: blink_clip_downloader/frontend
@@ -308,7 +308,7 @@ jobs:
           cache-dependency-path: blink_clip_downloader/frontend/package-lock.json
 
       - name: Update npm
-        run: npm install -g npm@12.0.2
+        run: npm install -g npm@12.2.2
 
       - name: Install frontend dependencies
         working-directory: blink_clip_downloader/frontend
@@ -403,7 +403,7 @@ jobs:
           cache-dependency-path: blink_clip_downloader/frontend/package-lock.json
 
       - name: Update npm
-        run: npm install -g npm@12.0.2
+        run: npm install -g npm@12.2.2
 
       - name: Install frontend dependencies
         working-directory: blink_clip_downloader/frontend
@@ -527,7 +527,7 @@ jobs:
         if: ${{ !env.ACT }}
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          version: v0.76.1
+          version: v0.76.2
           image-ref: ${{ env.ADDON_IMAGE }}:${{ env.TAG }}
           scanners: vuln
           severity: MEDIUM,HIGH,CRITICAL
@@ -563,7 +563,7 @@ jobs:
         if: ${{ !env.ACT }}
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          version: v0.76.1
+          version: v0.76.2
           image-ref: ${{ env.ADDON_IMAGE }}:${{ env.TAG }}
           scanners: vuln
           severity: HIGH,CRITICAL
@@ -619,7 +619,7 @@ jobs:
           cache-dependency-path: e2e/package-lock.json
 
       - name: Update npm
-        run: npm install -g npm@12.0.2
+        run: npm install -g npm@12.2.2
 
       - name: Install e2e dependencies
         working-directory: e2e
@@ -812,7 +812,7 @@ jobs:
           cache-dependency-path: e2e/package-lock.json
 
       - name: Update npm
-        run: npm install -g npm@12.0.2
+        run: npm install -g npm@12.2.2
 
       - name: Install e2e dependencies
         working-directory: e2e
@@ -955,7 +955,7 @@ jobs:
           cache-dependency-path: e2e/package-lock.json
 
       - name: Update npm
-        run: npm install -g npm@12.0.2
+        run: npm install -g npm@12.2.2
 
       - name: Install e2e dependencies
         working-directory: e2e

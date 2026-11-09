@@ -14,7 +14,7 @@ WORKDIR /frontend
 
 # Pinned to match ci.yaml's own npm pin, rather than whatever version
 # the base image happens to bundle.
-RUN npm install -g npm@12.0.2
+RUN npm install -g npm@12.2.2
 
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
