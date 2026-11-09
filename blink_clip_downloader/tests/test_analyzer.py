@@ -2479,6 +2479,25 @@ def test_anthropic_model_pricing_opus_5() -> None:
     assert out == 25.00
 
 
+@pytest.mark.parametrize(
+    ("model", "expected_input", "expected_output"),
+    [
+        # claude-opus-5 is a substring of claude-opus-5-5 and claude-sonnet-5
+        # of claude-sonnet-5-5: without the dotted entries listed first, Opus
+        # 5.5 would be priced at Opus 5's $5/$25.
+        ("claude-opus-5-5", 4.00, 20.00),
+        ("claude-opus-5-5-20261101", 4.00, 20.00),
+        ("claude-sonnet-5-5", 2.00, 10.00),
+        ("claude-haiku-5-5", 0.10, 0.50),
+    ],
+)
+def test_anthropic_model_pricing_5_5_releases(
+    model: str, expected_input: float, expected_output: float
+) -> None:
+    a = AnthropicAnalyzer(api_key="key", model=model, prompt="test")
+    assert a.model_pricing() == (expected_input, expected_output)
+
+
 def test_anthropic_model_pricing_fable_and_mythos_dotted_releases() -> None:
     """claude-fable-5 is itself a substring of claude-fable-5-1 (same for
     mythos) — the dotted release must be listed first in
@@ -3732,6 +3751,12 @@ def test_openai_model_default() -> None:
         ("gpt-5.6-sol", 4.00, 20.00),
         ("gpt-5.6-terra", 2.00, 12.00),
         ("gpt-5.6-luna", 0.20, 1.20),
+        ("gpt-6-luna", 0.10, 0.50),
+        ("gpt-6.1-sol", 2.00, 10.00),
+        ("gpt-6.1-terra", 1.00, 5.00),
+        ("gpt-6-sol", 2.00, 10.00),
+        ("gpt-5.3-codex", 1.75, 14.00),
+        ("gpt-5-search-api", 1.25, 10.00),
     ],
 )
 def test_openai_model_pricing(
@@ -3795,6 +3820,10 @@ def test_is_openai_vision_model_gpt5_family() -> None:
     assert is_openai_vision_model("gpt-5.6-sol") is True
     assert is_openai_vision_model("gpt-5.6-terra") is True
     assert is_openai_vision_model("gpt-5.6-luna") is True
+    assert is_openai_vision_model("gpt-6-luna") is True
+    assert is_openai_vision_model("gpt-6.1-sol") is True
+    assert is_openai_vision_model("gpt-6.1-terra") is True
+    assert is_openai_vision_model("gpt-6-sol") is True
 
 
 def test_is_openai_vision_model_excludes_pro_suffix() -> None:
@@ -3995,6 +4024,18 @@ def test_openai_model_rank_unknown_model_sorts_last() -> None:
     known model rather than raising or sorting first."""
     assert _openai_model_rank("gpt-5.7") == len(_OPENAI_MODEL_DISPLAY_ORDER)
     assert _openai_model_rank("gpt-4-turbo") < _openai_model_rank("gpt-5.7")
+    assert _openai_model_rank("gpt-6-luna") < _openai_model_rank("gpt-5.7")
+    assert _openai_model_rank("gpt-6.1-sol") < _openai_model_rank("gpt-6-astra")
+
+
+def test_openai_model_rank_places_the_newer_gpt_models_in_release_order() -> None:
+    """Each newer tier sorts above the one it follows, so the picker lists the
+    newest models first, including the ones added with their prices."""
+    assert _openai_model_rank("gpt-6-astra") < _openai_model_rank("gpt-6-sol")
+    assert _openai_model_rank("gpt-6-sol") < _openai_model_rank("gpt-6-luna")
+    assert _openai_model_rank("gpt-5.4-nano") < _openai_model_rank("gpt-5.3-codex")
+    assert _openai_model_rank("gpt-5.3-codex") < _openai_model_rank("gpt-5.2")
+    assert _openai_model_rank("gpt-5-nano") < _openai_model_rank("gpt-5-search-api")
 
 
 async def test_openai_fetch_models_unknown_model_sorts_after_known_ones(
