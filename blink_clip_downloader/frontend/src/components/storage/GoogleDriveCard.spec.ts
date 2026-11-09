@@ -741,6 +741,92 @@ describe('GoogleDriveCard', () => {
     })
   })
 
+  it('offers Refresh only once Drive is connected', async () => {
+    vi.stubGlobal('fetch', routedFetch({ settings: CONFIGURED, status: NOT_CONNECTED_STATUS }))
+    const wrapper = mountCard()
+    await flushPromises()
+    expect(wrapper.findAll('button').some((b) => b.text() === 'Refresh')).toBe(false)
+  })
+
+  it('Refresh re-reads the account, quota and queue, then confirms', async () => {
+    const fetchMock = routedFetch({
+      settings: CONFIGURED,
+      status: CONNECTED_WITH_FOLDER,
+      quota: { available: true, limit: 1_073_741_824 * 10, usage: 1_073_741_824, usage_in_drive: 0 },
+      queue: { connected: true, pending: 0, processing: 0, completed: 1, failed: 0 },
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountCard()
+    await flushPromises()
+    fetchMock.mockClear()
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Refresh')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/storage/gdrive/status', {})
+    expect(fetchMock).toHaveBeenCalledWith('/api/storage/gdrive/quota', {})
+    expect(fetchMock).toHaveBeenCalledWith('/api/storage/gdrive/queue', {})
+    expect(useToastStore().message).toBe('Google Drive refreshed')
+  })
+
+  it('Refresh reloads the folder list shown inline, so a folder made in another tab appears', async () => {
+    const routes: Routes = {
+      settings: CONFIGURED,
+      status: CONNECTED_NO_FOLDER,
+      folders: { folders: [{ id: 'f1', name: 'Blink Clips', modified_time: '' }] },
+    }
+    vi.stubGlobal('fetch', routedFetch(routes))
+    const wrapper = mountCard()
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('Made In Another Tab')
+
+    routes.folders = {
+      folders: [
+        { id: 'f1', name: 'Blink Clips', modified_time: '' },
+        { id: 'f2', name: 'Made In Another Tab', modified_time: '' },
+      ],
+    }
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Refresh')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Made In Another Tab')
+    expect(useToastStore().message).toBe('Google Drive refreshed')
+  })
+
+  it('says so when Refresh cannot reach Drive', async () => {
+    const base = routedFetch({ settings: CONFIGURED, status: CONNECTED_WITH_FOLDER })
+    let statusCalls = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, opts?: RequestInit) => {
+        if (url === '/api/storage/gdrive/status') {
+          statusCalls += 1
+          // The first call is the one made on mount; every later one fails.
+          if (statusCalls > 1) return Promise.reject(new Error('down'))
+        }
+        return base(url, opts)
+      }),
+    )
+    const wrapper = mountCard()
+    await flushPromises()
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Refresh')!
+      .trigger('click')
+    await flushPromises()
+
+    const toast = useToastStore()
+    expect(toast.message).toBe('Could not refresh Google Drive')
+    expect(toast.isError).toBe(true)
+  })
+
   it('shows a toast when the initial load fails', async () => {
     vi.stubGlobal(
       'fetch',

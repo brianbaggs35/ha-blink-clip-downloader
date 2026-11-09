@@ -17,6 +17,11 @@
 - An attestation step that fails does not stop the release. It shows as failed in the workflow run, and the images are still published.
 - The add-on itself is unchanged apart from its version number.
 
+### Storage: a Refresh button for Google Drive
+
+- Once Google Drive is connected, its card on the Storage tab has a **Refresh** button. It re-reads the account, the quota, the backup queue and the folder list, so a folder created in another open tab appears without reloading the page.
+- A folder made in Google Drive's own website still does not appear in the folder browser, because the add-on's `drive.file` permission only covers folders it creates. DOCS.md explains this under Storage Tab — Google Drive Backup.
+
 ## 6.1.6
 
 ### Code Quality

@@ -29,9 +29,12 @@ async function mockGDriveApi(
     uploadsPaused?: boolean
     pauseReason?: string
     failedCount?: number
+    // false: connected, but no backup folder chosen yet (the folder browser shows inline).
+    folderSelected?: boolean
   } = {},
 ) {
   let connected = options.connected ?? true
+  const folderSelected = options.folderSelected ?? true
   let connectPhase = 'idle'
   let uploadsPaused = options.uploadsPaused ?? false
   let pauseReason = options.pauseReason ?? ''
@@ -68,8 +71,8 @@ async function mockGDriveApi(
         configured: true,
         connected,
         account_email: connected ? 'e2e@example.com' : '',
-        folder_id: connected ? folder.id : '',
-        folder_name: connected ? folder.name : '',
+        folder_id: connected && folderSelected ? folder.id : '',
+        folder_name: connected && folderSelected ? folder.name : '',
         uploads_paused: uploadsPaused,
         pause_reason: pauseReason,
       })
@@ -856,6 +859,35 @@ test('covers connected Google Drive, folder management, retries, and library upl
   await expect(
     page.locator('.gdrive-connection-card').getByRole('button', { name: 'Connect Google Drive' }),
   ).toBeVisible()
+})
+
+test('Refresh shows a folder made in another tab, without reloading the page', async ({ page }) => {
+  await mockGDriveApi(page, { folderSelected: false })
+  await page.goto('/')
+  await page.locator('.app-nav-tab[data-tab="storage"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="storage"]')
+
+  const connection = page.locator('.gdrive-connection-card')
+  await expect(connection.getByRole('button', { name: 'E2E Backups' })).toBeVisible()
+  await expect(connection.getByRole('button', { name: 'Made in another tab' })).toHaveCount(0)
+
+  // Stands in for a folder created in another tab after this list loaded.
+  await page.route('**/api/storage/gdrive/folders**', async (route) => {
+    if (route.request().method() !== 'GET') {
+      await route.fallback()
+      return
+    }
+    await fulfillJson(route, {
+      folders: [
+        { id: 'folder-root', name: 'E2E Backups', modified_time: '2026-01-01T00:00:00Z' },
+        { id: 'folder-archive', name: 'Archive', modified_time: '' },
+        { id: 'folder-other-tab', name: 'Made in another tab', modified_time: '' },
+      ],
+    })
+  })
+  await connection.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await expect(page.getByText('Google Drive refreshed')).toBeVisible()
+  await expect(connection.getByRole('button', { name: 'Made in another tab' })).toBeVisible()
 })
 
 test('completes a mocked Google Drive device-code connection', async ({ page }) => {

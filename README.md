@@ -384,6 +384,10 @@ Console](https://console.cloud.google.com/):
    **Google Drive Setup** card, click **Save Setup**, then **Connect Google
    Drive** and follow the on-screen code.
 
+Once Drive is connected, the **Refresh** button at the bottom of the Google
+Drive card re-reads the account, the quota and the folder list, so a folder
+created in another open tab appears without reloading the page.
+
 See [Storage Tab — Google Drive
 Backup](blink_clip_downloader/DOCS.md#storage-tab--google-drive-backup) for
 the full walkthrough — including moving the OAuth consent screen to

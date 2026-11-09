@@ -91,6 +91,9 @@ async function createFolder() {
     creatingFolder.value = false
   }
 }
+// The Drive card's Refresh button asks for a fresh listing: a folder made in
+// another tab is not in a list that was loaded before it existed.
+defineExpose({ reload: load })
 </script>
 
 <template>

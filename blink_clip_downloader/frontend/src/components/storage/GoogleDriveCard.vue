@@ -70,6 +70,8 @@ const connecting = ref(false)
 const backingUpNow = ref(false)
 const showFolderDialog = ref(false)
 const pausing = ref(false)
+const refreshing = ref(false)
+const inlineFolderBrowser = ref<InstanceType<typeof GoogleDriveFolderBrowser> | null>(null)
 
 let connectPollTimer: ReturnType<typeof setInterval> | undefined
 
@@ -250,6 +252,22 @@ async function backupNow() {
   }
 }
 
+/** Re-reads what Drive can change while this page is open: the account, the
+ *  quota, the upload queue and the folder list. A folder made in another tab
+ *  is not in a list loaded before it existed, and nothing else here asks again. */
+async function refreshDrive() {
+  refreshing.value = true
+  try {
+    await loadStatus()
+    await Promise.all([loadQuota(), loadQueueStatus(), inlineFolderBrowser.value?.reload()])
+    toast.show('Google Drive refreshed')
+  } catch {
+    toast.show('Could not refresh Google Drive', true)
+  } finally {
+    refreshing.value = false
+  }
+}
+
 onMounted(async () => {
   await loadAll()
   if (status.value.connected) return
@@ -360,7 +378,7 @@ onUnmounted(stopConnectPolling)
         </template>
         <template v-else-if="!status.folder_id">
           <p class="muted-note">Connected as {{ status.account_email }}. Choose a folder for your backups:</p>
-          <GoogleDriveFolderBrowser @select="onFolderSelected" />
+          <GoogleDriveFolderBrowser ref="inlineFolderBrowser" @select="onFolderSelected" />
         </template>
         <template v-else>
           <div class="gdrive-connected-row">
@@ -440,6 +458,19 @@ onUnmounted(stopConnectPolling)
           />
         </template>
       </template>
+      <template v-if="status.connected" #footer>
+        <div class="gdrive-card-footer">
+          <Button
+            size="small"
+            severity="secondary"
+            outlined
+            icon="pi pi-refresh"
+            label="Refresh"
+            :loading="refreshing"
+            @click="refreshDrive"
+          />
+        </div>
+      </template>
     </Card>
 
     <Dialog
@@ -460,6 +491,11 @@ onUnmounted(stopConnectPolling)
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
+}
+
+.gdrive-card-footer {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .gdrive-title {
