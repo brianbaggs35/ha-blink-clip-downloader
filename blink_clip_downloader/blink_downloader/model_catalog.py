@@ -113,6 +113,8 @@ _GPT_6_LUNA = "gpt-6-luna"
 #: GPT-6.1 Sol and Terra, named on the same footing as the tiers above.
 _GPT_61_SOL = "gpt-6.1-sol"
 _GPT_61_TERRA = "gpt-6.1-terra"
+#: GPT-6 Sol, the middle tier of the first GPT-6 release, between Astra and Luna.
+_GPT_6_SOL = "gpt-6-sol"
 
 # OpenAI model pricing: (input_$/1M_tokens, output_$/1M_tokens)
 # Source: https://developers.openai.com/api/docs/pricing (standard tier)
@@ -152,6 +154,9 @@ _OPENAI_MODEL_PRICING: dict[str, tuple[float, float]] = {
     _GPT_56_LUNA: (0.20, 1.20),
     # GPT-6 (Astra). Verified live against the pricing page 2026-09-17.
     _GPT_6_ASTRA: (10.00, 50.00),
+    # GPT-6 Sol. Checked against the pricing page on 2026-11-09 (standard tier:
+    # $2 input, $10 output, cached input $0.20). Batch and Fast rates are not modelled.
+    _GPT_6_SOL: (2.00, 10.00),
     # GPT-6 Luna, the budget tier of GPT-6. Checked against the pricing page on
     # 2026-11-09 (standard tier: $0.10 input, $0.50 output; cached input $0.01).
     # Batch and Fast rates are not modelled, as for the other entries here.
@@ -169,6 +174,11 @@ _OPENAI_MODEL_PRICING: dict[str, tuple[float, float]] = {
     "gpt-5.5": (5.00, 30.00),  # NOSONAR
     "gpt-5.2": (1.75, 14.00),
     "gpt-5.1": (1.25, 10.00),
+    # GPT-5.3 Codex and GPT-5 Search API. Checked against the pricing page on
+    # 2026-11-09 (standard tier, token rates only: the Search API's per-call fee
+    # is not modelled). Both contain "gpt-5", so they sit above it.
+    "gpt-5.3-codex": (1.75, 14.00),
+    "gpt-5-search-api": (1.25, 10.00),
     "gpt-5": (1.25, 10.00),
 }
 
@@ -229,6 +239,7 @@ _OPENAI_MODEL_DISPLAY_ORDER: list[str] = [
     _GPT_61_SOL,
     _GPT_61_TERRA,
     _GPT_6_ASTRA,
+    _GPT_6_SOL,
     _GPT_6_LUNA,
     _GPT_56_SOL,
     _GPT_56_TERRA,
@@ -237,11 +248,13 @@ _OPENAI_MODEL_DISPLAY_ORDER: list[str] = [
     "gpt-5.4",
     "gpt-5.4-mini",
     "gpt-5.4-nano",
+    "gpt-5.3-codex",
     "gpt-5.2",
     "gpt-5.1",
     "gpt-5",
     "gpt-5-mini",
     "gpt-5-nano",
+    "gpt-5-search-api",
     "o4-mini",
     "o3",
     "o3-mini",

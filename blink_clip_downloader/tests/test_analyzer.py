@@ -3754,6 +3754,9 @@ def test_openai_model_default() -> None:
         ("gpt-6-luna", 0.10, 0.50),
         ("gpt-6.1-sol", 2.00, 10.00),
         ("gpt-6.1-terra", 1.00, 5.00),
+        ("gpt-6-sol", 2.00, 10.00),
+        ("gpt-5.3-codex", 1.75, 14.00),
+        ("gpt-5-search-api", 1.25, 10.00),
     ],
 )
 def test_openai_model_pricing(
@@ -3820,6 +3823,7 @@ def test_is_openai_vision_model_gpt5_family() -> None:
     assert is_openai_vision_model("gpt-6-luna") is True
     assert is_openai_vision_model("gpt-6.1-sol") is True
     assert is_openai_vision_model("gpt-6.1-terra") is True
+    assert is_openai_vision_model("gpt-6-sol") is True
 
 
 def test_is_openai_vision_model_excludes_pro_suffix() -> None:
@@ -4022,6 +4026,16 @@ def test_openai_model_rank_unknown_model_sorts_last() -> None:
     assert _openai_model_rank("gpt-4-turbo") < _openai_model_rank("gpt-5.7")
     assert _openai_model_rank("gpt-6-luna") < _openai_model_rank("gpt-5.7")
     assert _openai_model_rank("gpt-6.1-sol") < _openai_model_rank("gpt-6-astra")
+
+
+def test_openai_model_rank_places_the_newer_gpt_models_in_release_order() -> None:
+    """Each newer tier sorts above the one it follows, so the picker lists the
+    newest models first, including the ones added with their prices."""
+    assert _openai_model_rank("gpt-6-astra") < _openai_model_rank("gpt-6-sol")
+    assert _openai_model_rank("gpt-6-sol") < _openai_model_rank("gpt-6-luna")
+    assert _openai_model_rank("gpt-5.4-nano") < _openai_model_rank("gpt-5.3-codex")
+    assert _openai_model_rank("gpt-5.3-codex") < _openai_model_rank("gpt-5.2")
+    assert _openai_model_rank("gpt-5-nano") < _openai_model_rank("gpt-5-search-api")
 
 
 async def test_openai_fetch_models_unknown_model_sorts_after_known_ones(
