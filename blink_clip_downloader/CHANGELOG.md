@@ -4,6 +4,9 @@
 
 ### Bug fixes
 
+- The object chips in the Library clip view could count one parked car more than once: a clip with 6 cars in it showed 8. The detector's tracker gives a car a new identity when it loses sight of it for a few frames and finds it again, and each identity was counted. Two identities whose boxes sit in the same place, and that were never in the same frame, now count as one. This applies to everything except people, who are still counted by the tracker's identities so the chips agree with the security events. No setting changes, and the security events are not affected.
+- The count is worked out when a clip is opened, so clips analyzed before this update show the corrected number too.
+
 ### Dependency Updates
 
 ### Release Workflow
