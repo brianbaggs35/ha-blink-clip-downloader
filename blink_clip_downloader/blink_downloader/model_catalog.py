@@ -325,9 +325,8 @@ _ANTHROPIC_MODEL_PRICING: dict[str, tuple[float, float]] = {
     "claude-mythos-5": (10.00, 50.00),
     # Opus 5.5 is $4/$20, below Opus 5. It is listed before "claude-opus-5",
     # which is a substring of its id, so lookup_model_pricing() would
-    # otherwise price it at Opus 5's rate. From third-party price listings
-    # (2026-11-09); Anthropic's pricing page was not reachable from the
-    # session that added it, so check it there before relying on this figure.
+    # otherwise price it at Opus 5's rate. Checked against the pricing page
+    # on 2026-11-09 (base input $4, output $20).
     "claude-opus-5-5": (4.00, 20.00),
     "claude-opus-5": (5.00, 25.00),
     "claude-opus-4-8": (5.00, 25.00),
@@ -336,7 +335,8 @@ _ANTHROPIC_MODEL_PRICING: dict[str, tuple[float, float]] = {
     "claude-opus-4-5": (5.00, 25.00),
     # Sonnet 5.5 is priced the same as Sonnet 5. It would match "claude-sonnet-5"
     # by substring anyway; it is listed so that a later change to Sonnet 5's
-    # price does not silently change this one. Same source caveat as Opus 5.5.
+    # price does not silently change this one. Checked against the pricing page
+    # on 2026-11-09 (base input $2, output $10).
     "claude-sonnet-5-5": (2.00, 10.00),
     # $2/$10 was announced at launch as introductory pricing through
     # 2026-08-31, originally scheduled to rise to $3/$15 on 2026-09-01 —
@@ -351,7 +351,9 @@ _ANTHROPIC_MODEL_PRICING: dict[str, tuple[float, float]] = {
     # $0.50 / $2.50 above that. A flat rate cannot express the step. A clip
     # sends a few frames (ai_max_frames defaults to 5), far below 100K, so the
     # short-prompt rate is the one this add-on pays by default. A configuration
-    # that sends a prompt over 100K is priced low. Same source caveat as Opus 5.5.
+    # that sends a prompt over 100K is priced low. The page counts each request's
+    # cache reads and writes toward the 100K threshold; this table does not model
+    # that. Checked against the pricing page on 2026-11-09.
     "claude-haiku-5-5": (0.10, 0.50),
     "claude-haiku-4-5": (1.00, 5.00),
 }
