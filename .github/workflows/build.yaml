@@ -28,6 +28,12 @@ jobs:
       # Uploading the Trivy SARIF for the published image (see the scan
       # step at the end of this job).
       security-events: write
+      # Build provenance for the image this job pushes (the attest step
+      # after the push). id-token signs it with this job's identity;
+      # attestations and artifact-metadata store it.
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     outputs:
       version: ${{ steps.tags.outputs.version }}
 
@@ -86,6 +92,8 @@ jobs:
           OWNER="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
 
           TAG_VER="${{ env.REGISTRY }}/${OWNER}/${{ env.IMAGE_NAME }}"
+          # The image without its tag: the name its attestation is stored under.
+          echo "image_base=${TAG_VER}" >> "$GITHUB_OUTPUT"
           TAG_VER="${TAG_VER}:${VERSION}-${{ matrix.arch }}"
 
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
@@ -96,6 +104,7 @@ jobs:
           echo "apt_cache_bust=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
 
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v7
         with:
           context: blink_clip_downloader
@@ -103,13 +112,14 @@ jobs:
           platforms: ${{ matrix.platform }}
           push: true
 
-          # Provenance attestations (on by default) wrap even a single-arch
+          # BuildKit's own provenance stays off. It wraps even a single-arch
           # push in an OCI index, so the per-arch tag pages on ghcr read the
           # (empty) index annotations instead of the Dockerfile's
           # org.opencontainers.image.description label — that's why
           # ":vX.Y.Z-amd64"-style pages showed "No description provided".
-          # Nothing consumes the attestations, so disable them and let the
-          # label show through.
+          # The attest steps around this job record provenance for the
+          # pushed digest instead, stored beside the image rather than
+          # around it.
           provenance: false
 
           tags: |
@@ -132,6 +142,19 @@ jobs:
           no-cache-filters: frontend-builder
           cache-from: type=gha,scope=${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
+
+      # Build provenance for the digest this job just pushed, signed with
+      # this job's OIDC identity and stored in the registry beside the image.
+      # continue-on-error, as the Trivy steps below are: an attestation
+      # failure must never stop the manifest job, which Supervisor needs to
+      # pull the release at all. The step still shows as failed in the run.
+      - name: Attest build provenance (per architecture)
+        continue-on-error: true
+        uses: actions/attest@v4
+        with:
+          subject-name: ${{ steps.tags.outputs.image_base }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
 
       # Scans the exact image that was just published, by its pushed tag —
       # not a rebuild of it. ci.yaml scans this same commit, but not this
@@ -186,6 +209,11 @@ jobs:
     needs: build
     permissions:
       packages: write
+      # Build provenance for the multi-arch index (the attest step at the
+      # end of this job).
+      id-token: write
+      attestations: write
+      artifact-metadata: write
 
     steps:
       - name: Set up Docker Buildx
@@ -199,6 +227,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create and push multi-arch manifest
+        id: manifest
         run: |
           VERSION="${{ needs.build.outputs.version }}"
 
@@ -232,3 +261,30 @@ jobs:
             -t "${IMAGE_BASE}:latest" \
             "${IMAGE_BASE}:${VERSION}-amd64" \
             "${IMAGE_BASE}:${VERSION}-aarch64"
+
+          # The digest of the index that ":VERSION" now points at: the one
+          # Supervisor pulls, and the one a user's `gh attestation verify`
+          # checks. Read after both tags are pushed, so a failure here costs
+          # only the attestation, never the tags.
+          INDEX_DIGEST="$(docker buildx imagetools inspect \
+            "${IMAGE_BASE}:${VERSION}" --format '{{json .Manifest}}' \
+            | jq -r '.digest' || true)"
+          case "${INDEX_DIGEST}" in
+            sha256:*)
+              echo "index_digest=${INDEX_DIGEST}" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "::warning::Could not read the index digest of" \
+                "${IMAGE_BASE}:${VERSION}; its attestation is skipped."
+              ;;
+          esac
+          echo "image_base=${IMAGE_BASE}" >> "$GITHUB_OUTPUT"
+
+      - name: Attest build provenance (multi-arch index)
+        if: steps.manifest.outputs.index_digest != ''
+        continue-on-error: true
+        uses: actions/attest@v4
+        with:
+          subject-name: ${{ steps.manifest.outputs.image_base }}
+          subject-digest: ${{ steps.manifest.outputs.index_digest }}
+          push-to-registry: true
