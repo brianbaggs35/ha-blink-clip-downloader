@@ -426,6 +426,7 @@ they get merged. The CI pipeline includes:
 - Sonarqube scans
 - Codecov coverage reports
 - Built addon images and trivy scans
+- Build provenance attestations for each published addon image
 - Smoke tests on the addon containers built and scanned with trivy
 - Full home assistant supervisor container that installs and runs the app and then
 verifies it

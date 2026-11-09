@@ -2,6 +2,12 @@
 
 ## 6.1.7
 
+### Release Workflow
+
+- Each published release image now gets a build provenance attestation: one for each architecture image, and one for the multi-arch image that Home Assistant pulls. The release workflow signs them and pushes them to the registry beside the images, which are not changed. The DOCS.md section "Verifying the release image" shows how to check one.
+- An attestation step that fails does not stop the release. It shows as failed in the workflow run, and the images are still published.
+- The add-on itself is unchanged apart from its version number.
+
 ## 6.1.6
 
 ### Code Quality
