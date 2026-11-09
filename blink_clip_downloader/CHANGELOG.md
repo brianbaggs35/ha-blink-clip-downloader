@@ -1,5 +1,7 @@
 # Changelog
 
+## 6.1.7
+
 ## 6.1.6
 
 ### Code Quality
