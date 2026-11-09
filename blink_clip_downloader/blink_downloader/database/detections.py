@@ -8,7 +8,7 @@ camera's learned protected-vehicle signature.
 Counting ``detected_objects`` rows is never the answer to "how many were
 there" — they are stored per box per sampled frame, so one parked car
 across twelve frames is twelve rows. ``get_detected_objects_summary``
-counts distinct ``track_id``s instead.
+counts distinct objects instead (:mod:`blink_downloader.object_counts`).
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+from ..object_counts import summarize_detected_objects
 from ..security import SecurityEvent, VehicleSignature
 from .core import _DatabaseBase
 from .sql import (
@@ -145,16 +146,14 @@ class DetectionsMixin(_DatabaseBase):
         Distinct objects are counted by ``track_id``, the same identity the
         security layer groups its own ``ObjectTrack``s by — so a clip whose
         events read "2 separate people were tracked" can no longer sit
-        above a chip saying 1. Accuracy therefore rests on the tracker,
-        which is handed frames seconds apart rather than consecutive video
-        (see ObjectDetector's own note in vision/detection.py): a static object like
-        a parked car is matched trivially, while something crossing the
-        frame fast across few sampled frames can be counted twice.
+        above a chip saying 1. One correction is made for anything that is
+        not a person: track ids that are one object left where it was (a
+        parked car the tracker lost and found again) count once — see
+        :mod:`blink_downloader.object_counts`, which does the counting.
 
         The per-frame peak is the floor. It covers rows stored with no
         ``track_id`` at all (tracking off, or written by an older build),
-        where counting ids would return zero, and it can never exceed the
-        truth — those objects were genuinely in frame together.
+        where counting ids would return zero.
 
         ``detections`` keeps the raw box total, which is still worth
         showing as supporting detail: it says how much evidence the count
@@ -165,36 +164,15 @@ class DetectionsMixin(_DatabaseBase):
         rows = await self._pool.fetch(
             _qm(
                 """
-                SELECT f.label,
-                       GREATEST(MAX(f.per_frame), MAX(t.tracked))::int AS count,
-                       SUM(f.per_frame)::int AS detections,
-                       MAX(f.frame_best) AS max_confidence
-                FROM (
-                    SELECT label,
-                           frame_index,
-                           COUNT(*) AS per_frame,
-                           MAX(confidence) AS frame_best
-                    FROM detected_objects
-                    WHERE clip_id=?
-                    GROUP BY label, frame_index
-                ) f
-                JOIN (
-                    -- COUNT(DISTINCT ...) skips NULLs, so a label detected
-                    -- with tracking off scores zero here and falls through
-                    -- to the per-frame peak beside it.
-                    SELECT label, COUNT(DISTINCT track_id) AS tracked
-                    FROM detected_objects
-                    WHERE clip_id=?
-                    GROUP BY label
-                ) t ON t.label = f.label
-                GROUP BY f.label
-                ORDER BY count DESC, detections DESC, f.label ASC
+                SELECT label, confidence, track_id, frame_index,
+                       box_x1, box_y1, box_x2, box_y2
+                FROM detected_objects
+                WHERE clip_id=?
                 """
             ),
             clip_id,
-            clip_id,
         )
-        return [dict(r) for r in rows]
+        return summarize_detected_objects(rows)
 
     async def save_security_events(
         self,
