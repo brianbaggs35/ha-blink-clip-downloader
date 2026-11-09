@@ -44,6 +44,23 @@ describe('GoogleDriveFolderBrowser', () => {
     expect(wrapper.text()).toContain('No subfolders here yet')
   })
 
+  it('reload() fetches the current folder again, so a folder made elsewhere appears', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ folders: [] }))
+      .mockResolvedValueOnce(jsonResponse({ folders: [{ id: 'f9', name: 'Made Elsewhere', modified_time: '' }] }))
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountBrowser()
+    await flushPromises()
+    expect(wrapper.text()).toContain('No subfolders here yet')
+
+    await (wrapper.vm as unknown as { reload: () => Promise<void> }).reload()
+    await flushPromises()
+
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/storage/gdrive/folders?parent_id=root', {})
+    expect(wrapper.text()).toContain('Made Elsewhere')
+  })
+
   it('shows a load error', async () => {
     vi.stubGlobal(
       'fetch',

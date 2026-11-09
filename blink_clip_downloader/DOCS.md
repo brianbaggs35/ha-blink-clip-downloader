@@ -2382,6 +2382,12 @@ and remains eligible for backup later.
   list itself is always this add-on's own upload record, not a live scan of
   the folder's contents — a file you drop into that folder yourself via
   Drive's own app stays completely invisible to this add-on.
+- **Refresh** on the Connection card (shown once Drive is connected) re-reads
+  the account, the quota, the backup queue and the folder list. A folder this
+  add-on created, including one made in another open tab, shows up after a
+  refresh. A folder made in Google Drive's own website does not show at all:
+  the `drive.file` permission this add-on requests only covers folders it has
+  created itself, so create the folder with **New Folder** here instead.
 - There's no download/restore-from-Drive feature for clips — they already live
   locally; Drive is a backup destination, not a second source to sync from. The
   same goes for the backups the Backup & Restore tab can put in Drive: to restore
