@@ -50,7 +50,6 @@ def test_each_architecture_image_is_attested_by_the_digest_it_was_pushed_as() ->
     assert steps.index(attest[0]) > steps.index(push), "attest after the push"
     assert attest[0]["with"]["subject-digest"] == "${{ steps.build.outputs.digest }}"
     assert attest[0]["with"]["subject-name"] == "${{ steps.tags.outputs.image_base }}"
-    assert attest[0]["with"]["push-to-registry"] is True
 
 
 def test_the_multi_arch_index_is_attested_by_the_digest_supervisor_pulls() -> None:
@@ -72,7 +71,20 @@ def test_the_multi_arch_index_is_attested_by_the_digest_supervisor_pulls() -> No
     assert (
         attest[0]["with"]["subject-name"] == "${{ steps.manifest.outputs.image_base }}"
     )
-    assert attest[0]["with"]["push-to-registry"] is True
+
+
+@pytest.mark.parametrize("job_name", ["build", "manifest"])
+def test_an_attestation_adds_nothing_to_the_package_page(job_name: str) -> None:
+    # Pushed to the registry, each attestation becomes a "sha256-<digest>"
+    # tag that ghcr lists as a package version of its own: v6.1.7 showed six
+    # entries for one release. GitHub's attestation store is what
+    # `gh attestation verify --owner` reads, so the registry copy is clutter.
+    attest = _attest_steps(_steps(_job(job_name)))
+    assert attest, "the job still attests"
+    for step in attest:
+        assert step["with"]["push-to-registry"] is False, (
+            f"{step.get('name')!r} would publish a sha256-* package version"
+        )
 
 
 @pytest.mark.parametrize("job_name", ["build", "manifest"])

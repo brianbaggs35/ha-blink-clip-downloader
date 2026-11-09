@@ -30,10 +30,9 @@ jobs:
       security-events: write
       # Build provenance for the image this job pushes (the attest step
       # after the push). id-token signs it with this job's identity;
-      # attestations and artifact-metadata store it.
+      # attestations stores it in this repository's attestation store.
       id-token: write
       attestations: write
-      artifact-metadata: write
     outputs:
       version: ${{ steps.tags.outputs.version }}
 
@@ -144,7 +143,17 @@ jobs:
           cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
 
       # Build provenance for the digest this job just pushed, signed with
-      # this job's OIDC identity and stored in the registry beside the image.
+      # this job's OIDC identity and kept in this repository's attestation
+      # store on GitHub (the Attestations page), which is where
+      # `gh attestation verify ... --owner` looks.
+      #
+      # Deliberately NOT pushed to the registry as well. push-to-registry
+      # stores each attestation as its own manifest under a
+      # "sha256-<digest>" tag, and ghcr lists every one as a package
+      # version: v6.1.7 published three of those beside its three real
+      # tags, so the package page showed six entries for one release with
+      # half of them unpullable. Nothing reads the registry copy.
+      #
       # continue-on-error, as the Trivy steps below are: an attestation
       # failure must never stop the manifest job, which Supervisor needs to
       # pull the release at all. The step still shows as failed in the run.
@@ -154,7 +163,7 @@ jobs:
         with:
           subject-name: ${{ steps.tags.outputs.image_base }}
           subject-digest: ${{ steps.build.outputs.digest }}
-          push-to-registry: true
+          push-to-registry: false
 
       # Scans the exact image that was just published, by its pushed tag —
       # not a rebuild of it. ci.yaml scans this same commit, but not this
@@ -213,7 +222,6 @@ jobs:
       # end of this job).
       id-token: write
       attestations: write
-      artifact-metadata: write
 
     steps:
       - name: Set up Docker Buildx
@@ -287,4 +295,6 @@ jobs:
         with:
           subject-name: ${{ steps.manifest.outputs.image_base }}
           subject-digest: ${{ steps.manifest.outputs.index_digest }}
-          push-to-registry: true
+          # Not pushed to the registry: see the per-architecture attest
+          # step in the build job for why.
+          push-to-registry: false
