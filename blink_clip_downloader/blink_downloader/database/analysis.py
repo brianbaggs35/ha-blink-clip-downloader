@@ -227,6 +227,12 @@ class AnalysisResultsMixin(_DatabaseBase):
             "total_tokens": 0,
             "total_escalations": 0,
             "total_escalation_tokens": 0,
+            "assistant": {
+                "questions": 0,
+                "tokens_prompt": 0,
+                "tokens_completion": 0,
+                "tokens_total": 0,
+            },
             "by_model": [],
         }
         if self._pool is None:
@@ -280,10 +286,36 @@ class AnalysisResultsMixin(_DatabaseBase):
         for r in primary_rows:
             d = dict(r)
             d["escalated"] = False
+            d["assistant"] = False
             by_model.append(d)
         for r in escalation_rows:
             d = dict(r)
             d["escalated"] = True
+            d["assistant"] = False
+            by_model.append(d)
+        # The Security Assistant's questions are spend like any other, so they
+        # join the model breakdown and the totals; ``analyses`` on their rows
+        # counts questions, which is why total_analyses below leaves them out.
+        assistant_rows = await self._pool.fetch(
+            _qm(
+                f"""
+                SELECT model,
+                       MAX(provider)                        AS provider,
+                       COUNT(*)                             AS analyses,
+                       COALESCE(SUM(tokens_prompt), 0)      AS tokens_prompt,
+                       COALESCE(SUM(tokens_completion), 0)  AS tokens_completion
+                FROM assistant_usage
+                {"WHERE recorded_at > ?" if reset_at else ""}
+                GROUP BY model
+                ORDER BY analyses DESC
+                """
+            ),
+            *since_params,
+        )
+        for r in assistant_rows:
+            d = dict(r)
+            d["escalated"] = False
+            d["assistant"] = True
             by_model.append(d)
 
         total_prompt = sum(int(m["tokens_prompt"]) for m in by_model)
@@ -295,6 +327,8 @@ class AnalysisResultsMixin(_DatabaseBase):
             for m in escalation_rows
         )
 
+        assistant_prompt = sum(int(m["tokens_prompt"]) for m in assistant_rows)
+        assistant_completion = sum(int(m["tokens_completion"]) for m in assistant_rows)
         return {
             "total_analyses": total_analyses,
             "total_tokens_prompt": total_prompt,
@@ -302,6 +336,12 @@ class AnalysisResultsMixin(_DatabaseBase):
             "total_tokens": total_prompt + total_completion,
             "total_escalations": total_escalations,
             "total_escalation_tokens": total_escalation_tokens,
+            "assistant": {
+                "questions": sum(int(m["analyses"]) for m in assistant_rows),
+                "tokens_prompt": assistant_prompt,
+                "tokens_completion": assistant_completion,
+                "tokens_total": assistant_prompt + assistant_completion,
+            },
             "by_model": by_model,
         }
 
@@ -374,14 +414,44 @@ class AnalysisResultsMixin(_DatabaseBase):
             *params,
         )
 
+        assistant_conditions = [
+            f"to_char(recorded_at::timestamptz AT TIME ZONE INTERVAL '{tz}', 'YYYY-MM-DD') >= ?"
+        ]
+        assistant_params: list[str] = [cutoff]
+        if reset_at:
+            assistant_conditions.append("recorded_at > ?")
+            assistant_params.append(reset_at)
+        assistant_rows = await self._pool.fetch(
+            _qm(
+                f"""
+                SELECT to_char(recorded_at::timestamptz AT TIME ZONE INTERVAL '{tz}', 'YYYY-MM-DD') AS day,
+                       model,
+                       COUNT(*)                             AS analyses,
+                       COALESCE(SUM(tokens_prompt), 0)      AS tokens_prompt,
+                       COALESCE(SUM(tokens_completion), 0)  AS tokens_completion
+                FROM assistant_usage
+                WHERE {" AND ".join(assistant_conditions)}
+                GROUP BY day, model
+                """
+            ),
+            *assistant_params,
+        )
+
         daily: list[dict[str, Any]] = []
         for r in primary_rows:
             d = dict(r)
             d["escalated"] = False
+            d["assistant"] = False
             daily.append(d)
         for r in escalation_rows:
             d = dict(r)
             d["escalated"] = True
+            d["assistant"] = False
+            daily.append(d)
+        for r in assistant_rows:
+            d = dict(r)
+            d["escalated"] = False
+            d["assistant"] = True
             daily.append(d)
 
         daily.sort(key=lambda d: str(d["day"]), reverse=True)

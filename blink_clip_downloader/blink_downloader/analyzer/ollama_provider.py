@@ -34,6 +34,7 @@ from .base import (
     BaseAnalyzer,
     SecurityLayerSettings,
 )
+from .chat import DEFAULT_MAX_ANSWER_TOKENS, ChatError, ChatReply, describe_failure
 
 _LOGGER = logging.getLogger(__name__)
 _MODEL_DETAILS_CONCURRENCY = 4
@@ -91,6 +92,8 @@ class ClipAnalyzer(BaseAnalyzer):
         self._ollama_url = ollama_url.rstrip("/")
         self._model = model
         self._session: aiohttp.ClientSession | None = None
+
+    supports_chat = True
 
     @property
     def provider_name(self) -> str:
@@ -253,6 +256,49 @@ class ClipAnalyzer(BaseAnalyzer):
                 exc,
             )
             return None
+
+    async def chat(
+        self,
+        system: str,
+        messages: list[dict[str, str]],
+        max_tokens: int = DEFAULT_MAX_ANSWER_TOKENS,
+        model: str | None = None,
+    ) -> ChatReply:
+        """Answer a text-only conversation (the AI Assistant tab).
+
+        Same ``/api/chat`` endpoint as :meth:`call_ollama`, without images or
+        the JSON ``format`` constraint, and with thinking off so the answer is
+        not spent inside a reasoning block.
+        """
+        payload = {
+            "model": model or self._model,
+            "messages": [{"role": "system", "content": system}, *messages],
+            "stream": False,
+            "think": False,
+            "options": {"num_predict": max_tokens},
+        }
+        try:
+            async with self._get_session().post(
+                f"{self._ollama_url}/api/chat", json=payload, timeout=_API_TIMEOUT
+            ) as resp:
+                if resp.status != 200:
+                    await _log_http_error(resp)
+                    raise ChatError(f"Ollama could not answer: HTTP {resp.status}")
+                data = await resp.json()
+        except ChatError:
+            raise
+        except (TimeoutError, aiohttp.ClientError, OSError, ValueError) as exc:
+            _LOGGER.warning("Ollama: assistant question failed: %s", exc)
+            raise ChatError(describe_failure("Ollama", exc)) from exc
+        message = data.get("message") if isinstance(data, dict) else None
+        content = message.get("content") if isinstance(message, dict) else None
+        if not isinstance(content, str) or not content.strip():
+            raise ChatError("Ollama returned an empty answer")
+        return ChatReply(
+            text=content.strip(),
+            prompt_tokens=int(data.get("prompt_eval_count") or 0),
+            completion_tokens=int(data.get("eval_count") or 0),
+        )
 
     async def _call_model(self, frames: list[bytes], prompt: str) -> str:
         return await self.call_ollama(frames, prompt)

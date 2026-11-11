@@ -128,6 +128,15 @@ export const ICONS = {
       { x: 4, y: 8, width: 16, height: 12, rx: 1 },
     ],
   },
+  'tab-assistant': {
+    // A speech bubble with three dots: a conversation, not a camera.
+    paths: [
+      'M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l2-3A8.5 8.5 0 1 1 21 11.5z',
+      'M8.5 11.5h.1',
+      'M12.5 11.5h.1',
+      'M16.5 11.5h.1',
+    ],
+  },
   'tab-backup': {
     // The familiar "restore" arrow looping back round a clock face: a copy
     // of the past, distinct from tab-storage's box.

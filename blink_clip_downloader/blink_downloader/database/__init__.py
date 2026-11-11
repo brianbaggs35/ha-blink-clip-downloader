@@ -15,6 +15,7 @@ mixin owns the tables for a single job and can be read on its own:
     core        connecting, applying the schema, shutting down
     clips       the clip library and its archive lifecycle
     analysis    what the AI concluded, and what the tokens cost
+    assistant   bounded, read-only views of recent activity for the AI Assistant
     detections  the boxes, security events and vehicle signatures behind it
     faces       enrolled household members and the bypass audit trail
     learning    user feedback, activity baselines, scene drift
@@ -42,6 +43,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from .analysis import AnalysisResultsMixin
+from .assistant import AssistantMixin
 from .backup import BACKUP_TABLES, TRANSIENT_TABLES, BackupMixin
 from .cameras import CameraStateMixin
 from .clips import ClipFilters, ClipLibraryMixin
@@ -71,6 +73,7 @@ class ClipDatabase(
     ConnectionMixin,
     ClipLibraryMixin,
     AnalysisResultsMixin,
+    AssistantMixin,
     DetectionsMixin,
     FaceEnrollmentsMixin,
     AdaptiveLearningMixin,

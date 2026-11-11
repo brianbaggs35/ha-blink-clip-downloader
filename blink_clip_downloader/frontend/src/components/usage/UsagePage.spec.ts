@@ -229,6 +229,91 @@ describe('UsagePage', () => {
     wrapper.unmount()
   })
 
+  describe('Security Assistant spend', () => {
+    const ASSISTANT = { questions: 4, tokens_prompt: 4000, tokens_completion: 1000, tokens_total: 5000, cost: 0.02 }
+    const ASSISTANT_ROW = {
+      model: 'claude-sonnet-x',
+      analyses: 4,
+      tokens_prompt: 4000,
+      tokens_completion: 1000,
+      escalated: false,
+      assistant: true,
+      cost: 0.02,
+    }
+
+    async function mountWith(overrides: Record<string, unknown>) {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(() => Promise.resolve(jsonResponse(baseUsage(overrides)))),
+      )
+      const wrapper = mount(UsagePage)
+      await flushPromises()
+      return wrapper
+    }
+
+    it('shows what the assistant used, and names its row in the breakdown', async () => {
+      const wrapper = await mountWith({
+        assistant: ASSISTANT,
+        total_tokens: 6500,
+        total_estimated_cost: 0.03,
+        by_model: [...baseUsage().by_model, ASSISTANT_ROW],
+      })
+      expect(wrapper.get('[data-testid="usage-assistant-questions"]').text()).toContain('4')
+      expect(wrapper.get('[data-testid="usage-assistant-questions"]').text()).toContain('Assistant Questions')
+      expect(wrapper.get('[data-testid="usage-assistant-tokens"]').text()).toContain('5.0K')
+      expect(wrapper.get('[data-testid="usage-assistant-cost"]').text()).toContain('$0.0200')
+      expect(wrapper.text()).toContain('claude-sonnet-x (assistant questions)')
+      wrapper.unmount()
+    })
+
+    it('keeps the assistant out of the average cost per clip', async () => {
+      const wrapper = await mountWith({
+        assistant: ASSISTANT,
+        total_estimated_cost: 0.04,
+        by_model: [...baseUsage().by_model, ASSISTANT_ROW],
+      })
+      // (0.04 total - 0.02 assistant) / 10 clips
+      expect(wrapper.text()).toContain('$0.0020')
+      wrapper.unmount()
+    })
+
+    it('shows nothing about the assistant when it has not been asked anything', async () => {
+      const wrapper = await mountWith({
+        assistant: { questions: 0, tokens_prompt: 0, tokens_completion: 0, tokens_total: 0, cost: 0 },
+      })
+      expect(wrapper.find('[data-testid="usage-assistant-questions"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="usage-assistant-cost"]').exists()).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('leaves out the cost when the model could not be priced, and the tokens when none are reported', async () => {
+      const wrapper = await mountWith({
+        provider: 'moondream_local',
+        assistant: { questions: 2, tokens_prompt: 0, tokens_completion: 0, tokens_total: 0, cost: null },
+      })
+      expect(wrapper.find('[data-testid="usage-assistant-questions"]').exists()).toBe(true)
+      expect(wrapper.find('[data-testid="usage-assistant-tokens"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="usage-assistant-cost"]').exists()).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('leaves out the tokens when the count is missing', async () => {
+      const wrapper = await mountWith({ assistant: { questions: 1, cost: 0.001 } })
+      expect(wrapper.find('[data-testid="usage-assistant-tokens"]').exists()).toBe(false)
+      wrapper.unmount()
+    })
+
+    it("shows the assistant's tokens even where clip analysis reports none (a local provider)", async () => {
+      const wrapper = await mountWith({
+        provider: 'ollama',
+        total_tokens: 0,
+        assistant: { questions: 1, tokens_prompt: 900, tokens_completion: 100, tokens_total: 1000, cost: null },
+      })
+      expect(wrapper.get('[data-testid="usage-assistant-tokens"]').text()).toContain('1.0K')
+      wrapper.unmount()
+    })
+  })
+
   it('counts models used by distinct model name, not by row (tier-1 + escalated rows for the same model)', async () => {
     vi.stubGlobal(
       'fetch',

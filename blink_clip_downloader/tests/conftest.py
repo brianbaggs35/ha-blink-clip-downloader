@@ -43,7 +43,7 @@ _ALL_TABLES = (
     "analysis_queue, gdrive_upload_queue, "
     "camera_baselines, camera_duration_stats, camera_scene_baselines, "
     "analysis_feedback, face_enrollments, battery_history, "
-    "security_events, camera_vehicle_signatures"
+    "security_events, camera_vehicle_signatures, assistant_chats, assistant_usage"
 )
 
 

@@ -192,6 +192,36 @@ CREATE TABLE IF NOT EXISTS ai_usage_reset (
     reset_at TEXT NOT NULL DEFAULT ''
 );
 
+-- The Security Assistant tab's saved chats (see blink_downloader/assistant.py).
+-- One row per chat; ``messages`` is a JSON array of {role, content, at, ...}
+-- so a chat is read and deleted as one unit and nothing else points at it.
+-- No camera column, no foreign key: a camera rename has nothing to carry, and
+-- a clip deleted later leaves a chat's citation to it as plain history.
+CREATE TABLE IF NOT EXISTS assistant_chats (
+    id         TEXT PRIMARY KEY,
+    title      TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    messages   TEXT NOT NULL DEFAULT '[]'
+);
+CREATE INDEX IF NOT EXISTS idx_assistant_chats_updated
+    ON assistant_chats (updated_at DESC);
+
+-- What each Security Assistant question cost in tokens, one row per answer.
+-- Its own table rather than a column on assistant_chats so that deleting a
+-- chat does not erase what it spent: the AI Usage tab adds these rows to the
+-- clip-analysis totals, and its "Clear Stats" cutoff applies to them too.
+CREATE TABLE IF NOT EXISTS assistant_usage (
+    id                INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    provider          TEXT    NOT NULL DEFAULT '',
+    model             TEXT    NOT NULL,
+    tokens_prompt     INTEGER NOT NULL DEFAULT 0,
+    tokens_completion INTEGER NOT NULL DEFAULT 0,
+    recorded_at       TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_assistant_usage_recorded
+    ON assistant_usage (recorded_at);
+
 CREATE TABLE IF NOT EXISTS analysis_queue (
     id            INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     clip_id       TEXT    NOT NULL UNIQUE REFERENCES clips(id) ON DELETE CASCADE,

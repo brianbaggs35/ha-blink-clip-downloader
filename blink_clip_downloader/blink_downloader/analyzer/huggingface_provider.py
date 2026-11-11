@@ -34,6 +34,7 @@ from ..model_catalog import (
     split_huggingface_model,
 )
 from .base import _VISION_SYSTEM_PROMPT, BaseAnalyzer, SecurityLayerSettings
+from .chat import DEFAULT_MAX_ANSWER_TOKENS, ChatError, ChatReply, describe_failure
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -229,6 +230,8 @@ class HuggingFaceAnalyzer(BaseAnalyzer):
     # Connection
     # ------------------------------------------------------------------
 
+    supports_chat = True
+
     def _get_client(self) -> Any:
         if self._client is None:
             import openai as _openai  # type: ignore[import-not-found]
@@ -324,6 +327,32 @@ class HuggingFaceAnalyzer(BaseAnalyzer):
     # ------------------------------------------------------------------
     # Request
     # ------------------------------------------------------------------
+
+    async def chat(
+        self,
+        system: str,
+        messages: list[dict[str, str]],
+        max_tokens: int = DEFAULT_MAX_ANSWER_TOKENS,
+        model: str | None = None,
+    ) -> ChatReply:
+        """Answer a text-only conversation through the router (the AI Assistant tab)."""
+        try:
+            response = await self._get_client().chat.completions.create(
+                model=model or self._model,
+                messages=[{"role": "system", "content": system}, *messages],
+                max_tokens=max_tokens,
+            )
+        except Exception as exc:
+            _LOGGER.warning("Hugging Face: assistant question failed: %s", exc)
+            raise ChatError(describe_failure("Hugging Face", exc)) from exc
+        usage = getattr(response, "usage", None)
+        choices = getattr(response, "choices", None) or []
+        text = (choices[0].message.content or "") if choices else ""
+        return ChatReply(
+            text=self._without_reasoning(text),
+            prompt_tokens=int(getattr(usage, "prompt_tokens", 0) or 0),
+            completion_tokens=int(getattr(usage, "completion_tokens", 0) or 0),
+        )
 
     async def _call_model(self, frames: list[bytes], prompt: str) -> str:
         if not frames:

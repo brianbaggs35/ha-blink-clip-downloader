@@ -41,7 +41,8 @@ const avgCostPerClip = computed(() => {
   const total = usage.value?.total_estimated_cost
   const count = usage.value?.total_analyses || 0
   if (!showCost.value || total == null || count <= 0) return null
-  return total / count
+  // The headline total includes the assistant's questions, which are not clips.
+  return (total - (usage.value?.assistant?.cost || 0)) / count
 })
 // Guards against a malformed/incomplete API response the same way the rest
 // of this page already treats missing fields (see showCost/showTokens
@@ -50,6 +51,11 @@ const avgCostPerClip = computed(() => {
 // runtime, and an unguarded usage.by_model.length below would otherwise
 // throw instead of just rendering the empty-state message.
 const byModel = computed(() => usage.value?.by_model || [])
+// What the Security Assistant tab has spent. Already inside the totals above
+// (so the headline cost covers it); these tiles say how much of that it was.
+const assistantQuestions = computed(() => usage.value?.assistant?.questions || 0)
+const assistantTokens = computed(() => usage.value?.assistant?.tokens_total || 0)
+const assistantCost = computed(() => (assistantQuestions.value > 0 ? (usage.value?.assistant?.cost ?? null) : null))
 const dailyRows = computed(() => usage.value?.daily || [])
 
 // Usage history granularity. Day is free — it reads the `daily` array the
@@ -267,6 +273,18 @@ async function clearUsage() {
             <div class="num">{{ fmtCost(avgCostPerClip) }}</div>
             <div class="lbl">Avg. Cost / Clip</div>
           </div>
+          <div v-if="assistantQuestions > 0" class="usage-stat" data-testid="usage-assistant-questions">
+            <div class="num">{{ fmtNum(assistantQuestions) }}</div>
+            <div class="lbl">Assistant Questions</div>
+          </div>
+          <div v-if="assistantTokens > 0" class="usage-stat" data-testid="usage-assistant-tokens">
+            <div class="num">{{ fmtNum(assistantTokens) }}</div>
+            <div class="lbl">Assistant Tokens</div>
+          </div>
+          <div v-if="assistantCost != null" class="usage-stat" data-testid="usage-assistant-cost">
+            <div class="num">{{ fmtCost(assistantCost) }}</div>
+            <div class="lbl">Assistant Cost</div>
+          </div>
           <div v-if="modelsUsedCount > 0" class="usage-stat">
             <div class="num">{{ fmtNum(modelsUsedCount) }}</div>
             <div class="lbl">Models Used</div>
@@ -303,7 +321,8 @@ async function clearUsage() {
               <tr v-for="(m, i) in byModel" :key="i">
                 <td>
                   {{ m.model || '—'
-                  }}<span v-if="m.escalated" style="color: var(--muted); font-size: 0.75em"> (escalated)</span>
+                  }}<span v-if="m.escalated" style="color: var(--muted); font-size: 0.75em"> (escalated)</span
+                  ><span v-if="m.assistant" style="color: var(--muted); font-size: 0.75em"> (assistant questions)</span>
                 </td>
                 <td style="text-align: right">{{ fmtNum(m.analyses || 0) }}</td>
                 <template v-if="showTokens">

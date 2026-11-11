@@ -214,5 +214,33 @@ async def seed_library(db: Any, media_dir: Path) -> dict[str, Any]:
         battery_level=80,
         recorded_at="2026-10-01T00:00:00+00:00",
     )
+    await insert(
+        db,
+        "assistant_chats",
+        id="chat1",
+        title="Porch questions",
+        created_at="2026-10-02T08:00:00+00:00",
+        updated_at="2026-10-02T08:05:00+00:00",
+        messages=json.dumps(
+            [
+                {"role": "user", "content": "Anything at the door?", "at": NOW},
+                {
+                    "role": "assistant",
+                    "content": "Nothing odd.",
+                    "at": NOW,
+                    "clips": [],
+                },
+            ]
+        ),
+    )
+    await insert(
+        db,
+        "assistant_usage",
+        provider="anthropic",
+        model="claude-haiku-4-5",
+        tokens_prompt=900,
+        tokens_completion=60,
+        recorded_at="2026-10-02T08:05:00+00:00",
+    )
     await insert(db, "ai_usage_reset", id=1, reset_at="2026-09-15T00:00:00+00:00")
     return {"c1": c1, "first_analysis": first, "feedback": feedback}

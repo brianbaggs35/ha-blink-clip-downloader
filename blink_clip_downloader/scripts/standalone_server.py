@@ -50,6 +50,7 @@ from PIL import Image
 import blink_downloader
 from blink_downloader import media_server
 from blink_downloader.analyzer import ClipAnalyzer
+from blink_downloader.analyzer.chat import ChatReply
 from blink_downloader.archiver import ClipArchiver
 from blink_downloader.database import ClipDatabase
 from blink_downloader.gdrive_client import GDriveClient
@@ -233,6 +234,44 @@ class _E2EFaceEmbedder(FaceEmbedder):
 _UNREACHABLE_OLLAMA_URL = "http://127.0.0.1:1"
 
 
+# Every name face enrollment seeds, so the Security Assistant's stand-in can
+# say whether any of them reached the "provider" (see _e2e_chat).
+_E2E_ENROLLED_NAMES = ("Alex E2E", "Jordan E2E", "Casey E2E", "Riley E2E")
+_E2E_CHAT_MODELS = ("e2e-small", "e2e-large")
+
+
+async def _e2e_chat(
+    system: str,
+    messages: list[dict[str, str]],
+    max_tokens: int = 0,
+    model: str | None = None,
+) -> ChatReply:
+    """Stands in for the provider's answer to a Security Assistant question.
+
+    Everything *before* it is real: the report is built from the seeded
+    database and the question and history are redacted by the real code. This
+    only replaces the paid call, and reports back what it was sent so a spec
+    can see the guardrail hold: the question as received (names already
+    redacted), the model asked, whether the report has a clip to cite, and
+    whether any enrolled name got through.
+    """
+    sent = system + "\n" + "\n".join(m["content"] for m in messages)
+    leaked = any(name.lower() in sent.lower() for name in _E2E_ENROLLED_NAMES)
+    cites = "\nC1 |" in system
+    return ChatReply(
+        f"E2E answer to: {messages[-1]['content']} "
+        f"[model: {model or 'default'}] "
+        f"[enrolled names sent: {'yes' if leaked else 'no'}]"
+        + (" See C1." if cites else ""),
+        prompt_tokens=1200,
+        completion_tokens=80,
+    )
+
+
+async def _e2e_chat_models() -> list[dict[str, Any]]:
+    return [{"name": name} for name in _E2E_CHAT_MODELS]
+
+
 class _FakeBlinkAuth:
     """Deterministic Blink auth/2FA state machine for browser E2E tests."""
 
@@ -288,7 +327,7 @@ _ALL_TABLES = (
     "gdrive_upload_queue, "
     "camera_baselines, camera_duration_stats, camera_scene_baselines, "
     "analysis_feedback, face_enrollments, battery_history, "
-    "security_events, detected_objects, camera_vehicle_signatures"
+    "security_events, detected_objects, camera_vehicle_signatures, assistant_chats, assistant_usage"
 )
 
 
@@ -968,6 +1007,10 @@ async def _main() -> None:
     analyzer = ClipAnalyzer(
         ollama_url=_UNREACHABLE_OLLAMA_URL, model="llava", prompt="Describe this clip."
     )
+    # The one paid call the Security Assistant makes, and the model list its
+    # picker shows (the unreachable server above has neither).
+    analyzer.chat = _e2e_chat  # type: ignore[method-assign]
+    analyzer.fetch_models = _e2e_chat_models  # type: ignore[method-assign]
     # As app.py does at startup, so the seeded asset is live from the start.
     analyzer.update_protected_assets(
         read_assets(media_server.MediaServer._PROTECTED_ASSETS_FILE)

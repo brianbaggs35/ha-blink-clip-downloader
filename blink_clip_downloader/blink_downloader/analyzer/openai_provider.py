@@ -22,6 +22,7 @@ from ..model_catalog import (
     model_entry,
 )
 from .base import _VISION_SYSTEM_PROMPT, BaseAnalyzer, SecurityLayerSettings
+from .chat import DEFAULT_MAX_ANSWER_TOKENS, ChatError, ChatReply, describe_failure
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -97,6 +98,8 @@ class OpenAIAnalyzer(BaseAnalyzer):
             2.50,
             10.00,
         )  # gpt-4o level fallback for unknown models
+
+    supports_chat = True
 
     def _get_client(self) -> Any:
         if self._client is None:
@@ -217,6 +220,37 @@ class OpenAIAnalyzer(BaseAnalyzer):
         except Exception as exc:  # noqa: BLE001
             _LOGGER.debug("Frame resize failed, sending original: %s", exc)
         return frame_bytes
+
+    async def chat(
+        self,
+        system: str,
+        messages: list[dict[str, str]],
+        max_tokens: int = DEFAULT_MAX_ANSWER_TOKENS,
+        model: str | None = None,
+    ) -> ChatReply:
+        """Answer a text-only conversation (the AI Assistant tab)."""
+        # The o-series and gpt-5/6 families spend part of the cap on hidden
+        # reasoning, so the answer's own budget is added on top of a margin
+        # rather than being the whole cap (it would come back empty).
+        chosen = model or self._model
+        reasoning = chosen.lower().startswith(("o1", "o3", "o4", "gpt-5", "gpt-6"))
+        try:
+            response = await self._get_client().chat.completions.create(
+                model=chosen,
+                messages=[{"role": "system", "content": system}, *messages],
+                max_completion_tokens=max_tokens + (4096 if reasoning else 0),
+            )
+        except Exception as exc:
+            _LOGGER.warning("OpenAI: assistant question failed: %s", exc)
+            raise ChatError(describe_failure("OpenAI", exc)) from exc
+        usage = getattr(response, "usage", None)
+        choices = getattr(response, "choices", None) or []
+        text = (choices[0].message.content or "") if choices else ""
+        return ChatReply(
+            text=text.strip(),
+            prompt_tokens=int(getattr(usage, "prompt_tokens", 0) or 0),
+            completion_tokens=int(getattr(usage, "completion_tokens", 0) or 0),
+        )
 
     async def _call_model(self, frames: list[bytes], prompt: str) -> str:
         return await self._call_openai_model(frames, prompt, self._model)
