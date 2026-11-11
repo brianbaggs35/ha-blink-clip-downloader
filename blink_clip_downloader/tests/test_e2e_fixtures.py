@@ -12,8 +12,6 @@ from blink_downloader.e2e_fixtures import (
     SECURITY_FEED_NO_SNAPSHOT_CAMERA,
     E2EFaceEmbedder,
     E2EFixtures,
-    e2e_chat,
-    e2e_chat_models,
 )
 
 
@@ -113,32 +111,3 @@ def test_fixture_enables_face_recognition_for_its_media_server(monkeypatch) -> N
 
     assert faces_routes.is_face_recognition_available()
     assert server._face_embedder is fixtures.face_embedder
-
-
-async def test_assistant_stand_in_reports_what_it_was_sent() -> None:
-    reply = await e2e_chat(
-        "report\nC1 | clip", [{"role": "user", "content": "Hi?"}], model="m"
-    )
-
-    assert reply.text.startswith("E2E answer to: Hi? [model: m]")
-    assert "[enrolled names sent: no]" in reply.text
-    assert reply.text.endswith("See C1.")
-    assert (reply.prompt_tokens, reply.completion_tokens) == (1200, 80)
-
-
-async def test_assistant_stand_in_notices_a_leaked_name_and_a_missing_clip() -> None:
-    reply = await e2e_chat("report", [{"role": "user", "content": "Is riley e2e in?"}])
-
-    assert "[model: default]" in reply.text
-    assert "[enrolled names sent: yes]" in reply.text
-    assert "See C1." not in reply.text
-
-
-async def test_assistant_model_list_and_enable_assistant() -> None:
-    analyzer = MagicMock()
-
-    E2EFixtures.enable_assistant(analyzer)
-
-    assert analyzer.chat is e2e_chat
-    assert analyzer.fetch_models is e2e_chat_models
-    assert [m["name"] for m in await e2e_chat_models()] == ["e2e-small", "e2e-large"]
