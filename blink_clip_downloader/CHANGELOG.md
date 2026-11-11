@@ -18,6 +18,10 @@
 - Updated openai to 3.49.0
 - Updated ultralytics to 8.4.210
 
+# Frontend Updates
+
+- Updated eslint-plugin-vue to 10.12.1
+
 ### Release Workflow
 
 
