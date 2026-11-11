@@ -56,6 +56,14 @@ describe('AppSidebar', () => {
     expect(wrapper.emitted('update:modelValue')?.[0]).toEqual(['status'])
   })
 
+  it('has a Security Assistant tab that opens the assistant page', async () => {
+    const wrapper = mountSidebar('library')
+    const tab = wrapper.find('[data-tab="assistant"]')
+    expect(tab.text()).toContain('Security Assistant')
+    await tab.trigger('click')
+    expect(wrapper.emitted('update:modelValue')?.[0]).toEqual(['assistant'])
+  })
+
   it('emits help when the help button is clicked', async () => {
     const wrapper = mountSidebar()
     await wrapper.find('[title="Keyboard shortcuts (?)"]').trigger('click')

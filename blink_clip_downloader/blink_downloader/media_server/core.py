@@ -85,6 +85,8 @@ class _MediaServerBase:
     # The one backup or restore allowed to run at a time, and the upload a
     # restore is working from.
     _backup_lock: asyncio.Lock
+    # The one Security Assistant question answered at a time.
+    _assistant_lock: asyncio.Lock
     _restore_staging: RestoreStaging
     _moondream_install_task: asyncio.Task | None
     _gdrive_connect_task: asyncio.Task | None

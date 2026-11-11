@@ -71,6 +71,7 @@ DATA_FILES: tuple[DataFile, ...] = (
     ),
     DataFile("camera_name_aliases.json", "Camera rename history", _SETTINGS),
     DataFile("vehicle_settings.json", "Protected vehicle description", _SETTINGS),
+    DataFile("assistant_settings.json", "Security Assistant settings", _SETTINGS),
     DataFile("protected_assets.json", "Protected assets", _SETTINGS),
     DataFile("security_feed_settings.json", "Security Feed layout", _SETTINGS),
     DataFile("finetune_state.json", "Moondream fine-tune selection", _SETTINGS),

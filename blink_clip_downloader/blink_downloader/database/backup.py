@@ -128,6 +128,20 @@ BACKUP_TABLES: tuple[BackupTable, ...] = (
         (_CAMERA, "recorded_at"),
     ),
     BackupTable(
+        "assistant_chats",
+        "Security Assistant chats",
+        ROLE_INDEPENDENT,
+        "id",
+        ("id",),
+    ),
+    BackupTable(
+        "assistant_usage",
+        "Security Assistant token usage",
+        ROLE_INDEPENDENT,
+        "id",
+        ("recorded_at", "model"),
+    ),
+    BackupTable(
         "ai_usage_reset",
         "AI Usage reset point",
         ROLE_INDEPENDENT,

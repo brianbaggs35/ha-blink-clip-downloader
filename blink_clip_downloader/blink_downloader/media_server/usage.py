@@ -119,6 +119,14 @@ class UsageRoutesMixin(_MediaServerBase):
             total_cost += row_cost
             any_priced = True
         usage["total_estimated_cost"] = total_cost if any_priced else None
+        # The Security Assistant's own share of that total, for its stat card.
+        assistant = usage.get("assistant")
+        if isinstance(assistant, dict):
+            assistant_rows = [
+                r for r in usage.get("by_model", []) if r.get("assistant")
+            ]
+            priced = [r["cost"] for r in assistant_rows if r.get("cost") is not None]
+            assistant["cost"] = sum(priced) if priced else None
 
     @staticmethod
     def _bucket_usage_rows(
@@ -140,8 +148,8 @@ class UsageRoutesMixin(_MediaServerBase):
         a local/free provider from being shown an invented $0.00.
 
         Escalation rows carry the same clip count as the tier-1 row they came
-        from, so only tier-1 rows add to ``analyses`` — their tokens still
-        count. Returned newest bucket first.
+        from, and an assistant row counts questions, not clips, so only tier-1
+        rows add to ``analyses`` — the others' tokens still count. Returned newest bucket first.
         """
         totals: dict[str, dict[str, Any]] = {}
         for row in rows:
@@ -159,7 +167,7 @@ class UsageRoutesMixin(_MediaServerBase):
             )
             tp = int(row.get("tokens_prompt") or 0)
             tc = int(row.get("tokens_completion") or 0)
-            if not row.get("escalated"):
+            if not row.get("escalated") and not row.get("assistant"):
                 entry["analyses"] += int(row.get("analyses") or 0)
             entry["tokens_prompt"] += tp
             entry["tokens_completion"] += tc

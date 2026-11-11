@@ -55,6 +55,7 @@ from ..security import (
     summarize_assessment,
 )
 from ..security.geometry import box_overlap_coefficient
+from .chat import DEFAULT_MAX_ANSWER_TOKENS, ChatNotSupportedError, ChatReply
 
 if TYPE_CHECKING:
     from ..database import ClipDatabase
@@ -1133,9 +1134,36 @@ class BaseAnalyzer(abc.ABC):
     async def _call_model(self, frames: list[bytes], prompt: str) -> str:
         """Send frames to the AI backend and return the raw response text."""
 
+    #: Whether :meth:`chat` is implemented. Read by the Security Assistant
+    #: to explain itself before a question is asked rather than after.
+    supports_chat: bool = False
+
     @abc.abstractmethod
     async def close(self) -> None:
         """Release resources (HTTP sessions, loaded models, etc.)."""
+
+    async def chat(
+        self,
+        system: str,
+        messages: list[dict[str, str]],
+        max_tokens: int = DEFAULT_MAX_ANSWER_TOKENS,
+        model: str | None = None,
+    ) -> ChatReply:
+        """Answer a text-only conversation: the AI Assistant tab's one call.
+
+        *messages* alternate ``user`` / ``assistant`` and end with a ``user``
+        turn. *model* overrides the configured model for this one question
+        (the Security Assistant's own model setting); ``None`` uses it. Unlike :meth:`_call_model` there are no frames and no verdict
+        schema. A provider that can hold a conversation overrides this; the
+        default, for the ones that cannot (Moondream's captioning models,
+        Replicate's per-model input shapes), says so rather than returning
+        text. Raises :class:`ChatError` when the provider fails.
+        """
+        raise ChatNotSupportedError(
+            f"The {self.provider_name} provider cannot answer questions. "
+            "Switch ai_provider to Anthropic, OpenAI, Hugging Face or Ollama "
+            "to use the assistant."
+        )
 
     # ------------------------------------------------------------------
     # Optional: provider-specific pricing
