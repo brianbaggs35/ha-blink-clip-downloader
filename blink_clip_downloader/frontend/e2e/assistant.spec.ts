@@ -7,6 +7,11 @@ import type { Page } from '@playwright/test'
 // is replaced (standalone_server.py's _e2e_chat), and it reports back what it was
 // sent, so these tests can see that no enrolled name got through.
 //
+// A question needs the stand-in provider standalone_server.py wires in, which the
+// Home Assistant run does not have (it would call a real, unreachable Ollama), so
+// the specs that ask or list models carry @standalone like every other spec that
+// depends on a stand-in; the welcome and the model-validation specs run in both.
+//
 // A question writes a chat and a row of spend, so each test removes the chats it
 // made and puts the settings back over HTTP -- never by navigating, which would
 // throw away the coverage the test collected.
@@ -54,7 +59,9 @@ test('opens on a welcome, names the provider and says what is never sent', async
   await expect(page.getByText('No chats yet')).toBeVisible()
 })
 
-test('a question is answered, titled and kept, and no enrolled name reaches the provider', async ({ page }) => {
+test('a question is answered, titled and kept, and no enrolled name reaches the provider @standalone', async ({
+  page,
+}) => {
   await ask(page, 'Was Riley E2E at the door?')
 
   await expect(bubbles(page)).toHaveCount(2)
@@ -66,7 +73,7 @@ test('a question is answered, titled and kept, and no enrolled name reaches the 
   await expect(page.getByTestId('assistant-chat-item').first()).toContainText('Was Riley E2E at the door?')
 })
 
-test('a clip the answer cites opens in the Library player without leaving the tab', async ({ page }) => {
+test('a clip the answer cites opens in the Library player without leaving the tab @standalone', async ({ page }) => {
   // Nothing seeded is analyzed (any analysis row would move the AI tabs' counts),
   // so the server has no clip to cite itself -- pytest covers that half. This adds
   // a citation of a real seeded clip to the real answer.
@@ -91,7 +98,7 @@ test('a clip the answer cites opens in the Library player without leaving the ta
   await expect(page.locator('.app-nav-tab.active[data-tab="assistant"]')).toBeVisible()
 })
 
-test('a chat survives a reload and keeps its messages', async ({ page }) => {
+test('a chat survives a reload and keeps its messages @standalone', async ({ page }) => {
   await ask(page, 'How are the batteries?')
   await expect(bubbles(page)).toHaveCount(2)
 
@@ -103,7 +110,7 @@ test('a chat survives a reload and keeps its messages', async ({ page }) => {
   await expect(bubbles(page).first()).toContainText('How are the batteries?')
 })
 
-test('a suggestion asks its question with one click', async ({ page }) => {
+test('a suggestion asks its question with one click @standalone', async ({ page }) => {
   const suggestion = page.getByTestId('assistant-suggestion').first()
   const text = (await suggestion.innerText()).trim()
   await suggestion.click()
@@ -111,7 +118,7 @@ test('a suggestion asks its question with one click', async ({ page }) => {
   await expect(bubbles(page)).toHaveCount(2)
 })
 
-test('chats can be started, renamed, switched between and deleted', async ({ page }) => {
+test('chats can be started, renamed, switched between and deleted @standalone', async ({ page }) => {
   await ask(page, 'First question')
   await expect(bubbles(page)).toHaveCount(2)
 
@@ -143,7 +150,7 @@ test('chats can be started, renamed, switched between and deleted', async ({ pag
   await expect(page.getByTestId('assistant-chat-item')).toContainText('Driveway watch')
 })
 
-test('Escape cancels a rename and leaves the name alone', async ({ page }) => {
+test('Escape cancels a rename and leaves the name alone @standalone', async ({ page }) => {
   await ask(page, 'Keep this name')
   await expect(bubbles(page)).toHaveCount(2)
   await page.getByRole('button', { name: 'Options for Keep this name' }).click()
@@ -154,7 +161,7 @@ test('Escape cancels a rename and leaves the name alone', async ({ page }) => {
   await expect(page.getByTestId('assistant-chat-item')).toContainText('Keep this name')
 })
 
-test("the gear opens settings, the model comes from the provider's list, and the choice is used and kept", async ({
+test("the gear opens settings, the model comes from the provider's list, and the choice is used and kept @standalone", async ({
   page,
 }) => {
   await page.getByTestId('assistant-settings-button').click()
@@ -191,7 +198,7 @@ test("a model that is not in the provider's list cannot be saved", async ({ page
   expect(status.settings.model).toBe('')
 })
 
-test("the assistant's spend shows on the AI Usage tab", async ({ page }) => {
+test("the assistant's spend shows on the AI Usage tab @standalone", async ({ page }) => {
   await ask(page, 'Anything unusual?')
   await expect(bubbles(page)).toHaveCount(2)
 
@@ -206,7 +213,7 @@ test("the assistant's spend shows on the AI Usage tab", async ({ page }) => {
   await expect(page.getByTestId('usage-assistant-questions')).toContainText('Assistant Questions')
 })
 
-test('chats and their spend are part of a backup', async ({ page }) => {
+test('chats and their spend are part of a backup @standalone', async ({ page }) => {
   await ask(page, 'Is this in the backup?')
   await expect(bubbles(page)).toHaveCount(2)
 
