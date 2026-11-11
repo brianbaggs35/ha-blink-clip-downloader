@@ -24,6 +24,17 @@
 - Updated typescript-eslint to 8.72.2
 - Updated vite to 8.3.8
 
+# Dockerfile Updates
+
+- Updated setuptools to 84.2.1
+- Updated wheel to 0.48.0
+- Updated filelock to 4.2.10
+- Updated lap to 0.5.14
+- Updated transformers to 5.22.2
+- Updated ultralytics to 8.4.210
+- Updated kestrel to 0.9.2
+- Updated moondream to 2.6.1
+
 ### Release Workflow
 
 
