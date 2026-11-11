@@ -12,6 +12,7 @@ import LibraryPage from './components/library/LibraryPage.vue'
 import LiveViewPage from './components/liveview/LiveViewPage.vue'
 import SecurityFeedPage from './components/securityfeed/SecurityFeedPage.vue'
 import SecurityPage from './components/security/SecurityPage.vue'
+import AssistantPage from './components/assistant/AssistantPage.vue'
 import SyncModulePage from './components/syncmodule/SyncModulePage.vue'
 import AiPage from './components/ai/AiPage.vue'
 import UsagePage from './components/usage/UsagePage.vue'
@@ -121,6 +122,9 @@ onUnmounted(() => auth.stopPolling())
   </div>
   <div id="page-security" class="page" :class="{ active: activeTab === 'security' }">
     <SecurityPage v-if="activeTab === 'security'" />
+  </div>
+  <div id="page-assistant" class="page" :class="{ active: activeTab === 'assistant' }">
+    <AssistantPage v-if="activeTab === 'assistant'" />
   </div>
   <div id="page-vehicles" class="page" :class="{ active: activeTab === 'vehicles' }">
     <VehiclesPage v-if="activeTab === 'vehicles'" />

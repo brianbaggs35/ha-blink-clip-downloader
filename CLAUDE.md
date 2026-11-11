@@ -14,7 +14,8 @@ Add-ons → Repositories*). It currently contains a single add-on:
   them, Hugging Face and Replicate, added in 6.1.2), a Vue 3 + PrimeVue web UI (Video.js
   player) including a one-camera-at-a-time Live View tab (blinkpy's
   live-view session, bridged through ffmpeg into HLS — see `live_view.py`),
-  and optional AI-based suspicious-activity analysis of clips, including
+  a Security Assistant tab (a multi-chat Q&A over the system's own records, text only,
+  with enrolled names redacted), and optional AI-based suspicious-activity analysis of clips, including
   local-only face recognition that can auto-clear a clip's suspicious flag
   for approved household members, and a Backup & Restore tab (6.1.3) that
   saves the library, its analysis, faces and settings into one ZIP — to
@@ -53,7 +54,9 @@ architecture.
     `__init__.py` from one mixin per job — `clips.py` (the library and its
     archive lifecycle), `analysis.py` (verdicts and token spend),
     `detections.py` (boxes, security events, vehicle signatures),
-    `faces.py` (enrollments and the bypass audit trail), `learning.py`
+    `faces.py` (enrollments and the bypass audit trail), `assistant.py`
+    (the Security Assistant's chats, the report's per-window queries and its
+    token spend), `learning.py`
     (feedback tuning, activity baselines, scene drift), `queues.py` (the
     analysis and Drive upload queues), `cameras.py` (battery history and
     carrying a rename across every camera-keyed table), `legacy.py` (the
@@ -80,7 +83,15 @@ architecture.
     `openai_provider.py`, `huggingface_provider.py` and
     `replicate_provider.py` hold only what differs about talking to one API;
     `factory.py` holds `create_analyzer()`, the only module that knows all
-    eight at once. Every provider module carries the `_provider` suffix for
+    eight at once. `chat.py` is the shared vocabulary of a *text-only
+    question* (`ChatReply`, `ChatError`, `ChatNotSupportedError`,
+    `describe_failure`) behind `BaseAnalyzer.chat()`, which the Security
+    Assistant calls: Anthropic, OpenAI, Hugging Face and Ollama (and Ollama
+    Cloud, which inherits) implement it and set `supports_chat = True`;
+    Moondream and Replicate keep the default that raises
+    `ChatNotSupportedError`, rather than returning text that looks like an
+    answer. A failure's message is built from the exception's *class and HTTP
+    status only* — SDK exception text can echo the request. Every provider module carries the `_provider` suffix for
     a concrete reason: **pyright resolves a bare `import <x>` to a
     same-named file in the importing file's own directory** when the real
     package isn't installed, so `moondream.py` doing `import moondream`
@@ -92,6 +103,34 @@ architecture.
     `from .analyzer import ...` is unchanged for callers — reach into a
     submodule only for an internal the facade deliberately doesn't
     export. See **AI provider architecture** below.
+  - `assistant.py` (BCD-9) — the Security Assistant's brain, behind the
+    Security Assistant tab: `ContextBuilder` writes a **text activity report**
+    (system status, library, cameras and sync modules, battery health,
+    security events, face-recognition *counts*, notable and recent clips
+    cited as `C1..Cn`) from the database and live state, and `ask()` sends it
+    plus a cleaned conversation to the **base** analyzer's `chat()` (never the
+    escalation analyzer) and maps `C#` citations back to clip ids. Rules that
+    must not erode, each pinned in `tests/test_assistant.py`: **no picture,
+    face thumbnail or embedding is ever read or sent** (the report has face
+    recognition as counts only, and `chat()` is text-only by signature);
+    **every enrolled name is redacted** to "a household member" — in the
+    report (`_personalize_summary` writes names into stored summaries), in the
+    question and in the history (`redact_names`, whole words, any case);
+    stored text is collapsed to one bounded line and the system prompt says
+    the report is data, not instructions; a provider that cannot chat says so.
+    The model is chosen in `/data/assistant_settings.json` from the provider's
+    own fetched list (never typed; the PUT rejects a name outside it), and
+    the *provider* is always the configured base one — keep the DOCS wording
+    ("the chat model is separate from the main model; the provider is the base
+    one") in step. `media_server/assistant.py` is the route side: chats are
+    rows in `assistant_chats` (limits `MAX_CHATS`, `MAX_MESSAGES_PER_CHAT`),
+    one question at a time (`_assistant_lock`, 429), spend goes to
+    `assistant_usage` *before* the chat is written to, so deleting a chat
+    mid-answer or later never loses it. Its routes must never be in
+    `access_control.TOKEN_ROUTES` (a chat holds a summary of what the cameras
+    saw; `tests/test_media_server_assistant.py` asserts it). The assistant's
+    rows in the AI Usage numbers carry `assistant: True` and are excluded
+    from analysis/clip counts but included in token and cost totals.
   - `protected_assets.py` — the stored form of assets marked on the Assets
     tab (`/data/protected_assets.json`: one entry per asset per camera —
     id, camera, name, `asset_type`, description, zone, enabled) and its one
@@ -357,7 +396,7 @@ architecture.
     changing: `app_shell` (the SPA, `/health`, Blink auth), `access`
     (direct-port sign-in: the gate middleware, `/login`, the access
     token — see below), `library`,
-    `status`, `liveview`, `security_feed`, `ai`, `usage`,
+    `status`, `liveview`, `security_feed`, `ai`, `assistant`, `usage`,
     `camera_configs`, `vehicles`, `assets`, `security_events`, `sync_module`,
     `feedback`, `faces`, `finetune`, `storage`, `automations`, `backup` — over
     `support.py` (middleware, CSP, JSON parsing, paging, shared error
@@ -752,7 +791,8 @@ removed in 5.0.0.
   once; it only surfaced via live browser testing under a real Home
   Assistant OS install, not any automated test. Current nav order: Library,
   Live View, Security Feed, Automations, Sync Module, Status, AI, AI Usage,
-  Models, Security Events, Vehicles, Assets, Biometrics, Storage, Backup &
+  Models, Security Events, Security Assistant (tab id `assistant`,
+  `components/assistant/`), Vehicles, Assets, Biometrics, Storage, Backup &
   Restore (tab id `backup`, `components/backup/`). Note the two
   similarly-named tabs are unrelated: **Security Feed** is the grid of
   near-live camera snapshots; **Security Events** is the structured
@@ -847,7 +887,13 @@ removed in 5.0.0.
   needs actual OAuth credentials)
   — also Live View and Biometrics, each via its own unlock trick (below);
   neither is a mock in the sense of faking application logic, just a fake
-  data source feeding the real code paths. Security Feed is
+  data source feeding the real code paths. Security Assistant is
+  unlocked by replacing only the paid call: the script gives the real analyzer a
+  stand-in `chat()` (`_e2e_chat`) and `fetch_models()`, so the report, the name
+  redaction, the chat storage and the usage accounting all run for real, and
+  `assistant.spec.ts` reads back, in the answer, what the "provider" was sent.
+  Nothing seeded is analyzed, so the server has no clip to cite and that spec
+  adds a citation to the real response with `page.route()`. Security Feed is
   unlocked the same cheap way the AI tab is (a real dependency pointed at
   something that fails fast, not a mock): `list_camera_names`/
   `get_camera_snapshot` are narrow callables MediaServer takes regardless of
@@ -1020,6 +1066,11 @@ Rules that are each a real hazard, with where they are pinned:
   `app._reimport_library`) clears the flag once the file reappears.
   `test_without_the_flag_the_archiver_really_would_erase_them` is the control.
   Any new code that deletes a row because its file is missing must respect it.
+- **Chats and the assistant's spend are carried** (`assistant_chats`, keyed on
+  id, so a chat already here is left exactly as it is; `assistant_usage`, keyed
+  on `recorded_at` + `model`), and `assistant_settings.json` with the other
+  settings. Their `TRUNCATE` lists in `tests/conftest.py` and
+  `scripts/standalone_server.py` must name them too.
 - **What is carried is classified, and tests fail until it is.**
   `tests/test_database_backup.py` fails for a table in neither `BACKUP_TABLES`
   nor `TRANSIENT_TABLES` (with a reason); `tests/test_backup_catalogue.py`

@@ -349,6 +349,8 @@ export interface TokenUsageModelRow {
   tokens_prompt: number
   tokens_completion: number
   escalated: boolean
+  /** A Security Assistant row: `analyses` counts questions, not clips. */
+  assistant?: boolean
   cost: number | null
 }
 
@@ -392,9 +394,19 @@ export interface AiUsage {
   total_tokens: number
   total_escalations: number
   total_escalation_tokens: number
+  /** The Security Assistant's own share of the totals above. */
+  assistant?: AssistantUsage
   by_model: TokenUsageModelRow[]
   total_estimated_cost: number | null
   daily: DailyUsageWire[]
+}
+
+export interface AssistantUsage {
+  questions: number
+  tokens_prompt: number
+  tokens_completion: number
+  tokens_total: number
+  cost: number | null
 }
 
 // ---------------------------------------------------------------------
@@ -1071,4 +1083,72 @@ export interface RestoreReport {
   checks: RestoreCheck[]
   verified: boolean
   restart_needed: boolean
+}
+
+// ---------------------------------------------------------------------
+// Security Assistant
+// ---------------------------------------------------------------------
+
+export interface AssistantSettings {
+  /** Empty means "use the provider's configured model". */
+  model: string
+  /** How many days of clips the assistant reads. */
+  days: number
+}
+
+export interface AssistantStatus {
+  enabled: boolean
+  settings: AssistantSettings
+  days_choices: number[]
+  chat_limit: number
+  message_limit: number
+  provider?: AiProvider
+  default_model?: string
+  /** Whether the configured provider can answer questions at all. */
+  supported?: boolean
+  /** Whether what the assistant reads is sent to a service rather than kept on this network. */
+  sends_off_device?: boolean
+}
+
+export interface AssistantModelsResponse {
+  enabled: boolean
+  models: string[]
+  default: string
+  provider?: AiProvider
+}
+
+export interface AssistantClipRef {
+  ref: string
+  id: string
+  camera: string
+  timestamp: string
+  is_suspicious: boolean
+}
+
+export interface AssistantMessage {
+  role: 'user' | 'assistant'
+  content: string
+  at: string
+  clips?: AssistantClipRef[]
+  model?: string
+  days?: number
+  prompt_tokens?: number
+  completion_tokens?: number
+}
+
+export interface AssistantChatSummary {
+  id: string
+  title: string
+  created_at: string
+  updated_at: string
+  message_count: number
+}
+
+export interface AssistantChat extends AssistantChatSummary {
+  messages: AssistantMessage[]
+}
+
+export interface AssistantAnswer {
+  title: string
+  messages: AssistantMessage[]
 }

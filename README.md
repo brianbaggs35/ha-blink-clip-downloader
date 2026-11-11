@@ -396,12 +396,36 @@ the full walkthrough — including moving the OAuth consent screen to
 production (recommended; otherwise Google expires the connection weekly),
 choosing a backup policy, and exactly what does and doesn't get uploaded.
 
+## Security Assistant
+
+The **Security Assistant** tab is a chat that answers questions about your security
+system in plain language: what was flagged last night, which cameras have low
+batteries, whether the system is armed, what face recognition has been doing. It reads
+the add-on's own records (clips and their AI summaries, security events, battery
+health, camera and sync-module status, and face-recognition *counts*) and links the
+clips it mentions. You can keep several named chats, rename and delete them.
+
+- **The provider is the one you set in the Configuration tab** (`ai_provider`), never
+  the escalation provider. The **model** is chosen separately, from the gear on the
+  tab, out of the list the provider reports, so it can differ from the model that
+  analyzes your clips. Anthropic, OpenAI, Hugging Face and Ollama can answer;
+  Moondream and Replicate cannot.
+- **No picture ever leaves the device for it**, and neither does a face photo or an
+  enrolled person's name: questions are text, enrolled names are replaced with "a
+  household member" before anything is sent, and face recognition reaches it only as
+  counts.
+- What it costs shows on the AI Usage tab, and chats and that spend are part of a
+  backup.
+
+See [Security Assistant](blink_clip_downloader/DOCS.md#security-assistant) for what it
+sees, its limits and how its cost is counted.
+
 ## Backup & Restore
 
 Everything the add-on has learned lives under `/data`, which Home Assistant
 removes when the add-on is uninstalled. The **Backup & Restore** tab saves it
-into one ZIP — the clip library and its AI analysis, enrolled faces (optional),
-what each camera has learned, and your settings — to download, or into your
+into one ZIP — the clip library and its AI analysis, Security Assistant chats,
+enrolled faces (optional), what each camera has learned, and your settings — to download, or into your
 Google Drive once that is connected. Restoring shows you exactly what is in the
 file and what it will do before anything changes, only ever *adds* what is
 missing (it never overwrites or duplicates what you have, so it is safe to run

@@ -111,17 +111,23 @@ def _suspicious_period_bounds(period: str | None) -> tuple[str | None, str | Non
 #: older build.
 _SEVERITY_ORDER: tuple[str, ...] = ("routine", "noteworthy", "suspicious", "critical")
 
+
 #: SQL expression ranking a ``security_events.severity`` value, so "most
 #: severe event for this clip" and "at least this severe" can both be
 #: answered in the database rather than by fetching everything and sorting
 #: in Python.
-_SEVERITY_RANK_SQL = (
-    "CASE se.severity "
-    + " ".join(
-        f"WHEN '{name}' THEN {rank}" for rank, name in enumerate(_SEVERITY_ORDER)
+def _severity_rank_sql(column: str) -> str:
+    """SQL turning the severity name in *column* into its rank in ``_SEVERITY_ORDER``."""
+    return (
+        f"CASE {column} "
+        + " ".join(
+            f"WHEN '{name}' THEN {rank}" for rank, name in enumerate(_SEVERITY_ORDER)
+        )
+        + " ELSE 0 END"
     )
-    + " ELSE 0 END"
-)
+
+
+_SEVERITY_RANK_SQL = _severity_rank_sql("se.severity")
 
 
 def _severities_at_or_above(severity: str) -> list[str]:

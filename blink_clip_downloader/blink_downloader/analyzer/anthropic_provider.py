@@ -22,6 +22,7 @@ from ..model_catalog import (
     model_entry,
 )
 from .base import _VISION_SYSTEM_PROMPT, BaseAnalyzer, SecurityLayerSettings
+from .chat import DEFAULT_MAX_ANSWER_TOKENS, ChatError, ChatReply, describe_failure
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -83,6 +84,8 @@ class AnthropicAnalyzer(BaseAnalyzer):
             3.00,
             15.00,
         )  # Sonnet-level fallback for unknown models
+
+    supports_chat = True
 
     def _get_client(self) -> Any:
         if self._client is None:
@@ -232,6 +235,38 @@ class AnthropicAnalyzer(BaseAnalyzer):
             return self._extract_anthropic_response_text(response)
         except Exception as exc:  # noqa: BLE001
             return self._handle_anthropic_error(_anthropic, exc)
+
+    async def chat(
+        self,
+        system: str,
+        messages: list[dict[str, str]],
+        max_tokens: int = DEFAULT_MAX_ANSWER_TOKENS,
+        model: str | None = None,
+    ) -> ChatReply:
+        """Answer a text-only conversation with Claude (the AI Assistant tab)."""
+        try:
+            client = self._get_client()
+            response = await client.messages.create(
+                model=model or self._model,
+                max_tokens=max_tokens,
+                system=system,
+                messages=messages,
+            )
+        except Exception as exc:
+            _LOGGER.warning("Anthropic: assistant question failed: %s", exc)
+            raise ChatError(describe_failure("Anthropic", exc)) from exc
+        usage = response.usage
+        return ChatReply(
+            text=self._extract_chat_text(response),
+            prompt_tokens=int(getattr(usage, "input_tokens", 0) or 0),
+            completion_tokens=int(getattr(usage, "output_tokens", 0) or 0),
+        )
+
+    @staticmethod
+    def _extract_chat_text(response: Any) -> str:
+        return "\n".join(
+            block.text for block in response.content if hasattr(block, "text")
+        ).strip()
 
     def _build_anthropic_create_kwargs(
         self, frames: list[bytes], prompt: str

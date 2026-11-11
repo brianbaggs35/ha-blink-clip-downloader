@@ -24,6 +24,7 @@ module to open is the one named after the tab you are changing:
     storage          archived clips and Google Drive backup
     automations      writing HA config objects, notification tests
     backup           backing up and restoring the library and settings
+    assistant        the Security Assistant's chats, model setting and questions
 
 over :mod:`.support` (middleware, JSON parsing, paging, shared strings),
 :mod:`.access_control` (the sign-in rules, with no routing in them) and
@@ -56,6 +57,7 @@ from .access_control import AccessControl
 from .ai import AiRoutesMixin
 from .app_shell import AppShellMixin
 from .assets import AssetsRoutesMixin
+from .assistant import AssistantRoutesMixin
 from .automations import AutomationRoutesMixin
 from .backup import BackupRoutesMixin
 from .camera_configs import CameraConfigsRoutesMixin
@@ -107,6 +109,7 @@ class MediaServer(
     StorageRoutesMixin,
     AutomationRoutesMixin,
     BackupRoutesMixin,
+    AssistantRoutesMixin,
 ):
     """aiohttp web server: clip library REST API + Video.js browser UI."""
 
@@ -246,6 +249,7 @@ class MediaServer(
         # One backup or restore at a time, and the uploaded file a restore
         # reads from (see backup/staging.py).
         self._backup_lock = asyncio.Lock()
+        self._assistant_lock = asyncio.Lock()
         self._restore_staging = RestoreStaging()
         self.extra_status: dict = {}
         # Holds a strong reference to the background moondream-install task —
@@ -371,6 +375,7 @@ class MediaServer(
         self._register_storage_routes(app)
         self._register_automations_routes(app)
         self._register_backup_routes(app)
+        self._register_assistant_routes(app)
         return app
 
     # A camera rename has to reach three different areas at once — its

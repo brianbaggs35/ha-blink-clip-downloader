@@ -41,6 +41,7 @@ _NUMBERED = {
     "face_recognition_feedback",
     "face_enrollments",
     "battery_history",
+    "assistant_usage",
 }
 
 

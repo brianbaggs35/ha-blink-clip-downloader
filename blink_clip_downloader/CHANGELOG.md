@@ -2,6 +2,19 @@
 
 ## 6.2.0
 
+### Security Assistant
+
+A new **Security Assistant** tab: a chat that answers questions about your security system in plain language. Ask what was flagged overnight, which cameras have low batteries, whether the system is armed, or how face recognition is doing, and it answers from the add-on's own records and links the clips it mentions (they open in the Library player without leaving the tab).
+
+- **Which model.** It uses the AI provider you set in the Configuration tab (`ai_provider`), never the escalation provider. The model it uses is chosen separately from the gear button on the tab, from the list the provider itself reports (no typing, so no typos), and is independent of the main model that analyzes clips. The same dialog sets how far back it looks (1 to 30 days, 7 by default). Anthropic, OpenAI, Hugging Face and Ollama (local and Cloud) can answer; Moondream and Replicate cannot, and the tab says so. There is no new add-on option, so nothing to add to the translations.
+- **What it can see.** System status, the library and per-camera totals, sync modules and camera arming, battery health and history, security events and marked-asset activity, face-recognition counts, and the most notable and most recent clips with their one-line summaries.
+- **Local-only face data.** Questions are text only: no frame, thumbnail or picture is ever sent, no face photo, crop or embedding is read, and face recognition reaches the model only as counts. Every enrolled person's name is replaced with "a household member" in the report, the question and the conversation so far before anything leaves the add-on.
+- **Several chats.** Start a **New chat**, rename a chat or delete it from its menu; each has a small name listed in a side list, and the first question names a new chat. Chats are saved in the database and appear on every device.
+- **Cost.** Each question's tokens are recorded and shown on the AI Usage tab as Assistant Questions, Assistant Tokens and Assistant Cost, included in the totals and the per-model and daily tables, without counting as analyzed clips (Avg. Cost / Clip is unchanged). The spend is kept when a chat is deleted and Clear Stats resets it.
+- **Backup & Restore.** Chats, the assistant's token record and its settings file (`/data/assistant_settings.json`) are carried in a backup. A restore only adds: a chat already here is left exactly as it is, and nothing is added twice.
+- Its routes are not reachable with the access token Home Assistant's own calls use.
+- Limits: 1,000 characters a question, 200 messages a chat, 50 chats, the last 8 messages sent as history, one question answered at a time, and three minutes at most for an answer.
+
 ### Bug fixes
 
 - Importing a pre-5.0.0 SQLite library reads each row as a plain dictionary rather than indexing a `sqlite3.Row` by column name. SonarCloud flagged all 14 of those accesses (rule `python:S6663`). The import behaves exactly as before; nothing changes in the add-on's settings or UI.

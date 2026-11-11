@@ -2021,6 +2021,9 @@ from any browser without leaving Home Assistant.
   and a **Test Analysis** button that runs a full analysis on the most recently
   downloaded clip to confirm the AI backend is working end-to-end.
 - **Models tab** — reference info on each AI provider's capabilities.
+- **Security Assistant tab** — a chat that answers questions about your cameras, clips,
+  events, battery health, arming and face-recognition counts, with several named
+  chats and a gear for its model; see [Security Assistant](#security-assistant).
 - **Live View tab** — watch a live stream from any camera on your Blink account,
   one camera at a time, directly in the browser — see [Live
   View](#live-view) below.
@@ -2064,6 +2067,8 @@ from any browser without leaving Home Assistant.
   spend. Moondream Cloud shows request count with a billing note.
   When `ai_escalation_enabled` is on, escalated analyses appear as their own row
   and count toward a separate "Escalations" total.
+  Questions asked on the Security Assistant tab show as their own tiles (questions, tokens,
+  cost) and are included in the totals — see [Security Assistant](#security-assistant).
   A **Clear Stats** button resets these counters — handy after switching providers
   so old usage doesn't keep piling into the total — without touching per-clip
   analysis history.
@@ -2233,6 +2238,112 @@ detection per camera — the same arm/disarm state as the Blink app itself.
   `"armed": true` or `"armed": false`. A body without it, or with anything
   else, is refused with a 400 rather than guessed at — it used to count as
   *disarm*.
+
+---
+
+## Security Assistant
+
+A chat that answers questions about your own security system in plain language:
+*"Was anything flagged at the driveway last night?"*, *"Which cameras have low
+batteries?"*, *"Is the system armed?"*, *"How many people did face recognition
+match this week?"*. Open the **Security Assistant** tab (it sits after Security
+Events in the sidebar) and type a question, or start from one of the suggestions.
+
+### Which model answers
+
+- **The provider is always the base one.** The assistant asks the AI provider you
+  chose in the add-on's **Configuration** tab (`ai_provider`), the same one that
+  analyzes your clips. It never uses the escalation provider, and there is no
+  separate provider setting for it.
+- **The model is chosen separately.** Click the **gear** at the top of the tab to
+  open the assistant's settings. The model you pick there answers your questions and
+  is **independent of the main model** (`ai_model`) that analyzes clips, so you can
+  keep a cheap, vision-capable model analyzing every clip and a stronger text model
+  answering the occasional question. It is chosen from the list the provider
+  itself reports (the same list the AI tab's **Fetch Models** button shows), never
+  typed, so a misspelled model name cannot be saved. Leave it on **Provider
+  default** to use the main model. The assistant's settings are not in the
+  Configuration tab: there are enough settings there already.
+- **How far back it looks.** The same dialog sets the window the report covers: 1,
+  3, 7 (the default), 14 or 30 days. A longer window sends more text with every
+  question, so it costs more tokens.
+- **Providers that can answer.** Anthropic, OpenAI, Hugging Face and Ollama (local or
+  Cloud). Moondream (cloud or local) and Replicate cannot hold a conversation, so with
+  one of those the tab says so and asks you to switch the provider if you want the
+  assistant.
+
+### What it can see
+
+Each question is answered from a text report the add-on writes from its own records
+at that moment, so it can answer about almost any part of the system:
+
+| Section | What the model is told |
+|---------|------------------------|
+| System status | Whether Blink is connected, the last download run, disk space, downloads waiting to retry, the AI provider's health and the analysis queue |
+| Library | Clip and analysis totals, and per camera how many clips were analyzed and flagged in the window |
+| Cameras and sync modules | Whether each sync module and camera is armed and online, its battery state and Wi-Fi strength |
+| Battery health | The latest level per camera and its recent changes |
+| Security events | How many clips had events, by worst severity, and activity at the assets marked on the Assets tab |
+| Face recognition | **Counts only**: whether it is on, how many people are enrolled, how many clips matched a household member or showed someone unfamiliar, and how many flags it cleared |
+| Clips | The most notable clips (flagged, or with a notable event) and the most recent ones, 30 of each at most, each with its time, camera, verdict, confidence, security events and a one-line summary |
+
+When an answer refers to a specific clip, it appears under the answer as a chip
+(camera and time) that opens the clip in the Library's player without leaving the
+tab. If the window holds more clips than are listed, the report says so, and the
+assistant tells you it is working from the most notable and most recent ones.
+
+### What never leaves the device
+
+The Biometrics tab promises that face data stays local, and the assistant keeps that
+promise by construction rather than by trusting the model:
+
+- **It is text only.** No frame, thumbnail or picture of any kind is part of a
+  question, for any provider.
+- **No face photo, face crop or face embedding is read at all.** Face recognition
+  reaches the report only as the counts in the table above.
+- **Enrolled names are removed.** Every name on the Biometrics tab is replaced with
+  "a household member" in the report, in your question and in the conversation so
+  far, so a clip summary such as "Riley walks up to the door" reaches the model as
+  "a household member walks up to the door". The names are matched as whole words,
+  in any capitalization.
+- **The report is treated as data.** Text taken from clip summaries is cut to one
+  short line each, and the model is told that the report is records to read, not
+  instructions to follow.
+
+With a local Ollama server (or Moondream Local) questions are answered on your own
+network. With any cloud provider, each question sends that provider the text report
+described above, and the tab says so above the chat. Each answer's footer shows the
+model used, how many days it covered and the tokens it spent.
+
+### Chats
+
+- Each conversation is a **chat** with a small name, listed in the side list (under a
+  **Chats** button on a narrow screen). **New chat** starts another, a chat's **⋮**
+  menu **renames** or **deletes** it, and the first question names a new chat for you.
+- Chats are saved in the add-on's database, so they survive a reload and appear on
+  every device you open the add-on from.
+- Only the most recent messages (8) of a chat are sent along with a new question, so a
+  long chat does not get more expensive with every turn.
+- Limits: a question can be up to 1,000 characters, a chat holds 200 messages, you can
+  keep 50 chats, one question is answered at a time, and an answer that takes more
+  than three minutes is abandoned.
+- A model's answer can be wrong. It reads the add-on's own records, so it is only as
+  good as what was recorded; check the clip it points to before acting on it.
+
+### Cost
+
+Every question's tokens are recorded and shown on the **AI Usage** tab as
+**Assistant Questions**, **Assistant Tokens** and **Assistant Cost**. They are
+included in the totals, the per-model table (the assistant's rows are labelled
+"assistant questions") and the daily/weekly/monthly tables, but they do not count as
+analyzed clips, so **Avg. Cost / Clip** stays the cost of analyzing a clip. The
+figures are kept when you delete a chat, are carried in a backup, and **Clear Stats**
+resets them with everything else. A model with no known price shows its tokens and no
+cost.
+
+The assistant's routes are for the web UI only: the access token that Home Assistant's
+own calls carry cannot reach them, because a chat holds a summary of what your cameras
+saw.
 
 ---
 
@@ -2409,9 +2520,10 @@ move to another install, and look inside before restoring.
 | Held | What |
 |------|------|
 | The clip library | Clips, their AI analyses, object detections, security events, your thumbs-up/down feedback and face-match reports |
+| Security Assistant | Your chats and the tokens they used (what the AI Usage tab shows for the assistant) |
 | Enrolled faces | Photos and face data for the people on the Biometrics tab (optional, see below) |
 | What each camera has learned | Where the protected vehicle parks, hourly activity baselines, clip-length statistics, scene backgrounds, battery history, the AI Usage reset point |
-| Settings | Camera settings, camera rename history, the protected-vehicle description, protected assets, the Security Feed layout, the Moondream fine-tune choice |
+| Settings | Camera settings, camera rename history, the protected-vehicle description, protected assets, the Security Feed layout, the Moondream fine-tune choice, the Security Assistant's model and window |
 | Reference pictures | The frames vehicle zones and protected assets were drawn on |
 | Download history | The list of clips already fetched from Blink, so a restored install does not fetch and analyse them again; and the clip manifest (`clip_manifest.json`) |
 
@@ -2428,7 +2540,8 @@ clips arrive — a restored clip that was still waiting can be analysed again fr
 the Library; and the clip **videos**. Videos are too large for a backup file; they stay in
 `download_path` (`/share/blink-clips` by default), and Home Assistant's own backup
 of the share folder is how to keep them. A backup is not encrypted: it holds your
-camera descriptions, prompts and — if included — face data, so keep it private.
+camera descriptions, prompts, your Security Assistant chats (summaries of what the
+cameras saw) and — if included — face data, so keep it private.
 
 ### Making a backup
 
@@ -2481,7 +2594,9 @@ A restore **only adds**, and running it twice changes nothing the second time.
   replaces it.
 - Enrolled faces (matched on name and photo), camera baselines, vehicle positions,
   battery readings and the AI Usage reset point are added only where no row with
-  the same identity exists.
+  the same identity exists. A Security Assistant chat that is already here is left
+  exactly as it is, messages and name included; one that is not is added, and a
+  token record already here is not added twice.
 - The list of already-downloaded clips is merged into the running downloader's
   (written straight away), and the clip manifest gains only the lines it lacks.
 - A settings file or reference picture is written only where there is none. Tick
@@ -2744,6 +2859,7 @@ Downloaded clips are saved under the `share` folder, accessible via:
 | `/data/trigger_download` | Touch to force an immediate poll |
 | `/data/camera_configs.json` | Per-camera descriptions, custom prompts, car-camera flags, and car zones set via the web UI |
 | `/data/vehicle_settings.json` | Protected-vehicle description set via the Vehicles tab |
+| `/data/assistant_settings.json` | The Security Assistant's model and how many days it looks back, set from the gear on its tab (its chats are in the database) |
 | `/data/vehicle_zone_snapshots/` | One reference frame (JPEG) per camera with a saved car zone — the exact image the zone was drawn on, so the Vehicles tab's preview never silently shows a different, newer frame |
 | `/data/moondream_packages/` | The `moondream` Python package itself, installed here via the AI tab's **Install** button so it persists across restarts |
 | `/data/model_cache/` | Downloaded computer-vision models (YOLO, Depth Anything V2, SAM2, facenet-pytorch) — see **Disk Space** above |
