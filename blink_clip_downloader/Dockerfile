@@ -9,7 +9,7 @@
 # which only ever runs inside this Docker stage) — verified separately by
 # hand via `docker build --target frontend-builder`: type-checks and
 # bundles identically to Node 22, same asset output shape/sizes.
-FROM node:24-bookworm-slim AS frontend-builder
+FROM node:26-bookworm-slim AS frontend-builder
 WORKDIR /frontend
 
 # Pinned to match ci.yaml's own npm pin, rather than whatever version
