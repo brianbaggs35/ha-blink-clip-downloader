@@ -167,8 +167,9 @@ class TestAnthropic:
     ) -> None:
         fake, url = stand
         fake.reply = _failure(401)
+        analyzer = self._analyzer(url)
         with pytest.raises(ChatError) as info:
-            await self._analyzer(url).chat(SYSTEM, MESSAGES)
+            await analyzer.chat(SYSTEM, MESSAGES)
         assert (
             str(info.value)
             == "Anthropic could not answer: AuthenticationError (HTTP 401)"
@@ -262,8 +263,9 @@ class TestOpenAI:
     ) -> None:
         fake, url = stand
         fake.reply = _failure(429)
+        analyzer = self._analyzer(url)
         with pytest.raises(ChatError) as info:
-            await self._analyzer(url).chat(SYSTEM, MESSAGES)
+            await analyzer.chat(SYSTEM, MESSAGES)
         assert str(info.value) == "OpenAI could not answer: RateLimitError (HTTP 429)"
 
 

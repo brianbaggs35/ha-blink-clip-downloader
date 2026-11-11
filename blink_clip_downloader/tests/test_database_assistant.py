@@ -153,7 +153,8 @@ async def test_chats_are_created_renamed_appended_and_deleted(
     db: ClipDatabase,
 ) -> None:
     first = await db.create_assistant_chat("c1", "New chat")
-    assert first["message_count"] == 0 and first["messages"] == []
+    assert first["message_count"] == 0
+    assert first["messages"] == []
     await db.create_assistant_chat("c2", "Second")
 
     assert await db.append_assistant_messages(
@@ -173,7 +174,8 @@ async def test_chats_are_created_renamed_appended_and_deleted(
 
     assert await db.rename_assistant_chat("c1", "Porch")
     renamed = await db.get_assistant_chat("c1")
-    assert renamed is not None and renamed["title"] == "Porch"
+    assert renamed is not None
+    assert renamed["title"] == "Porch"
 
     assert await db.delete_assistant_chat("c1")
     assert await db.get_assistant_chat("c1") is None
@@ -196,12 +198,14 @@ async def test_a_damaged_messages_column_reads_as_an_empty_chat(
         "UPDATE assistant_chats SET messages='not json' WHERE id='c1'"
     )
     chat = await db.get_assistant_chat("c1")
-    assert chat is not None and chat["messages"] == []
+    assert chat is not None
+    assert chat["messages"] == []
     await db._pool.execute(
         "UPDATE assistant_chats SET messages='{\"a\": 1}' WHERE id='c1'"
     )
     chat = await db.get_assistant_chat("c1")
-    assert chat is not None and chat["messages"] == []
+    assert chat is not None
+    assert chat["messages"] == []
 
 
 async def test_nothing_is_stored_before_the_database_is_open() -> None:

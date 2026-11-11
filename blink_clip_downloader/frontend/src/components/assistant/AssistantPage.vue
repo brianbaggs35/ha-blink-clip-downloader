@@ -326,11 +326,11 @@ onUnmounted(() => narrowQuery.removeEventListener('change', onNarrowChange))
                 @open-clip="(id) => clipViewer.requestOpen(id)"
               />
             </template>
-            <div v-if="pending" class="assistant-thinking" role="status" aria-label="The assistant is thinking">
+            <output v-if="pending" class="assistant-thinking" aria-label="The assistant is thinking">
               <Skeleton width="55%" height="0.9rem" />
               <Skeleton width="80%" height="0.9rem" />
               <Skeleton width="35%" height="0.9rem" />
-            </div>
+            </output>
           </div>
 
           <form class="assistant-composer" @submit.prevent="send()">

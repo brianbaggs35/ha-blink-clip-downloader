@@ -48,6 +48,7 @@ ANSWER_TIMEOUT_SECONDS = 180
 
 _NOT_CONFIGURED = "AI analysis is not configured, so the assistant has no model to ask"
 _NO_SUCH_CHAT = "Chat not found"
+_CHAT_ROUTE = "/api/assistant/chats/{chat_id}"
 
 
 def _title(value: object) -> str:
@@ -68,18 +69,10 @@ class AssistantRoutesMixin(_MediaServerBase):
         )
         app.router.add_get("/api/assistant/chats", self._handle_assistant_chats_list)
         app.router.add_post("/api/assistant/chats", self._handle_assistant_chat_create)
-        app.router.add_get(
-            "/api/assistant/chats/{chat_id}", self._handle_assistant_chat_get
-        )
-        app.router.add_patch(
-            "/api/assistant/chats/{chat_id}", self._handle_assistant_chat_rename
-        )
-        app.router.add_delete(
-            "/api/assistant/chats/{chat_id}", self._handle_assistant_chat_delete
-        )
-        app.router.add_post(
-            "/api/assistant/chats/{chat_id}/ask", self._handle_assistant_ask
-        )
+        app.router.add_get(_CHAT_ROUTE, self._handle_assistant_chat_get)
+        app.router.add_patch(_CHAT_ROUTE, self._handle_assistant_chat_rename)
+        app.router.add_delete(_CHAT_ROUTE, self._handle_assistant_chat_delete)
+        app.router.add_post(f"{_CHAT_ROUTE}/ask", self._handle_assistant_ask)
 
     # ------------------------------------------------------------------
     # Settings
@@ -114,7 +107,11 @@ class AssistantRoutesMixin(_MediaServerBase):
         ]
         return list(dict.fromkeys(names))
 
-    async def _handle_assistant_status(self, _request: web.Request) -> web.Response:
+    # aiohttp only routes coroutine functions, so this stays ``async`` with
+    # nothing to await.
+    async def _handle_assistant_status(  # NOSONAR
+        self, _request: web.Request
+    ) -> web.Response:
         analyzer = self._analyzer
         data: dict[str, Any] = {
             "enabled": analyzer is not None,

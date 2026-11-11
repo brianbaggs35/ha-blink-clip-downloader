@@ -287,7 +287,8 @@ class ClipAnalyzer(BaseAnalyzer):
                 data = await resp.json()
         except ChatError:
             raise
-        except (TimeoutError, aiohttp.ClientError, OSError, ValueError) as exc:
+        # TimeoutError is an OSError, so it is caught here without being named.
+        except (aiohttp.ClientError, OSError, ValueError) as exc:
             _LOGGER.warning("Ollama: assistant question failed: %s", exc)
             raise ChatError(describe_failure("Ollama", exc)) from exc
         message = data.get("message") if isinstance(data, dict) else None
