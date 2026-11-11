@@ -120,7 +120,7 @@ def _read_legacy_db(
     Every column beyond each table's oldest/most fundamental ones (id,
     camera, file_path, timestamp, downloaded_at for clips; clip_id,
     camera, model, analyzed_at for analysis_results) is read defensively
-    via _column() rather than assumed present: exactly which columns exist
+    via ``dict.get`` rather than assumed present: exactly which columns exist
     depends on which pre-5.0.0 version the file was last written by —
     escalation columns arrived in 4.0.0, and a few analysis_results
     columns (anomaly_score, escalation_provider, prompt_text, the
@@ -139,16 +139,12 @@ def _read_legacy_db(
         if "clips" not in tables:
             return None
 
-        clip_cols = _table_columns(conn, "clips")
-        clips = [
-            _clip_row(row, clip_cols) for row in conn.execute("SELECT * FROM clips")
-        ]
+        clips = [_clip_row(dict(row)) for row in conn.execute("SELECT * FROM clips")]
 
         analysis_results: list[tuple[Any, ...]] = []
         if "analysis_results" in tables:
-            analysis_cols = _table_columns(conn, "analysis_results")
             analysis_results = [
-                _analysis_result_row(row, analysis_cols)
+                _analysis_result_row(dict(row))
                 for row in conn.execute("SELECT * FROM analysis_results")
             ]
 
@@ -165,15 +161,7 @@ def _read_legacy_db(
         conn.close()
 
 
-def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
-    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
-
-
-def _column(row: sqlite3.Row, cols: set[str], name: str, default: Any) -> Any:
-    return row[name] if name in cols else default
-
-
-def _clip_row(row: sqlite3.Row, cols: set[str]) -> tuple[Any, ...]:
+def _clip_row(row: dict[str, Any]) -> tuple[Any, ...]:
     return (
         str(row["id"]),
         str(row["camera"]),
@@ -183,35 +171,35 @@ def _clip_row(row: sqlite3.Row, cols: set[str]) -> tuple[Any, ...]:
         int(row["duration"] or 0),
         str(row["source"] or ""),
         int(row["network_id"] or 0),
-        bool(_column(row, cols, "starred", 0)),
-        str(_column(row, cols, "tags", "[]") or "[]"),
+        bool(row.get("starred", 0)),
+        str(row.get("tags", "[]") or "[]"),
         str(row["downloaded_at"] or ""),
-        bool(_column(row, cols, "archived", 0)),
-        str(_column(row, cols, "archive_path", "") or ""),
+        bool(row.get("archived", 0)),
+        str(row.get("archive_path", "") or ""),
     )
 
 
-def _analysis_result_row(row: sqlite3.Row, cols: set[str]) -> tuple[Any, ...]:
+def _analysis_result_row(row: dict[str, Any]) -> tuple[Any, ...]:
     return (
         str(row["clip_id"]),
         str(row["camera"]),
         str(row["model"]),
-        str(_column(row, cols, "response_text", "") or ""),
-        bool(_column(row, cols, "is_suspicious", 0)),
-        float(_column(row, cols, "confidence", 0.0) or 0.0),
-        str(_column(row, cols, "summary", "") or ""),
-        int(_column(row, cols, "frame_count", 0) or 0),
-        float(_column(row, cols, "analysis_duration", 0.0) or 0.0),
+        str(row.get("response_text", "") or ""),
+        bool(row.get("is_suspicious", 0)),
+        float(row.get("confidence", 0.0) or 0.0),
+        str(row.get("summary", "") or ""),
+        int(row.get("frame_count", 0) or 0),
+        float(row.get("analysis_duration", 0.0) or 0.0),
         str(row["analyzed_at"] or ""),
-        int(_column(row, cols, "tokens_prompt", 0) or 0),
-        int(_column(row, cols, "tokens_completion", 0) or 0),
-        float(_column(row, cols, "anomaly_score", 0.0) or 0.0),
-        str(_column(row, cols, "escalation_model", "") or ""),
-        int(_column(row, cols, "escalation_tokens_prompt", 0) or 0),
-        int(_column(row, cols, "escalation_tokens_completion", 0) or 0),
-        str(_column(row, cols, "escalation_provider", "") or ""),
-        str(_column(row, cols, "prompt_text", "") or ""),
-        bool(_column(row, cols, "face_bypass_applied", 0)),
-        str(_column(row, cols, "face_bypass_names", "") or ""),
-        bool(_column(row, cols, "approved_faces_seen", 0)),
+        int(row.get("tokens_prompt", 0) or 0),
+        int(row.get("tokens_completion", 0) or 0),
+        float(row.get("anomaly_score", 0.0) or 0.0),
+        str(row.get("escalation_model", "") or ""),
+        int(row.get("escalation_tokens_prompt", 0) or 0),
+        int(row.get("escalation_tokens_completion", 0) or 0),
+        str(row.get("escalation_provider", "") or ""),
+        str(row.get("prompt_text", "") or ""),
+        bool(row.get("face_bypass_applied", 0)),
+        str(row.get("face_bypass_names", "") or ""),
+        bool(row.get("approved_faces_seen", 0)),
     )
