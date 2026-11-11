@@ -1,5 +1,15 @@
 # Changelog
 
+## 6.2.0
+
+### Bug fixes
+
+- Importing a pre-5.0.0 SQLite library reads each row as a plain dictionary rather than indexing a `sqlite3.Row` by column name. SonarCloud flagged all 14 of those accesses (rule `python:S6663`). The import behaves exactly as before; nothing changes in the add-on's settings or UI.
+
+### Dependency Updates
+
+### Release Workflow
+
 ## 6.1.8
 
 ### Bug fixes
