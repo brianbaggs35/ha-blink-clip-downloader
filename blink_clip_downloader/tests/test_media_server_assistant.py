@@ -354,8 +354,10 @@ class TestAsk:
         data = await resp.json()
         assert data["title"] == "Was anyone at the door?"
         user, bot = data["messages"]
-        assert user["role"] == "user" and user["content"] == "Was anyone at the door?"
-        assert bot["role"] == "assistant" and bot["content"] == "All quiet."
+        assert user["role"] == "user"
+        assert user["content"] == "Was anyone at the door?"
+        assert bot["role"] == "assistant"
+        assert bot["content"] == "All quiet."
         assert bot["model"] == "gpt-4o"
         assert bot["days"] == 3
         assert (bot["prompt_tokens"], bot["completion_tokens"]) == (100, 20)
@@ -452,7 +454,8 @@ class TestAsk:
         assert resp.status == status
         assert (await resp.json())["error"]
         saved = await api.db.get_assistant_chat(chat["id"])
-        assert saved is not None and saved["messages"] == []
+        assert saved is not None
+        assert saved["messages"] == []
         assert (await api.db.get_token_usage_stats())["assistant"]["questions"] == 0
 
     async def test_an_unexpected_failure_does_not_leak_its_text(self, api: Api) -> None:
@@ -539,7 +542,8 @@ class TestLiveState:
         api.analyzer.online = RuntimeError("down")  # type: ignore[union-attr]
         live = await api.server._assistant_live_state()
         assert live["analysis"]["online"] is False
-        assert live["camera_names"] == [] and live["sync_modules"] == []
+        assert live["camera_names"] == []
+        assert live["sync_modules"] == []
         assert "queue" not in live
 
     async def test_without_a_provider_there_is_no_analysis_state(

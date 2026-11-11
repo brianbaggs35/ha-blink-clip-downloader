@@ -142,20 +142,14 @@ def redact_names(text: str, names: list[str]) -> str:
     return text
 
 
-def clean_conversation(question: object, history: object) -> list[dict[str, str]]:
-    """The messages to send: earlier turns, then *question*, strictly alternating.
+def _history_turns(history: object) -> list[dict[str, str]]:
+    """Earlier turns worth sending: well-formed, bounded, strictly alternating.
 
-    Anything malformed in *history* is dropped rather than rejected (the page
-    sends it back verbatim and a stray entry should not cost the person their
-    question); the question itself must be real text.
+    Anything malformed is dropped rather than rejected (the page sends the
+    history back verbatim and a stray entry should not cost the person their
+    question), consecutive turns by one role are merged, and the list starts
+    with a user turn.
     """
-    if not isinstance(question, str) or not question.strip():
-        raise AssistantInputError("Ask a question first")
-    question = question.strip()
-    if len(question) > MAX_QUESTION_CHARS:
-        raise AssistantInputError(
-            f"Keep the question under {MAX_QUESTION_CHARS} characters"
-        )
     turns: list[dict[str, str]] = []
     entries = history if isinstance(history, list) else []
     for entry in entries[-MAX_HISTORY_MESSAGES:]:
@@ -173,6 +167,23 @@ def clean_conversation(question: object, history: object) -> list[dict[str, str]
             turns.append({"role": role, "content": content})
     while turns and turns[0]["role"] != "user":
         turns.pop(0)
+    return turns
+
+
+def clean_conversation(question: object, history: object) -> list[dict[str, str]]:
+    """The messages to send: earlier turns, then *question*, strictly alternating.
+
+    The question itself must be real text; see ``_history_turns`` for what
+    happens to the history.
+    """
+    if not isinstance(question, str) or not question.strip():
+        raise AssistantInputError("Ask a question first")
+    question = question.strip()
+    if len(question) > MAX_QUESTION_CHARS:
+        raise AssistantInputError(
+            f"Keep the question under {MAX_QUESTION_CHARS} characters"
+        )
+    turns = _history_turns(history)
     if turns and turns[-1]["role"] == "user":
         turns[-1]["content"] += "\n" + question
     else:

@@ -221,7 +221,8 @@ class TestReport:
 
         assert "# ACTIVITY REPORT" in report
         assert "Blink account connected: yes" in report
-        assert "free_gb=12.5" in report and "percent=40" in report
+        assert "free_gb=12.5" in report
+        assert "percent=40" in report
         assert "nested" not in report
         assert "Clip downloads waiting to retry: 2" in report
         assert "AI provider: anthropic, model claude-x, reachable: yes" in report
@@ -246,7 +247,8 @@ class TestReport:
             "Suspicious flags cleared by recognizing a household member (all time): 1"
             in report
         )
-        assert "C1 |" in report and "C2 |" in report
+        assert "C1 |" in report
+        assert "C2 |" in report
         assert "FLAGGED SUSPICIOUS" in report
         assert "cleared: a recognized household member" in report
 
@@ -256,10 +258,12 @@ class TestReport:
         await _seed(db)
         report = await ContextBuilder(db, 7, _live(), ["Riley"]).build()
 
-        assert "Riley" not in report and "riley" not in report
+        assert "Riley" not in report
+        assert "riley" not in report
         assert "a household member walks up to the door" in report
         assert "FACEPIXELS" not in report
-        assert "0.123456789" not in report and "0.987654321" not in report
+        assert "0.123456789" not in report
+        assert "0.987654321" not in report
         assert "embedding" not in report.lower()
         assert "thumbnail" not in report.lower()
 
@@ -370,7 +374,8 @@ class TestAsk:
         assert answer.clips[0]["is_suspicious"] is False
         assert answer.clips[1]["id"] == "c2"
         assert answer.clips[1]["is_suspicious"] is True
-        assert answer.prompt_tokens == 11 and answer.completion_tokens == 7
+        assert answer.prompt_tokens == 11
+        assert answer.completion_tokens == 7
         assert answer.days == 7
         assert analyzer.calls[0]["model"] is None
 
