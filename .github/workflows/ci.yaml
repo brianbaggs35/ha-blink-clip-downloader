@@ -425,16 +425,19 @@ jobs:
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
-      # The quality gate passes with open issues, so a green scan alone does
-      # not mean the new code is clean. This waits for SonarCloud to finish
-      # processing the scan, then fails the job and lists every new issue (as
-      # an annotation on its line and in the job summary).
-      - name: Fail on new SonarCloud issues
+      # The scanner uploads its analysis and exits; it does not wait for
+      # SonarCloud to process it, so the step above passes whatever the
+      # analysis finds and the issues were only visible on sonarcloud.io.
+      # This waits for the processing, lists the open issues on the new code
+      # (log, job summary and PR annotations) and, for a pull request, fails
+      # the job if there are any. A push lists them without failing. See
+      # scripts/ci/sonar_new_issues.py. No SONAR_TOKEN (the job is already
+      # skipped for fork PRs, which never get one) skips it with a notice.
+      - name: List new SonarCloud issues
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_PROJECT_KEY: brianbaggs35_ha-blink-clip-downloader
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          BRANCH: ${{ github.ref_name }}
+          SONAR_PULL_REQUEST: ${{ github.event.pull_request.number }}
+          SONAR_BRANCH: ${{ github.event_name == 'push' && github.ref_name || '' }}
         run: python3 scripts/ci/sonar_new_issues.py
 
   build:

@@ -453,7 +453,7 @@ they get merged. The CI pipeline includes:
 - Pytest (100% backend coverage)
 - Vitest (100% frontend coverage)
 - Playwright e2e (92% of all lines covered as of Sep. 18th, 2026 but always adding more)
-- Sonarqube scans
+- Sonarqube scans (a pull request with new SonarCloud issues fails CI, and the issues are listed in the job log and summary)
 - Codecov coverage reports
 - Built addon images and trivy scans
 - Build provenance attestations for each published addon image

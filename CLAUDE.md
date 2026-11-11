@@ -1423,17 +1423,21 @@ build after a UTC day boundary with no action needed; only add a
 a finding that's a genuine false positive) with a dated justification
 comment.
 CI also runs a `sonarqube` job (`SonarSource/sonarqube-scan-action`,
-config at the repo root's `sonar-project.properties`) against SonarCloud.
-The scan is skipped automatically for PRs from forks, which don't have repo
-secrets, and isn't practical to run locally since it needs a `SONAR_TOKEN`.
-Its quality gate passes with open issues, so a following step,
-`scripts/ci/sonar_new_issues.py`, waits for SonarCloud to process the scan,
-then **fails the job and lists every new OPEN/CONFIRMED issue** (an
-annotation on its line plus a job-summary table). To see the same list
-yourself before pushing a follow-up, query
+config at the repo root's `sonar-project.properties`) against SonarCloud —
+which isn't practical to run locally since it needs a `SONAR_TOKEN` and
+network access to sonarcloud.io; skipped automatically for PRs from forks,
+which don't have repo secrets. The scanner only uploads its analysis, so a
+step after it (`scripts/ci/sonar_new_issues.py`, tested by
+`tests/test_sonar_new_issues.py`) waits for SonarCloud to process it, lists
+the open issues on the new code (rule, `file:line`, message, link) in the log,
+the job summary and PR annotations, and **fails the job for a pull request that
+has any** (a push to `main` lists them without failing). Read that list instead
+of opening SonarCloud, and fix them before declaring a task done. The quality
+gate's own conditions (coverage, duplication) are printed but do not decide the
+job's result, and whether a red job blocks a merge is branch protection's call.
+Before pushing a follow-up you can read the same list yourself:
 `https://sonarcloud.io/api/issues/search?componentKeys=brianbaggs35_ha-blink-clip-downloader&pullRequest=<n>&issueStatuses=OPEN,CONFIRMED&inNewCodePeriod=true`
-(public project, no token needed). A false positive is marked reviewed on
-SonarCloud or, where a rule cannot be satisfied, `# NOSONAR` with a reason.
+(the project is public, so no token is needed for reading it).
 
 CI's `frontend-e2e` job runs `npm run test:e2e:coverage` (Playwright, see
 **Web UI**'s E2E testing/E2E coverage bullets) — unlike `build`/
