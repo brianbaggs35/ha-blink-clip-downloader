@@ -2427,6 +2427,19 @@ def _build_app_with_camera_configs(
     return app, mock_create_analyzer
 
 
+def test_e2e_fixtures_stand_in_for_the_assistants_provider(
+    base_config, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from blink_downloader.e2e_fixtures import e2e_chat, e2e_chat_models
+
+    monkeypatch.setenv("BLINK_E2E_FIXTURES", "1")
+    app, _ = _build_app_with_camera_configs(base_config, tmp_path, None)
+
+    assert app._analyzer is not None
+    assert app._analyzer.chat is e2e_chat
+    assert app._analyzer.fetch_models is e2e_chat_models
+
+
 def test_init_wires_vision_pipeline_from_config(
     base_config, tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
