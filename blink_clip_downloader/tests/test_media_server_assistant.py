@@ -579,3 +579,14 @@ class TestUsageAndAccess:
         from blink_downloader.media_server.access_control import TOKEN_ROUTES
 
         assert not any("/api/assistant" in path for _method, path in TOKEN_ROUTES)
+
+
+def test_pricing_a_payload_with_no_assistant_block_leaves_it_alone() -> None:
+    """An older stats payload (or a database without the new table's rows)
+    has no ``assistant`` key; pricing must not invent one."""
+    usage: dict[str, Any] = {
+        "by_model": [{"model": "gpt-4o", "tokens_prompt": 1_000_000}]
+    }
+    MediaServer._price_usage_by_model(usage, lambda _m: (2.5, 10.0))
+    assert "assistant" not in usage
+    assert usage["total_estimated_cost"] == pytest.approx(2.5)

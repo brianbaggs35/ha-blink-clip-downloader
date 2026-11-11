@@ -315,6 +315,7 @@ class TestReport:
     async def test_unparseable_and_naive_times_are_handled(self) -> None:
         assert assistant._local("not a time") == "not a time"
         assert assistant._local("2026-01-02T03:04:05").startswith("2026-")
+        assert assistant._local("2026-01-02T03:04:05+00:00").startswith("2026-")
         assert assistant._yes_no(None) == "unknown"
         assert assistant._percent("x") == "unknown"
 
@@ -439,3 +440,11 @@ class TestReportDetails:
         assert "on Porch: 1 clip(s) with an event, worst noteworthy" in report
         assert "cleared: routine door use" in report
         assert "starred" in report
+
+
+async def test_a_disk_entry_with_nothing_plain_in_it_is_left_out(
+    db: ClipDatabase,
+) -> None:
+    live = {"status": {"disk": {"nested": {"a": 1}}}}
+    report = await ContextBuilder(db, 7, live, []).build()
+    assert "Disk:" not in report
