@@ -310,6 +310,11 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         )
         if self._e2e_fixtures is not None:
             self._e2e_fixtures.enable_face_recognition(self._media_server)
+            # CI's browser run has no provider to ask: only the Security
+            # Assistant's paid call and model list are replaced, on the very
+            # analyzer the server answers with; the rest of it is real.
+            if self._media_server._analyzer is not None:
+                self._e2e_fixtures.enable_assistant(self._media_server._analyzer)
         self._event_watcher = HAEventWatcher(
             supervisor_token=config.supervisor_token,
             on_motion=self._on_blink_motion,
@@ -782,10 +787,6 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         if self._analyzer is None:
             return
 
-        if self._e2e_fixtures is not None:
-            # CI's browser run has no provider to ask; only the paid call and
-            # the model list are replaced, the rest of the assistant is real.
-            self._e2e_fixtures.enable_assistant(self._analyzer)
         self._analyzer.attach_database(self._db)
         # Assets marked on the Assets tab. Handed over here rather than
         # threaded through create_analyzer(): none of the eight providers does
