@@ -58,6 +58,16 @@ describe('AssistantSettingsDialog', () => {
       })
   })
 
+  it('names the model picker by its label, for screen readers and for the label click', async () => {
+    const w = mountDialog()
+    await open(w)
+    const label = body().querySelector('label[for="assistant-model"]')
+    expect(label?.id).toBe('assistant-model-label')
+    const input = body().querySelector('#assistant-model')
+    expect(input?.getAttribute('aria-labelledby')).toBe('assistant-model-label')
+    w.unmount()
+  })
+
   it('stays closed and loads nothing until opened', () => {
     mountDialog()
     expect(getAssistantModels).not.toHaveBeenCalled()
