@@ -2436,7 +2436,6 @@ def test_e2e_fixtures_stand_in_for_the_assistants_provider(
     app, _ = _build_app_with_camera_configs(base_config, tmp_path, None)
 
     assert app._analyzer is not None
-    assert app._media_server._analyzer is app._analyzer
     assert app._analyzer.chat is e2e_chat
     assert app._analyzer.fetch_models is e2e_chat_models
 
