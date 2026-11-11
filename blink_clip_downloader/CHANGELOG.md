@@ -21,6 +21,7 @@
 # Frontend Updates
 
 - Updated eslint-plugin-vue to 10.12.1
+- Updated typescript-eslint to 8.72.2
 
 ### Release Workflow
 
