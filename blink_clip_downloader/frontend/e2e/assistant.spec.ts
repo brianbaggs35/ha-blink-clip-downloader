@@ -27,7 +27,17 @@ test.afterEach(async ({ page }) => {
 async function ask(page: Page, question: string) {
   const input = page.getByTestId('assistant-input')
   await input.fill(question)
+  // Wait for the server's answer (or the first refusal) so a failure says what
+  // the server said instead of only that no bubble appeared.
+  const answered = page.waitForResponse(
+    (r) =>
+      r.request().method() === 'POST' &&
+      (/\/ask$/.test(new URL(r.url()).pathname) ||
+        (/\/api\/assistant\/chats$/.test(new URL(r.url()).pathname) && r.status() >= 400)),
+  )
   await page.getByTestId('assistant-send').click()
+  const response = await answered
+  expect(response.status(), `${response.url()}: ${await response.text()}`).toBeLessThan(400)
 }
 
 const bubbles = (page: Page) => page.getByTestId('assistant-message')
@@ -150,6 +160,9 @@ test("the gear opens settings, the model comes from the provider's list, and the
   await page.getByTestId('assistant-settings-button').click()
   const dialog = page.getByRole('dialog', { name: 'Assistant settings' })
   await expect(dialog).toContainText('not the escalation provider')
+
+  const listed = (await (await page.request.get(appApiUrl('/api/assistant/models'))).json()) as { models: string[] }
+  expect(listed.models, JSON.stringify(listed)).toContain('e2e-small')
 
   // Picked from the list, never typed.
   await dialog.getByTestId('assistant-model-select').click()
