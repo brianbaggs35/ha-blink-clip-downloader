@@ -21,7 +21,8 @@ import pytest
 
 _SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "ci" / "sonar_new_issues.py"
 _spec = importlib.util.spec_from_file_location("sonar_new_issues", _SCRIPT)
-assert _spec is not None and _spec.loader is not None
+assert _spec is not None
+assert _spec.loader is not None
 sonar = importlib.util.module_from_spec(_spec)
 sys.modules["sonar_new_issues"] = sonar
 _spec.loader.exec_module(sonar)
