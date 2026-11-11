@@ -90,10 +90,11 @@ async function save() {
       </p>
 
       <div class="settings-field">
-        <label for="assistant-model">Model</label>
+        <label id="assistant-model-label" for="assistant-model">Model</label>
         <Select
           v-model="model"
           input-id="assistant-model"
+          aria-labelledby="assistant-model-label"
           :options="modelOptions"
           option-label="label"
           option-value="value"
