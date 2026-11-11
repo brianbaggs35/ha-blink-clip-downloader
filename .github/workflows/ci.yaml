@@ -425,6 +425,18 @@ jobs:
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
+      # The quality gate passes with open issues, so a green scan alone does
+      # not mean the new code is clean. This waits for SonarCloud to finish
+      # processing the scan, then fails the job and lists every new issue (as
+      # an annotation on its line and in the job summary).
+      - name: Fail on new SonarCloud issues
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_PROJECT_KEY: brianbaggs35_ha-blink-clip-downloader
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BRANCH: ${{ github.ref_name }}
+        run: python3 scripts/ci/sonar_new_issues.py
+
   build:
     name: Build Add-on Image (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
