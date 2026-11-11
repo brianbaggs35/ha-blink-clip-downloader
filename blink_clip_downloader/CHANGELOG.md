@@ -23,7 +23,7 @@ A new **Security Assistant** tab: a chat that answers questions about your secur
 
 ### Release Workflow
 
-- The `SonarCloud Scan` job in CI now fails a pull request that has new SonarCloud issues, and lists them. The scanner only uploads its analysis and exits, so the job used to pass while sonarcloud.io showed new issues on the PR. A step after it (`scripts/ci/sonar_new_issues.py`) waits for SonarCloud to finish processing, then prints each open new issue with its rule, `file:line`, message and a link to it, in the job log, the job summary and as annotations on the PR, and fails the job if there are any. A push to `main` lists them without failing. It also prints any failing quality gate conditions, which do not decide the result. It skips with a notice when `SONAR_TOKEN` is not available. The add-on itself is unchanged.
+- The CI step that fails the `SonarCloud Scan` job on new SonarCloud issues (added with the Security Assistant) is replaced by a tested version, `scripts/ci/sonar_new_issues.py`. The scanner only uploads its analysis and exits, so the job used to pass while sonarcloud.io showed new issues on the PR. The step waits for SonarCloud to finish processing, then prints each open new issue with its rule, `file:line`, message and a link, in the job log, the job summary and as annotations on the PR, and fails the job for a pull request that has any. A push to `main` lists them without failing, it skips with a notice when `SONAR_TOKEN` is not available, it fails with a distinct message if SonarCloud cannot be queried rather than passing silently, and it also prints failing quality gate conditions, which do not decide the result. The add-on itself is unchanged.
 
 <<<<<<< HEAD
 =======
