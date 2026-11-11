@@ -291,3 +291,11 @@ For broad changes, run applicable checks covering:
 **Pyright, Ruff, pytest, Vitest, Playwright, ESLint, Prettier, Bandit, yamllint, and Home Assistant add-on linting.**
 
 When behavior is unclear, inspect the implementation and tests before making assumptions.
+
+## Notes
+
+- Video.js package does not get updated to version 10 yet due to breaking changes. The project uses
+version 8.24.2 currently and will continue to update the patch versions until we can upgrade to
+version 10.
+- Typescript package does not get updated to version 7 yet due to breaking changes. The project uses
+version 6.0.3 right now and will continue to update the patch versions until we can upgrade to version 7.
