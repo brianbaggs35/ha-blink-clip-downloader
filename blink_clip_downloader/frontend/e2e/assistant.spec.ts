@@ -4,7 +4,7 @@ import type { Page } from '@playwright/test'
 // The Security Assistant against the real, seeded add-on. Everything up to the
 // provider is real: the report is built from the seeded database, and the
 // question and history are redacted by the server's own code. Only the paid call
-// is replaced (standalone_server.py's _e2e_chat), and it reports back what it was
+// is replaced (e2e_fixtures.py's e2e_chat), and it reports back what it was
 // sent, so these tests can see that no enrolled name got through.
 //
 // A question writes a chat and a row of spend, so each test removes the chats it

@@ -782,6 +782,10 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         if self._analyzer is None:
             return
 
+        if self._e2e_fixtures is not None:
+            # CI's browser run has no provider to ask; only the paid call and
+            # the model list are replaced, the rest of the assistant is real.
+            self._e2e_fixtures.enable_assistant(self._analyzer)
         self._analyzer.attach_database(self._db)
         # Assets marked on the Assets tab. Handed over here rather than
         # threaded through create_analyzer(): none of the eight providers does

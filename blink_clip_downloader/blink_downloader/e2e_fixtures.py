@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from PIL import Image
 
+from .analyzer.chat import ChatReply
 from .live_view import LiveViewManager
 from .vision import DetectedFace, FaceEmbedder
 
@@ -22,6 +23,45 @@ E2E_FACES = (
     ([0.5, -0.5, 0.5, -0.5], 0.5, (90, 150, 214)),
     ([-0.5, 0.5, -0.5, 0.5], 0.1, (130, 130, 130)),
 )
+
+
+# Every name face enrollment seeds, so the Security Assistant's stand-in can
+# say whether any of them reached the "provider" (see e2e_chat).
+E2E_ENROLLED_NAMES = ("Alex E2E", "Jordan E2E", "Casey E2E", "Riley E2E")
+E2E_CHAT_MODELS = ("e2e-small", "e2e-large")
+
+
+async def e2e_chat(
+    system: str,
+    messages: list[dict[str, str]],
+    max_tokens: int = 0,
+    model: str | None = None,
+) -> ChatReply:
+    """Stands in for the provider's answer to a Security Assistant question.
+
+    Everything *before* it is real: the report is built from the seeded
+    database and the question and history are redacted by the real code. This
+    only replaces the paid call, and reports back what it was sent so a spec
+    can see the guardrail hold: the question as received (names already
+    redacted), the model asked, whether the report has a clip to cite, and
+    whether any enrolled name got through.
+    """
+    sent = system + "\n" + "\n".join(m["content"] for m in messages)
+    leaked = any(name.lower() in sent.lower() for name in E2E_ENROLLED_NAMES)
+    cites = "\nC1 |" in system
+    return ChatReply(
+        f"E2E answer to: {messages[-1]['content']} "
+        f"[model: {model or 'default'}] "
+        f"[enrolled names sent: {'yes' if leaked else 'no'}]"
+        + (" See C1." if cites else ""),
+        prompt_tokens=1200,
+        completion_tokens=80,
+    )
+
+
+async def e2e_chat_models() -> list[dict[str, Any]]:
+    """The model list the Security Assistant's picker shows."""
+    return [{"name": name} for name in E2E_CHAT_MODELS]
 
 
 def _solid_jpeg(
@@ -196,6 +236,12 @@ class E2EFixtures:
     def _get_live_view_camera(self, name: str) -> Any:
         return self._live_view_cameras.get(name)
 
+    @staticmethod
+    def enable_assistant(analyzer: Any) -> None:
+        """Replace the one paid call and the model list the assistant uses."""
+        analyzer.chat = e2e_chat
+        analyzer.fetch_models = e2e_chat_models
+
     def enable_face_recognition(self, server: MediaServer) -> None:
         from .media_server import faces as faces_routes
 
@@ -205,8 +251,12 @@ class E2EFixtures:
 
 __all__ = [
     "CAMERAS",
+    "E2E_CHAT_MODELS",
+    "E2E_ENROLLED_NAMES",
     "SCRATCH_CAMERA",
     "SECURITY_FEED_NO_SNAPSHOT_CAMERA",
     "E2EFaceEmbedder",
     "E2EFixtures",
+    "e2e_chat",
+    "e2e_chat_models",
 ]
