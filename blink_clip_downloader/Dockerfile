@@ -142,9 +142,9 @@ RUN : "apt cache bust: ${APT_CACHE_BUST}" \
     # within the same suite.
     && apt-get upgrade -y \
     && apt-get install --no-install-recommends -y \
-        python3 python3-pip python3-dev build-essential \
-        libffi-dev libssl-dev ffmpeg libjpeg-dev zlib1g-dev cmake \
-        libgl1 libglib2.0-0 ca-certificates postgresql-17 \
+        build-essential ca-certificates cmake ffmpeg \
+        libffi-dev libgl1 libglib2.0-0 libjpeg-dev libssl-dev \
+        postgresql-17 python3 python3-dev python3-pip zlib1g-dev \
     && rm -rf /var/lib/apt/lists/* \
     # The base image ships /usr/bin/tempio (HA's config-templating helper).
     # Nothing in this add-on uses it, and its statically-linked Go runtime
@@ -250,13 +250,12 @@ RUN ( \
         # package (python3-wheel is never `apt-get remove`d — that would take
         # python3-pip down with it): safe because nothing after this point in
         # the build re-runs apt-get against it.
-        && pip3 install --no-cache-dir --upgrade "setuptools>=78.1.1" \
-        && pip3 install --no-cache-dir --upgrade --ignore-installed "wheel>=0.46.2" \
+        && pip3 install --no-cache-dir --upgrade "setuptools>=84.2.1" \
+        && pip3 install --no-cache-dir --upgrade --ignore-installed "wheel>=0.48.0" \
         && rm -rf /usr/lib/python3/dist-packages/wheel \
             /usr/lib/python3/dist-packages/wheel-*.dist-info \
-        && pip3 install --no-cache-dir \
-            "filelock>=4.2.1" \
-            "ultralytics>=8.4.175,<9" \
+        && pip3 install --no-cache-dir --only-binary :all: \
+            "filelock==4.2.10" \
             # lap isn't in ultralytics' own declared dependencies (`pip show
             # ultralytics` doesn't list it) — it's an optional extra
             # ultralytics only imports inside YOLO.track() (the Hungarian-
@@ -270,8 +269,8 @@ RUN ( \
             # user's network policy may not guarantee), and its own log
             # output warns the current process may need restarting for
             # the newly installed package to actually take effect.
-            "lap>=0.5.12" \
-            "opencv-python-headless>=5.0.0.93,<6" \
+            "lap==0.5.14" \
+            "opencv-python-headless==5.0.0.93" \
             # Cap raised from <5 to <6: verified by hand in isolated venvs
             # that both cv2 call sites this add-on actually uses
             # (FramePreprocessor.enhance's imdecode/cvtColor/CLAHE/
@@ -282,7 +281,7 @@ RUN ( \
             # No known CVEs in either line at the time of this bump (checked
             # via pip-audit) — this one's just staying current, unlike the
             # transformers bump below.
-            # Floor raised from 4.56 to 5.5 to clear two HIGH-severity CVEs
+            # Pinned to 5.22.2 to clear two HIGH-severity CVEs
             # (2026-4372 RCE, 2026-5241 arbitrary code execution via
             # trust_remote_code) that the 4.x line never fixed — found via
             # a trivy image scan. Verified by hand before bumping: the pinned
@@ -295,8 +294,9 @@ RUN ( \
             # backward-compatible surface across major versions, and this
             # add-on's usage here is exactly that surface, never
             # trust_remote_code (which stays at its safe default of False).
-            "transformers>=5.19.0,<6" \
-        && pip3 install --no-cache-dir --no-deps "facenet-pytorch>=2.6.0,<3" \
+            "transformers==5.22.2" \
+            "ultralytics==8.4.210" \
+        && pip3 install --no-cache-dir --only-binary :all: --no-deps "facenet-pytorch==2.6.0" \
         2>&1 | tail -20 \
     ) || echo "INFO: computer-vision pipeline install failed; ai_object_detection_enabled \
 and related toggles will report unavailable"
@@ -328,8 +328,8 @@ and related toggles will report unavailable"
 # without dependencies so it cannot downgrade Pillow in the shared runtime.
 # Non-fatal: if either install fails the moondream_local provider reports "not
 # installed" at runtime and the image still starts normally.
-RUN pip3 install --no-cache-dir "kestrel>=0.4.2,<0.5" \
-    && pip3 install --no-cache-dir --no-deps "moondream>=1.3,<2" \
+RUN pip3 install --no-cache-dir "kestrel>=0.9.2,<1.0" \
+    && pip3 install --no-cache-dir --no-deps "moondream>=2.6.1,<3" \
     2>&1 | tail -5 || \
     echo "INFO: moondream install failed; moondream_local provider will be unavailable"
 
