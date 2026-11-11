@@ -10,6 +10,18 @@
 
 ### Release Workflow
 
+<<<<<<< HEAD
+=======
+# Backend Updates
+
+- Updated anthropic to 2.8.0
+- Updated openai to 3.49.0
+- Updated ultralytics to 8.4.210
+
+### Release Workflow
+
+
+>>>>>>> b1c8e57 (BCD-32 Update ultralytics to 8.4.210)
 ## 6.1.8
 
 ### Bug fixes
