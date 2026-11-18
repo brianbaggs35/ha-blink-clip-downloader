@@ -14,6 +14,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from ..assistant_search import ClipSearch
 from .core import _DatabaseBase
 from .sql import _affected, _qm, _severity_rank_sql
 
@@ -26,6 +27,83 @@ _ROUTINE = "routine"
 def _since(days: int) -> str:
     """The UTC ISO instant *days* ago, the form clip timestamps are stored in."""
     return (datetime.now(UTC) - timedelta(days=days)).isoformat()
+
+
+def _clip_select(extra_columns: str = "") -> str:
+    """The SELECT every assistant clip list shares, up to (not including) WHERE.
+
+    Joins each clip to its *latest* analysis only, so a clip analyzed again
+    after a correction is described by the correction. *extra_columns* is a
+    trusted SQL fragment starting with a comma, never user text.
+    """
+    return f"""
+        SELECT c.id, c.camera, c.timestamp, c.duration, c.starred,
+               ar.summary, ar.is_suspicious, ar.confidence, ar.severity,
+               ar.risk_score, ar.face_bypass_applied,
+               ar.routine_visit_applied, ar.audio_labels,
+               COALESCE((
+                   SELECT ARRAY_AGG(event_type ORDER BY rank DESC, event_type)
+                   FROM (
+                       SELECT event_type,
+                              MAX({_severity_rank_sql("severity")}) AS rank
+                       FROM security_events
+                       WHERE clip_id = c.id
+                       GROUP BY event_type
+                   ) kinds
+               ), ARRAY[]::TEXT[]) AS event_types,
+               COALESCE((
+                   SELECT ARRAY_AGG(DISTINCT label ORDER BY label)
+                   FROM detected_objects
+                   WHERE clip_id = c.id
+               ), ARRAY[]::TEXT[]) AS objects
+               {extra_columns}
+        FROM clips c
+        JOIN LATERAL (
+            SELECT summary, is_suspicious, confidence, severity,
+                   risk_score, face_bypass_applied, routine_visit_applied,
+                   audio_labels
+            FROM analysis_results
+            WHERE clip_id = c.id
+            ORDER BY analyzed_at DESC
+            LIMIT 1
+        ) ar ON TRUE
+    """
+
+
+def _heard(audio_labels: object) -> list[str]:
+    """The sound labels stored with an analysis (a JSON list), or none."""
+    try:
+        parsed = json.loads(str(audio_labels or "[]"))
+    except ValueError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [
+        str(entry["label"])
+        for entry in parsed
+        if isinstance(entry, dict) and entry.get("label")
+    ]
+
+
+def _clip_row(row: Any) -> dict[str, Any]:
+    """One ``_clip_select`` row as the dict the assistant's report reads."""
+    return {
+        "id": str(row["id"]),
+        "camera": str(row["camera"]),
+        "timestamp": str(row["timestamp"]),
+        "duration": int(row["duration"] or 0),
+        "starred": bool(row["starred"]),
+        "summary": str(row["summary"] or ""),
+        "is_suspicious": bool(row["is_suspicious"]),
+        "confidence": float(row["confidence"] or 0.0),
+        "severity": str(row["severity"] or _ROUTINE),
+        "risk_score": float(row["risk_score"] or 0.0),
+        "cleared_as_household": bool(row["face_bypass_applied"]),
+        "cleared_as_routine_door_use": bool(row["routine_visit_applied"]),
+        "event_types": [str(t) for t in (row["event_types"] or [])],
+        "objects": [str(label) for label in (row["objects"] or [])],
+        "heard": _heard(row["audio_labels"]),
+    }
 
 
 class AssistantMixin(_DatabaseBase):
@@ -94,29 +172,7 @@ class AssistantMixin(_DatabaseBase):
         rows = await self._pool.fetch(
             _qm(
                 f"""
-                SELECT c.id, c.camera, c.timestamp, c.duration, c.starred,
-                       ar.summary, ar.is_suspicious, ar.confidence, ar.severity,
-                       ar.risk_score, ar.face_bypass_applied,
-                       ar.routine_visit_applied,
-                       COALESCE((
-                           SELECT ARRAY_AGG(event_type ORDER BY rank DESC, event_type)
-                           FROM (
-                               SELECT event_type,
-                                      MAX({_severity_rank_sql("severity")}) AS rank
-                               FROM security_events
-                               WHERE clip_id = c.id
-                               GROUP BY event_type
-                           ) kinds
-                       ), ARRAY[]::TEXT[]) AS event_types
-                FROM clips c
-                JOIN LATERAL (
-                    SELECT summary, is_suspicious, confidence, severity,
-                           risk_score, face_bypass_applied, routine_visit_applied
-                    FROM analysis_results
-                    WHERE clip_id = c.id
-                    ORDER BY analyzed_at DESC
-                    LIMIT 1
-                ) ar ON TRUE
+                {_clip_select()}
                 WHERE c.timestamp >= ? {notable}
                 ORDER BY c.timestamp DESC
                 LIMIT ?
@@ -125,24 +181,70 @@ class AssistantMixin(_DatabaseBase):
             _since(days),
             limit,
         )
-        return [
-            {
-                "id": str(r["id"]),
-                "camera": str(r["camera"]),
-                "timestamp": str(r["timestamp"]),
-                "duration": int(r["duration"] or 0),
-                "starred": bool(r["starred"]),
-                "summary": str(r["summary"] or ""),
-                "is_suspicious": bool(r["is_suspicious"]),
-                "confidence": float(r["confidence"] or 0.0),
-                "severity": str(r["severity"] or _ROUTINE),
-                "risk_score": float(r["risk_score"] or 0.0),
-                "cleared_as_household": bool(r["face_bypass_applied"]),
-                "cleared_as_routine_door_use": bool(r["routine_visit_applied"]),
-                "event_types": [str(t) for t in (r["event_types"] or [])],
-            }
-            for r in rows
+        return [_clip_row(r) for r in rows]
+
+    async def search_assistant_clips(
+        self, search: ClipSearch, limit: int
+    ) -> list[dict[str, Any]]:
+        """Analyzed clips matching *search*, best match first, then newest.
+
+        A clip matches a term when its latest analysis summary contains the
+        term's text or the detector saw one of the term's labels in it, so
+        "person" finds a clip whose summary never says the word. With no terms
+        every clip in the window and cameras qualifies. Only the latest
+        analysis of a clip is read, like everywhere else the assistant looks.
+        Every value reaches the database as a parameter; only the *number* of
+        terms shapes the SQL text.
+        """
+        if self._pool is None or limit <= 0:
+            return []
+        score_sql = " + ".join(
+            "(CASE WHEN ar.summary ILIKE ? OR EXISTS ("
+            "SELECT 1 FROM detected_objects d "
+            "WHERE d.clip_id = c.id AND d.label = ANY(?::text[])) "
+            "THEN 1 ELSE 0 END)"
+            for _term in search.terms
+        )
+        params: list[Any] = [
+            value
+            for term in search.terms
+            for value in (f"%{term.text}%", list(term.labels))
         ]
+        conditions = ["c.timestamp >= ?"]
+        params.append(search.since)
+        if search.until:
+            conditions.append("c.timestamp < ?")
+            params.append(search.until)
+        if search.cameras:
+            conditions.append("LOWER(c.camera) = ANY(?::text[])")
+            params.append([camera.lower() for camera in search.cameras])
+        if search.suspicious_only:
+            conditions.append("ar.is_suspicious")
+        if search.starred_only:
+            conditions.append("c.starred")
+        # The score is worked out once, in the inner query, and filtered on in
+        # the outer one, so its parameters are not repeated in a WHERE.
+        score_column = f", ({score_sql}) AS match_score" if score_sql else ""
+        outer = (
+            "WHERE match_score > 0 ORDER BY match_score DESC, timestamp DESC"
+            if score_sql
+            else "ORDER BY timestamp DESC"
+        )
+        rows = await self._pool.fetch(
+            _qm(
+                f"""
+                SELECT * FROM (
+                    {_clip_select(score_column)}
+                    WHERE {" AND ".join(conditions)}
+                ) matched
+                {outer}
+                LIMIT ?
+                """
+            ),
+            *params,
+            limit,
+        )
+        return [_clip_row(r) for r in rows]
 
     async def get_face_enrollment_names(self) -> list[str]:
         """The distinct names enrolled on the Biometrics tab, for redaction only.

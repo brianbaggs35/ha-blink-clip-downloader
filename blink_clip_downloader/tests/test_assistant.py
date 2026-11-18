@@ -453,3 +453,122 @@ async def test_a_disk_entry_with_nothing_plain_in_it_is_left_out(
     live = {"status": {"disk": {"nested": {"a": 1}}}}
     report = await ContextBuilder(db, 7, live, []).build()
     assert "Disk:" not in report
+
+
+class TestSearch:
+    async def test_a_question_that_names_a_camera_adds_a_matching_clips_section(
+        self, db: ClipDatabase
+    ) -> None:
+        await _seed(db)
+        builder = ContextBuilder(
+            db, 7, _live(), [], "Anything suspicious on the Driveway today?"
+        )
+
+        report = await builder.build()
+
+        section = report.split("## Clips matching your question")[1].split("\n## ")[0]
+        assert (
+            "Searched the stored AI descriptions of analyzed clips for: camera "
+            "Driveway; today; flagged suspicious only." in section
+        )
+        assert "C1 |" in section
+        assert "A stranger lingers." in section
+        assert "Front Door" not in section
+
+    async def test_a_clip_found_by_the_search_is_not_listed_again_below(
+        self, db: ClipDatabase
+    ) -> None:
+        await _seed(db)
+        builder = ContextBuilder(db, 7, _live(), [], "suspicious clips at the Driveway")
+
+        report = await builder.build()
+
+        assert sorted(builder.refs) == ["C1", "C2"]
+        assert report.count("A stranger lingers.") == 1
+        assert {builder.refs["C1"]["id"], builder.refs["C2"]["id"]} == {"c1", "c2"}
+
+    async def test_an_empty_result_says_so_rather_than_nothing_happened(
+        self, db: ClipDatabase
+    ) -> None:
+        await _seed(db)
+
+        report = await ContextBuilder(
+            db, 7, _live(), [], "any zebra at the Front Door?"
+        ).build()
+
+        assert "mentioning zebra" in report
+        assert "No analyzed clip matched this search." in report
+
+    async def test_a_question_that_names_nothing_adds_no_section(
+        self, db: ClipDatabase
+    ) -> None:
+        await _seed(db)
+
+        for question in ("", "the"):
+            report = await ContextBuilder(db, 7, _live(), [], question).build()
+            assert "Clips matching your question" not in report
+
+    async def test_the_search_says_when_more_clips_match_than_it_shows(
+        self, db: ClipDatabase, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        await _seed(db)
+        monkeypatch.setattr(assistant, "SEARCH_CLIPS", 1)
+
+        report = await ContextBuilder(db, 7, _live(), [], "front door driveway").build()
+
+        assert "(more clips match than the 1 shown)" in report
+
+    async def test_clip_lines_carry_the_objects_seen_and_sounds_heard(
+        self, db: ClipDatabase
+    ) -> None:
+        from blink_downloader.vision import DetectedObject
+
+        await _seed(db)
+        await db.save_detected_objects(
+            "c2", [DetectedObject("person", 0.9, (0, 0, 1, 1), None, 0)]
+        )
+        await db.add_analysis_result(
+            {
+                "clip_id": "c2",
+                "camera": "Driveway",
+                "model": "m",
+                "is_suspicious": True,
+                "confidence": 0.7,
+                "summary": "A stranger lingers.",
+                "analyzed_at": _ts(0.5),
+                "audio_labels": json.dumps([{"label": "glass_break", "score": 0.9}]),
+            }
+        )
+
+        report = await ContextBuilder(db, 7, _live(), []).build()
+
+        line = next(
+            line for line in report.splitlines() if "A stranger lingers." in line
+        )
+        assert "objects seen: person" in line
+        assert "sounds heard: glass_break" in line
+
+    async def test_the_search_is_made_from_the_question_with_names_already_redacted(
+        self, db: ClipDatabase
+    ) -> None:
+        await _seed(db)
+        analyzer = FakeAnalyzer()
+
+        await assistant.ask(
+            analyzer,  # type: ignore[arg-type]
+            db,
+            "Was Riley at the Front Door today?",
+            [],
+            days=7,
+            model=None,
+            live=_live(),
+        )
+
+        sent = analyzer.calls[0]["system"]
+        assert "riley" not in sent.lower()
+        assert "camera Front Door; today" in sent
+        assert "Clips matching your question" in sent
+
+    def test_the_prompt_tells_the_model_what_the_search_covers(self) -> None:
+        assert "Clips matching your question" in assistant.SYSTEM_PROMPT
+        assert "never analyzed" in assistant.SYSTEM_PROMPT

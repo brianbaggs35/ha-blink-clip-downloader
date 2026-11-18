@@ -2285,12 +2285,36 @@ at that moment, so it can answer about almost any part of the system:
 | Battery health | The latest level per camera and its recent changes |
 | Security events | How many clips had events, by worst severity, and activity at the assets marked on the Assets tab |
 | Face recognition | **Counts only**: whether it is on, how many people are enrolled, how many clips matched a household member or showed someone unfamiliar, and how many flags it cleared |
-| Clips | The most notable clips (flagged, or with a notable event) and the most recent ones, 30 of each at most, each with its time, camera, verdict, confidence, security events and a one-line summary |
+| Clips matching your question | Only when the question asks for something specific: up to 20 analyzed clips whose stored AI description or detected objects match it (see [Searching for something specific](#searching-for-something-specific)) |
+| Clips | The most notable clips (flagged, or with a notable event) and the most recent ones, 30 of each at most, each with its time, camera, verdict, confidence, security events, the objects the detector saw, the sounds it heard and a one-line summary |
 
 When an answer refers to a specific clip, it appears under the answer as a chip
 (camera and time) that opens the clip in the Library's player without leaving the
 tab. If the window holds more clips than are listed, the report says so, and the
 assistant tells you it is working from the most notable and most recent ones.
+
+### Searching for something specific
+
+The report alone holds only the most notable and most recent clips, so a question such
+as *"did anyone leave a package at the front door yesterday?"* could otherwise miss
+the clip. The add-on therefore reads each question on this machine, without a model
+and at no cost, and adds a **Clips matching your question** section to the report:
+
+- **What it looks for.** A camera whose full name appears in the question, a time
+  phrase (*today*, *yesterday*, *last night* or *overnight*, *this morning*, or
+  *last 3 days*, *this week*, *this month*, never more than 30 days), whether you asked for *flagged* or
+  *starred* clips, and the plain words that describe what happened (*package*,
+  *car*, *dog*).
+- **What it searches.** The AI's stored description of each analyzed clip and the
+  labels the object detector stored for it (person, car, dog and so on). Nothing
+  reads video or pictures, and the words are passed to the database as values, never
+  as query text.
+- **It says what it searched.** The section opens with the cameras, time and words it
+  used, so an empty result reads as "no analyzed clip matched this search", not
+  "nothing happened". A clip that was never analyzed, or whose description uses
+  other words, can still be missed.
+- **A question with none of these** searches for nothing and the report is exactly as
+  before.
 
 ### What never leaves the device
 

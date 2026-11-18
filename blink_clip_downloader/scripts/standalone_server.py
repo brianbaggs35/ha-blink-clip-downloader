@@ -38,6 +38,7 @@ import json
 import logging
 import os
 import pkgutil
+import re
 import sys
 import tempfile
 from datetime import UTC, datetime, timedelta
@@ -258,10 +259,15 @@ async def _e2e_chat(
     sent = system + "\n" + "\n".join(m["content"] for m in messages)
     leaked = any(name.lower() in sent.lower() for name in _E2E_ENROLLED_NAMES)
     cites = "\nC1 |" in system
+    # What the report says the question was searched for, if it was.
+    searched = re.search(
+        r"Searched the stored AI descriptions of analyzed clips for: (.*)\.\n", system
+    )
     return ChatReply(
         f"E2E answer to: {messages[-1]['content']} "
         f"[model: {model or 'default'}] "
-        f"[enrolled names sent: {'yes' if leaked else 'no'}]"
+        f"[enrolled names sent: {'yes' if leaked else 'no'}] "
+        f"[search: {searched.group(1) if searched else 'none'}]"
         + (" See C1." if cites else ""),
         prompt_tokens=1200,
         completion_tokens=80,

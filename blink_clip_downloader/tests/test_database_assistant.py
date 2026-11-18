@@ -6,6 +6,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from blink_downloader.assistant_search import ClipSearch, SearchTerm
 from blink_downloader.database import ClipDatabase
 from blink_downloader.security import SecurityEvent, SecurityEventType, Severity
 
@@ -277,3 +278,182 @@ async def test_usage_is_empty_without_a_database() -> None:
     usage = await closed.get_token_usage_stats()
     assert usage["assistant"]["questions"] == 0
     assert json.dumps(usage)
+
+
+# ---------------------------------------------------------------------------
+# What the detector and the sound model recorded
+# ---------------------------------------------------------------------------
+
+
+async def _detect(db: ClipDatabase, clip_id: str, *labels: str) -> None:
+    from blink_downloader.vision import DetectedObject
+
+    await db.save_detected_objects(
+        clip_id,
+        [DetectedObject(label, 0.9, (0.0, 0.0, 1.0, 1.0), None, 0) for label in labels],
+    )
+
+
+async def test_clips_list_the_distinct_objects_seen_and_sounds_heard(
+    db: ClipDatabase,
+) -> None:
+    await _clip(db, "c1", "Porch", 1)
+    await _clip(db, "c2", "Porch", 2)
+    await _clip(db, "c3", "Porch", 3)
+    await _analysis(
+        db,
+        "c1",
+        "Porch",
+        audio_labels=json.dumps(
+            [{"label": "dog_bark", "score": 0.8}, {"label": "", "score": 0.4}, 7]
+        ),
+    )
+    await _analysis(db, "c2", "Porch", audio_labels="not json")
+    await _analysis(db, "c3", "Porch", audio_labels='{"label": "x"}')
+    await _detect(db, "c1", "person", "car", "person")
+
+    rows = {c["id"]: c for c in await db.get_assistant_clips(7, 10, False)}
+
+    assert rows["c1"]["objects"] == ["car", "person"]
+    assert rows["c1"]["heard"] == ["dog_bark"]
+    assert rows["c2"]["objects"] == []
+    assert rows["c2"]["heard"] == []
+    assert rows["c3"]["heard"] == []
+
+
+# ---------------------------------------------------------------------------
+# Searching the stored analyses
+# ---------------------------------------------------------------------------
+
+
+def _search(
+    *,
+    terms: tuple[SearchTerm, ...] = (),
+    cameras: tuple[str, ...] = (),
+    since_hours: float = 24 * 7,
+    until_hours: float | None = None,
+    suspicious: bool = False,
+    starred: bool = False,
+) -> ClipSearch:
+    return ClipSearch(
+        since=_ts(since_hours),
+        until=_ts(until_hours) if until_hours is not None else None,
+        cameras=cameras,
+        terms=terms,
+        suspicious_only=suspicious,
+        starred_only=starred,
+        description="test",
+    )
+
+
+async def _seed_search(db: ClipDatabase) -> None:
+    await _clip(db, "door-pkg", "Front Door", 1)
+    await _clip(db, "door-dog", "front door", 2)
+    await _clip(db, "yard-pkg", "Yard", 3)
+    await _clip(db, "yard-old", "Yard", 24 * 3)
+    await _clip(db, "never-analyzed", "Yard", 1)
+    await _analysis(db, "door-pkg", "Front Door", summary="A courier leaves a Package.")
+    await _analysis(db, "door-dog", "front door", summary="Nothing much happens.")
+    await _analysis(
+        db, "yard-pkg", "Yard", summary="A package and a dog.", suspicious=True
+    )
+    await _analysis(db, "yard-old", "Yard", summary="A package, days ago.")
+    await _detect(db, "door-dog", "dog")
+    await db.star_clip("door-dog", True)
+
+
+async def test_search_matches_the_description_without_regard_to_case(
+    db: ClipDatabase,
+) -> None:
+    await _seed_search(db)
+
+    found = await db.search_assistant_clips(_search(terms=(SearchTerm("package"),)), 10)
+
+    assert [c["id"] for c in found] == ["door-pkg", "yard-pkg", "yard-old"]
+
+
+async def test_search_matches_a_detector_label_the_description_never_names(
+    db: ClipDatabase,
+) -> None:
+    await _seed_search(db)
+
+    found = await db.search_assistant_clips(
+        _search(terms=(SearchTerm("dog", ("dog",)),)), 10
+    )
+
+    assert [c["id"] for c in found] == ["door-dog", "yard-pkg"]
+    assert found[0]["objects"] == ["dog"]
+
+
+async def test_the_clip_matching_more_terms_comes_first(db: ClipDatabase) -> None:
+    await _seed_search(db)
+
+    found = await db.search_assistant_clips(
+        _search(terms=(SearchTerm("package"), SearchTerm("dog", ("dog",)))), 10
+    )
+
+    assert found[0]["id"] == "yard-pkg"
+    assert {c["id"] for c in found} == {"door-pkg", "door-dog", "yard-pkg", "yard-old"}
+
+
+async def test_search_with_no_terms_lists_every_analyzed_clip_newest_first(
+    db: ClipDatabase,
+) -> None:
+    await _seed_search(db)
+
+    found = await db.search_assistant_clips(_search(), 10)
+
+    assert [c["id"] for c in found] == ["door-pkg", "door-dog", "yard-pkg", "yard-old"]
+
+
+async def test_search_narrows_by_camera_time_and_flags(db: ClipDatabase) -> None:
+    await _seed_search(db)
+
+    by_camera = await db.search_assistant_clips(_search(cameras=("Front Door",)), 10)
+    by_window = await db.search_assistant_clips(
+        _search(since_hours=4, until_hours=1.5), 10
+    )
+    flagged = await db.search_assistant_clips(_search(suspicious=True), 10)
+    starred = await db.search_assistant_clips(_search(starred=True), 10)
+
+    assert [c["id"] for c in by_camera] == ["door-pkg", "door-dog"]
+    assert [c["id"] for c in by_window] == ["door-dog", "yard-pkg"]
+    assert [c["id"] for c in flagged] == ["yard-pkg"]
+    assert [c["id"] for c in starred] == ["door-dog"]
+
+
+async def test_search_respects_the_limit_and_an_empty_result(
+    db: ClipDatabase,
+) -> None:
+    await _seed_search(db)
+
+    assert len(await db.search_assistant_clips(_search(), 2)) == 2
+    assert await db.search_assistant_clips(_search(), 0) == []
+    assert (
+        await db.search_assistant_clips(_search(terms=(SearchTerm("zebra"),)), 10) == []
+    )
+
+
+async def test_search_reads_only_a_clips_latest_analysis(db: ClipDatabase) -> None:
+    await _clip(db, "c1", "Porch", 1)
+    await _analysis(db, "c1", "Porch", summary="A package.", analyzed_hours_ago=5)
+    await _analysis(db, "c1", "Porch", summary="Nothing.", analyzed_hours_ago=1)
+
+    assert (
+        await db.search_assistant_clips(_search(terms=(SearchTerm("package"),)), 10)
+        == []
+    )
+
+
+async def test_a_search_term_is_data_not_sql(db: ClipDatabase) -> None:
+    await _seed_search(db)
+    attack = SearchTerm("x'); DROP TABLE clips; --", ("dog'; --",))
+
+    assert await db.search_assistant_clips(_search(terms=(attack,)), 10) == []
+    assert len(await db.get_assistant_clips(7, 10, False)) == 4
+
+
+async def test_search_without_a_database_finds_nothing() -> None:
+    closed = ClipDatabase("postgresql://unused")
+
+    assert await closed.search_assistant_clips(_search(), 5) == []
