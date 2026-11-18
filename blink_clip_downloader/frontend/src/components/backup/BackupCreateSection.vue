@@ -114,9 +114,8 @@ async function run(kind: 'download' | 'drive') {
         </ul>
         <p v-if="!view.included.length && !view.fileCount" class="muted-note">Nothing to back up yet.</p>
         <p class="muted-note not-included">
-          Not included: the clip videos, which are too large (they stay in <code>{{ view.clipFolder }}</code
-          >), and every password and sign-in — Blink, Google Drive and this add-on's own — so you sign in again after
-          restoring.
+          Not included: the clip videos, which are too large (they stay in <code>{{ view.clipFolder }}</code>), and
+          every password and sign-in — Blink, Google Drive and this add-on's own — so you sign in again after restoring.
         </p>
 
         <div v-if="view.holdsFaces" class="faces-option">
