@@ -63,7 +63,7 @@ vision = [
     # not just "no import error." No known CVEs in either line at the time
     # of this bump (checked via pip-audit).
     "opencv-python-headless>=5.1.0.95,<6",
-    "transformers>=5.22.2,<6",
+    "transformers>=5.23.0,<6",
     "facenet-pytorch>=2.6.0,<3",
 ]
 

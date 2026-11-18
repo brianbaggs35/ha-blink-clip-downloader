@@ -41,6 +41,7 @@
 - Updated pytest-asyncio to 1.5.0
 - Updated ultralytics (floor and Docker image pin) to 8.4.215
 - Updated opencv-python-headless (floor and Docker image pin) to 5.1.0.95
+- Updated transformers (floor and Docker image pin) to 5.23.0
 
 ### Release Workflow
 
