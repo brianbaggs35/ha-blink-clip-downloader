@@ -1,5 +1,13 @@
 # Changelog
 
+## 6.2.1
+
+### Bug fixes
+
+### Dependency Updates
+
+### Release Workflow
+
 ## 6.2.0
 
 ### Security Assistant
