@@ -664,8 +664,8 @@ async def test_the_loop_ticks_on_the_clock_until_cancelled(
     for _ in range(5):
         await _real_sleep(0)
     task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
+    await asyncio.gather(task, return_exceptions=True)
+    assert task.cancelled()
     assert len(blink.calls) == 2
     assert slept and slept[0] == arming.TICK_SECONDS
 
@@ -691,7 +691,7 @@ async def test_one_failed_look_does_not_stop_the_loop(
     for _ in range(6):
         await _real_sleep(0)
     task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
+    await asyncio.gather(task, return_exceptions=True)
+    assert task.cancelled()
     assert looks >= 2
     assert "Arming schedule check failed" in caplog.text
