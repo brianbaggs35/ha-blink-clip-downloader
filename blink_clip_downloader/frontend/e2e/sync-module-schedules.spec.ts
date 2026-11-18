@@ -47,7 +47,8 @@ test('switches a schedule off, edits it to disarm one sync module, then deletes 
   await card.getByRole('button', { name: 'Add schedule' }).click()
   await page.getByRole('dialog').getByRole('button', { name: 'Save' }).click()
   const row = card.locator('.as-row')
-  await expect(row).toContainText('Arm Entire system at 22:00 · Every day')
+  await expect(row).toContainText('Arm Entire system at 22:00')
+  await expect(row).toContainText('Every day')
 
   await row.locator('input[role="switch"]').click()
   await expect(row).toHaveClass(/as-off/)
