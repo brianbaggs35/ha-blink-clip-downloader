@@ -794,11 +794,11 @@ removed in 5.0.0.
   `ha_entities.py` above. `App.vue`'s `?kiosk=1&tab=<id>` mode exists for
   the Dashboards builder's iframe-card route.
 - **Nav wiring**: adding/removing a tab touches four places —
-  `components/layout/AppSidebar.vue`'s `TabName` type + `TABS` array (in
-  that file's plain `<script>` block, not its `<script setup>` one: `TABS`
-  and the `TAB_NAMES` derived from it are runtime *exports*, which
-  `<script setup>` cannot do, and `App.vue`'s kiosk mode validates
-  `?tab=` against them),
+  `components/layout/tabs.ts`'s `TabName` type + `TABS` array (a plain
+  module, not a named export of `AppSidebar.vue`: `TABS` and the
+  `TAB_NAMES` derived from it are runtime values `App.vue`'s kiosk mode
+  validates `?tab=` against, and CodeQL cannot see a named export from a
+  `.vue` file, so it read `TAB_NAMES` as always undefined),
   `App.vue`'s imports + `<div id="page-X">` blocks,
   `components/icons/paths.ts`'s `ICONS` map (add a `tab-X` entry; icons are
   plain path/rect/circle data, not separate `.vue` files — see `AppIcon.vue`),

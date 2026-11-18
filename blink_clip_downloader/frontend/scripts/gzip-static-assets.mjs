@@ -20,7 +20,7 @@
 // never be looked at.
 
 import { gzipSync } from 'node:zlib'
-import { readFileSync, writeFileSync, readdirSync, statSync } from 'node:fs'
+import { readFileSync, writeFileSync, readdirSync } from 'node:fs'
 import { join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -35,7 +35,9 @@ const MIN_BYTES = 1024
 function main() {
   let files
   try {
-    files = readdirSync(ASSETS)
+    // withFileTypes tells files from directories without a second look at
+    // each path, so nothing is checked and then used as a separate step.
+    files = readdirSync(ASSETS, { withFileTypes: true })
   } catch {
     // No build output to compress — `npm run build` failing is its own
     // error, and this should not invent a second one.
@@ -46,10 +48,10 @@ function main() {
   let done = 0
   let before = 0
   let after = 0
-  for (const name of files) {
-    if (!COMPRESSIBLE.test(name) || name.endsWith('.gz')) continue
+  for (const entry of files) {
+    const name = entry.name
+    if (!entry.isFile() || !COMPRESSIBLE.test(name) || name.endsWith('.gz')) continue
     const path = join(ASSETS, name)
-    if (!statSync(path).isFile()) continue
     const raw = readFileSync(path)
     if (raw.length < MIN_BYTES) continue
     const gz = gzipSync(raw, { level: 9 })

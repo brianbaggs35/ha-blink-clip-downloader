@@ -75,6 +75,13 @@ let sourceGeneration = 0
 // in-flight async handler so its continuation can't act on a dead
 // component instance (see selectCamera/onMounted below).
 let unmounted = false
+// The same flag, read through a call: the check after `await pendingStop` in
+// onMounted is not dead (the tab can be left while that stop is in flight),
+// but a bare read of the variable looks unchanged since the check above it to
+// anything that does not model an await suspending the function.
+function isUnmounted(): boolean {
+  return unmounted
+}
 // Bumped by both selectCamera() and stop() so an in-flight
 // startLiveView() call can tell, once it resolves, whether it's still the
 // most recent request — a later selectCamera() (fast camera-switching) or
@@ -370,7 +377,7 @@ onMounted(async () => {
     // this status check raced ahead of that).
     await pendingStop
     pendingStop = null
-    if (unmounted) return
+    if (isUnmounted()) return
   }
   try {
     // Adopt an already-active session (e.g. started from another browser

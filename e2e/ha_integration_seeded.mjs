@@ -63,7 +63,7 @@ try {
   await page.waitForURL(/\/home\//, { timeout: 20000 });
 
   await page.getByText(panelTitle, { exact: true }).click();
-  await page.waitForURL(new RegExp(addonSlug), { timeout: 15000 });
+  await page.waitForURL((url) => url.pathname.includes(addonSlug), { timeout: 15000 });
 
   const frame = await waitForIngressFrame(page);
   if (!frame) throw new Error("no ingress iframe appeared");
