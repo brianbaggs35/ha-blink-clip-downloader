@@ -1,4 +1,4 @@
-import { test, expect } from './coverage-fixtures'
+import { appApiUrl, test, expect } from './coverage-fixtures'
 
 // Scheduled arming through the real server: the Sync Module tab saves the list
 // to the add-on, which keeps it in /data. The scheduler itself is not started
@@ -15,7 +15,7 @@ test.beforeEach(async ({ page }) => {
 // Over HTTP, not by driving the UI: a navigation here would also throw away
 // the coverage this test collected.
 test.afterEach(async ({ page }) => {
-  await page.request.put('/api/sync-modules/schedules', { data: { schedules: [] } })
+  await page.request.put(appApiUrl('/api/sync-modules/schedules'), { data: { schedules: [] } })
 })
 
 test('adds a nightly arm for the whole system and keeps it across a reload @standalone', async ({ page }) => {
