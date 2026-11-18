@@ -39,6 +39,7 @@
 - Updated numpy to 2.5.5
 - Updated python-slugify to 9.2.0
 - Updated pytest-asyncio to 1.5.0
+- Updated ultralytics (floor and Docker image pin) to 8.4.215
 
 ### Release Workflow
 
