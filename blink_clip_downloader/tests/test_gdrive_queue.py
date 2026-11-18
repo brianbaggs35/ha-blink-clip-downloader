@@ -1446,13 +1446,13 @@ async def test_the_saved_sign_in_is_retried_with_longer_gaps_up_to_an_hour(
 ) -> None:
     client = _make_client_mock(connected=False, needs_reauthorization=True)
     queue = _make_queue(client, db, notifier=_notifier())
-    now = 1000.0
-    with patch("blink_downloader.gdrive_queue.time.monotonic", lambda: now):
+    clock = MagicMock(return_value=1000.0)
+    with patch("blink_downloader.gdrive_queue.time.monotonic", clock):
         await queue._watch_connection()
         gaps = []
         for _ in range(6):
-            now = queue._reconnect_not_before
-            before = now
+            before = queue._reconnect_not_before
+            clock.return_value = before
             await queue._watch_connection()
             gaps.append(queue._reconnect_not_before - before)
 
