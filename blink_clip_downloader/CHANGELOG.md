@@ -52,6 +52,8 @@
 - Updated ruff to 0.17.5 in CI and in the pin CLAUDE.md tells contributors to match
 - Updated npm to 12.2.3, in the image's frontend build stage and in CI
 
+Not updated, on purpose: TypeScript 7 (typescript-eslint 8 supports TypeScript below 6.1) and Video.js 10 (a rewrite of the player's API, which the clip modal is built on) stay on their current major versions. Prettier 3.10 re-wrapped a few lines of Vue templates and a refused `play()` on Space in the clip modal now has a test; neither changes behaviour. The opencv-python-headless 5.1 calls the add-on uses were checked to give identical output to 5.0 (decode, colour conversions, CLAHE, denoising, histogram, resize, dilate, encode).
+
 ### Release Workflow
 
 ## 6.2.0
