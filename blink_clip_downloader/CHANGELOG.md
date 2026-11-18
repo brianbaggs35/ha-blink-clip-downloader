@@ -35,6 +35,7 @@
 **Backend**
 
 - Updated anthropic to 2.10.0
+- Updated openai to 3.55.0
 
 ### Release Workflow
 
