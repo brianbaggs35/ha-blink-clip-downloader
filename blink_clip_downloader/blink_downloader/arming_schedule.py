@@ -84,7 +84,15 @@ ArmSyncModule = Callable[..., Awaitable[bool | None]]
 
 
 class ScheduleError(ValueError):
-    """A submitted schedule list is not usable; the message says why."""
+    """A submitted schedule list is not usable; ``reason`` says why.
+
+    ``reason`` is always one of this module's own fixed sentences, safe to show
+    the person who submitted the list.
+    """
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
 
 
 def new_schedule_id() -> str:
