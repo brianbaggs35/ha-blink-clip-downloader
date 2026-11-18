@@ -9,6 +9,10 @@ link) to the log, the job summary and the PR's annotations, and exits 1 for a
 pull request that has any. A push to a branch lists them and exits 0: the pull
 request was the gate, and nothing can be un-merged by failing afterwards.
 
+Two lists are shown for fixing along the way and never decide the result: the
+security hotspots still to review on the pull request, and the issues already
+open on the branch it merges into (when SonarCloud analyses that branch).
+
 Exit codes: 0 nothing to report (or skipped: no token), 1 new issues on a pull
 request, 2 SonarCloud could not be queried. A silent pass on an API failure
 would be a gate that quietly stops gating, so that fails too.
@@ -212,6 +216,44 @@ def fetch_issues(
         page += 1
 
 
+def fetch_hotspots(
+    client: SonarClient, project_key: str, pull_request: str | None, branch: str | None
+) -> list[dict[str, Any]]:
+    """Security hotspots on the new code that nobody has reviewed yet."""
+    params: dict[str, str | int] = {
+        "projectKey": project_key,
+        "status": "TO_REVIEW",
+        "inNewCodePeriod": "true",
+        "ps": PAGE_SIZE,
+        **_scope(pull_request, branch),
+    }
+    body = client.get("/api/hotspots/search", params)
+    found = body.get("hotspots")
+    if not isinstance(found, list):
+        raise SonarError("SonarCloud's hotspot list had no 'hotspots' array")
+    return [item for item in found if isinstance(item, dict)]
+
+
+def fetch_base_issues(
+    client: SonarClient, project_key: str, base_branch: str
+) -> list[dict[str, Any]]:
+    """The issues already open on the branch a pull request merges into."""
+    body = client.get(
+        "/api/issues/search",
+        {
+            "componentKeys": project_key,
+            "issueStatuses": OPEN_STATUSES,
+            "s": "FILE_LINE",
+            "ps": PAGE_SIZE,
+            "branch": base_branch,
+        },
+    )
+    found = body.get("issues")
+    if not isinstance(found, list):
+        raise SonarError("SonarCloud's issue list had no 'issues' array")
+    return [item for item in found if isinstance(item, dict)]
+
+
 def failing_gate_conditions(
     client: SonarClient, project_key: str, pull_request: str | None, branch: str | None
 ) -> list[str]:
@@ -274,6 +316,31 @@ def issue_url(
     return f"{server_url.rstrip('/')}/project/issues?{parse.urlencode(params)}"
 
 
+def render_hotspots(hotspots: Sequence[Mapping[str, Any]], project_key: str) -> str:
+    return "\n".join(
+        f"  {_location(h, project_key)}  {h.get('ruleKey')}  {h.get('message')}"
+        for h in hotspots
+    )
+
+
+def render_issue_lines(issues: Sequence[Mapping[str, Any]], project_key: str) -> str:
+    return "\n".join(
+        f"  {_location(i, project_key)}  {i.get('rule')}  {i.get('message')}"
+        for i in issues
+    )
+
+
+def _informational(
+    out: Callable[[str], None], what: str, fetch: Callable[[], list[dict[str, Any]]]
+) -> list[dict[str, Any]]:
+    """Run a lookup that is for the reader only: a failure is a notice, never a verdict."""
+    try:
+        return fetch()
+    except SonarError as exc:
+        out(f"::notice::Could not list {what}: {exc}")
+        return []
+
+
 def render_text(
     issues: Sequence[Mapping[str, Any]],
     server_url: str,
@@ -300,6 +367,9 @@ def render_markdown(
     project_key: str,
     pull_request: str | None,
     gate_problems: Sequence[str] = (),
+    hotspots: Sequence[Mapping[str, Any]] = (),
+    base_issues: Sequence[Mapping[str, Any]] = (),
+    base_branch: str | None = None,
 ) -> str:
     if not issues:
         heading = "### SonarCloud: no new issues"
@@ -325,6 +395,24 @@ def render_markdown(
             "",
             "Quality gate conditions failing:",
             *(f"- {_cell(p)}" for p in gate_problems),
+        ]
+    if hotspots:
+        parts += [
+            "",
+            f"Security hotspots to review: {len(hotspots)}",
+            *(
+                f"- `{_cell(_location(h, project_key))}` {_cell(h.get('ruleKey'))}: {_cell(h.get('message'))}"
+                for h in hotspots
+            ),
+        ]
+    if base_issues:
+        parts += [
+            "",
+            f"Already open on `{_cell(base_branch)}`: {len(base_issues)}",
+            *(
+                f"- `{_cell(_location(i, project_key))}` {_cell(i.get('rule'))}: {_cell(i.get('message'))}"
+                for i in base_issues
+            ),
         ]
     return "\n".join(parts) + "\n"
 
@@ -413,13 +501,41 @@ def run(
     for problem in gate_problems:
         out(f"Quality gate condition failing: {problem}")
 
+    hotspots = _informational(
+        out,
+        "the security hotspots",
+        lambda: fetch_hotspots(client, project_key, pull_request, branch),
+    )
+    if hotspots:
+        out(f"\nSecurity hotspots to review:\n{render_hotspots(hotspots, project_key)}")
+    base_branch = env.get("SONAR_BASE_BRANCH") or None
+    base_issues: list[dict[str, Any]] = []
+    if pull_request and base_branch:
+        base_issues = _informational(
+            out,
+            f"the issues open on {base_branch}",
+            lambda: fetch_base_issues(client, project_key, base_branch),
+        )
+        if base_issues:
+            out(
+                f"\nOpen issues on {base_branch}, to fix along the way:\n"
+                f"{render_issue_lines(base_issues, project_key)}"
+            )
+
     summary = env.get("GITHUB_STEP_SUMMARY")
     if summary:
         try:
             with open(summary, "a", encoding="utf-8") as handle:
                 handle.write(
                     render_markdown(
-                        issues, server_url, project_key, pull_request, gate_problems
+                        issues,
+                        server_url,
+                        project_key,
+                        pull_request,
+                        gate_problems,
+                        hotspots,
+                        base_issues,
+                        base_branch,
                     )
                 )
         except OSError as exc:

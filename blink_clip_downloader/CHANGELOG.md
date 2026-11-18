@@ -56,6 +56,9 @@ Not updated, on purpose: TypeScript 7 (typescript-eslint 8 supports TypeScript b
 
 ### Release Workflow
 
+- SonarCloud's issues now have a job of their own, **SonarCloud Issues**, so a pull request shows it failing, with the issues listed, apart from the scan having run. The scan job hands the scanner's report of the analysis (a project key and two URLs, no token) to it as an artifact. It lists, besides the open issues on the new code (which still fail a pull request), the security hotspots still to review and the issues already open on the branch the pull request merges into, so those can be fixed along the way; neither decides the result, and SonarCloud has no analysis of a ticket branch, so on a stacked pull request the second list says so instead of listing anything.
+- A new **Clear old caches** workflow keeps the repository's Actions caches from filling its allowance: a pull request's caches (the image's build layers, npm and pip) are deleted when it is closed, a weekly run deletes the ones nothing has used for three days, and it can be run by hand from the Actions tab. Main's own caches are left alone.
+
 ## 6.2.0
 
 ### Security Assistant
