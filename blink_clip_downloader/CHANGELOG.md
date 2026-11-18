@@ -26,6 +26,7 @@
 - Updated primevue to 5.0.5
 - Updated @vitejs/plugin-vue to 6.0.11
 - Updated jsdom to 31.0.1
+- Updated typescript-eslint to 8.73.0
 
 ### Release Workflow
 
