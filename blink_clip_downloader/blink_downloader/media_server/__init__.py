@@ -47,6 +47,7 @@ from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
 
+from ..arming_schedule import ArmingScheduler
 from ..backup import RestoreStaging
 from ..database import ClipDatabase
 from ..face_enrollment import FaceCandidateStore
@@ -161,6 +162,7 @@ class MediaServer(
         get_sync_module_snapshot: Callable[[], list[dict[str, Any]]] | None = None,
         arm_sync_module: Callable[..., Awaitable[bool | None]] | None = None,
         arm_camera: Callable[..., Awaitable[bool | None]] | None = None,
+        arming_scheduler: ArmingScheduler | None = None,
         merge_downloaded_clip_ids: Callable[[Iterable[str]], int] | None = None,
         direct_access_login: bool = False,
         supervisor_token: str = "",
@@ -199,6 +201,8 @@ class MediaServer(
         self._get_sync_module_snapshot = get_sync_module_snapshot
         self._arm_sync_module = arm_sync_module
         self._arm_camera = arm_camera
+        # The Sync Module tab's schedule list and the loop that runs it.
+        self._arming_scheduler = arming_scheduler
         # Hands a restored backup's list of already-downloaded clips to the
         # running downloader. A narrow callable like the rest, and for a
         # reason beyond tidiness: the downloader rewrites its own history

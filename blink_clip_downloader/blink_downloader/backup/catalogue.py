@@ -74,6 +74,7 @@ DATA_FILES: tuple[DataFile, ...] = (
     DataFile("assistant_settings.json", "Security Assistant settings", _SETTINGS),
     DataFile("protected_assets.json", "Protected assets", _SETTINGS),
     DataFile("security_feed_settings.json", "Security Feed layout", _SETTINGS),
+    DataFile("arming_schedules.json", "Arm and disarm schedules", _SETTINGS),
     DataFile("finetune_state.json", "Moondream fine-tune selection", _SETTINGS),
     DataFile("clip_manifest.json", "Clip manifest (download log)", "event_log"),
     DataFile(
@@ -109,6 +110,7 @@ LEFT_OUT: dict[str, str] = {
     "camera_identities.json": "Rebuilt from your Blink account on the next poll.",
     "stats.json": "Rebuilt from the download history on the next poll.",
     "last_digest.json": "Only remembers when the last daily digest went out.",
+    "arming_schedule_state.json": "Only remembers what each schedule last did, so a restart does not repeat it.",
     "trigger_download": "A one-poll signal, not state.",
     "clip_library.db": "The pre-5.0.0 library, imported once at upgrade and not used since.",
     "moondream_packages": "Software installed from the AI tab; install it there again.",

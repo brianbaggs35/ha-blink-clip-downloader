@@ -337,6 +337,15 @@ thumbs-down does. Home Assistant's own persistent notifications stay text only.
 Turn the pictures off with `alert_include_image`. Details are in
 [the docs](blink_clip_downloader/DOCS.md#what-a-suspicious-activity-alert-carries).
 
+## Scheduled arming
+
+The **Sync Module** tab can arm or disarm your whole system, or just one sync module, on a
+schedule: every night at 22:30, weekdays at 07:00, whatever suits the house. A schedule
+runs at most once a day, only close to its time, and the tab shows what each one last did.
+If Blink refuses the request the add-on retries for a few minutes and then tells you with a
+Home Assistant notification; if the add-on was not running at that time it does not run
+late. See [Scheduled arming](blink_clip_downloader/DOCS.md#scheduled-arming).
+
 ## Cached prompts/tokens
 
 Only OpenAI and Anthropic support this. This is enabled by default and helps with the

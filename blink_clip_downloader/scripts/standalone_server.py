@@ -53,6 +53,7 @@ from blink_downloader import media_server
 from blink_downloader.analyzer import ClipAnalyzer
 from blink_downloader.analyzer.chat import ChatReply
 from blink_downloader.archiver import ClipArchiver
+from blink_downloader.arming_schedule import ArmingScheduler
 from blink_downloader.database import ClipDatabase
 from blink_downloader.gdrive_client import GDriveClient
 from blink_downloader.live_view import LiveViewManager
@@ -1073,6 +1074,9 @@ async def _main() -> None:
         get_sync_module_snapshot=sync_module.snapshot,
         arm_sync_module=sync_module.arm_module,
         arm_camera=sync_module.arm_camera,
+        # Never started (no run()): the Sync Module tab edits and shows the
+        # list, and nothing fires in the middle of a Playwright run.
+        arming_scheduler=ArmingScheduler(sync_module.snapshot, sync_module.arm_module),
     )
     # After construction: MediaServer builds its own FaceEmbedder, and this
     # replaces only the model behind it — see _E2EFaceEmbedder.

@@ -916,6 +916,40 @@ export interface SyncModuleInfo {
   cameras: SyncModuleCamera[]
 }
 
+/** One scheduled arm or disarm, as the Sync Module tab saves it. */
+export interface ArmingSchedule {
+  /** Empty for a schedule not saved yet; the server gives it one. */
+  id: string
+  name: string
+  enabled: boolean
+  action: 'arm' | 'disarm'
+  /** 24-hour "HH:MM" on the add-on's own clock. */
+  time: string
+  /** Weekdays it runs on, 0 = Monday to 6 = Sunday. */
+  days: number[]
+  scope: 'system' | 'sync_module'
+  /** The sync module's name when *scope* is "sync_module", else "". */
+  sync_module: string
+  network_id: string
+}
+
+/** What a schedule last did: "done", "failed" or "missed", and why. */
+export interface ArmingScheduleOutcome {
+  /** "YYYY-MM-DD" of the day it was for. */
+  date: string
+  /** "YYYY-MM-DDTHH:MM:SS" when it was settled. */
+  at: string
+  outcome: 'done' | 'failed' | 'missed'
+  detail: string
+}
+
+export interface ArmingSchedulesResponse {
+  schedules: ArmingSchedule[]
+  outcomes: Record<string, ArmingScheduleOutcome>
+  /** The add-on's own clock, which the schedule times are read on. */
+  clock: { now: string; timezone: string }
+}
+
 // ---------------------------------------------------------------------------
 // Security Feed — grid of near-live camera snapshot tiles
 // ---------------------------------------------------------------------------

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { armCamera, armSyncModule, getSyncModules } from './syncModule'
+import { armCamera, armSyncModule, getArmingSchedules, getSyncModules, saveArmingSchedules } from './syncModule'
 
 function jsonResponse(body: unknown) {
   return {
@@ -80,6 +80,20 @@ describe('syncModule api', () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ armed: false }),
+    })
+  })
+
+  it('getArmingSchedules()', async () => {
+    await getArmingSchedules()
+    expect(fetch).toHaveBeenCalledWith('/api/sync-modules/schedules', {})
+  })
+
+  it('saveArmingSchedules() replaces the whole list', async () => {
+    await saveArmingSchedules([])
+    expect(fetch).toHaveBeenCalledWith('/api/sync-modules/schedules', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ schedules: [] }),
     })
   })
 })

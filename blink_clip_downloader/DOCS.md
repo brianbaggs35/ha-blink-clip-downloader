@@ -2211,6 +2211,39 @@ detection per camera — the same arm/disarm state as the Blink app itself.
   session, or an automation) and stops polling entirely once you navigate
   away.
 
+### Scheduled arming
+
+Under the sync modules, the **Schedules** card arms or disarms on set days and times.
+
+- **Add schedule** asks what it does (**Arm** or **Disarm**), what it applies to
+  (**Entire system**, or one sync module), a time in 24-hour form and the days of the
+  week, with **Every day**, **Weekdays** and **Weekends** to save clicking. A name is
+  optional. Each row has its own on/off switch, so a schedule can be paused without
+  losing it; up to 20 can be kept.
+- **Times are read on the add-on's own clock**, the same way `digest_time` is, and the
+  card says what time that clock shows and its time zone, so check it against your
+  own before trusting a time. Clock changes such as daylight saving are not
+  compensated for.
+- **Entire system** does what **Arm/Disarm Entire System** does: it changes every sync
+  module and nothing else. It does not re-arm a camera that was switched off on its own,
+  and a schedule never changes a single camera.
+- **A schedule runs at most once a day, and only close to its time.** The add-on looks
+  every 20 seconds and acts from the scheduled time until five minutes after. If Blink
+  does not accept the request it is retried in that window, and when the window ends you get a
+  **Home Assistant notification** (sent even if `notify_ha` is off) and the row says
+  **Failed**. If the add-on was not running during the window the schedule is
+  **Missed**, not run late: arming a house at 3am because the add-on restarted at 3am
+  would be a surprise, and so would disarming it.
+- **A new or changed schedule starts from now.** Saving *arm at 22:00* at 22:30 does not
+  arm at once; its first run is tomorrow.
+- A schedule that names a sync module which is no longer on the account is kept and
+  marked **(not found)**; when it is due it fails and says which module was missing.
+- Schedules are kept in `/data/arming_schedules.json` and are part of a backup (under
+  **Settings**). What each last did is kept in `/data/arming_schedule_state.json`, which
+  a backup leaves out.
+- The list is `GET`/`PUT /api/sync-modules/schedules`. It is not reachable with the
+  access token Home Assistant's own calls use.
+
 ### Limitations
 
 - The **Arm/Disarm Entire System** button and each sync module's own switch
@@ -2568,7 +2601,7 @@ move to another install, and look inside before restoring.
 | Security Assistant | Your chats and the tokens they used (what the AI Usage tab shows for the assistant) |
 | Enrolled faces | Photos and face data for the people on the Biometrics tab (optional, see below) |
 | What each camera has learned | Where the protected vehicle parks, hourly activity baselines, clip-length statistics, scene backgrounds, battery history, the AI Usage reset point |
-| Settings | Camera settings, camera rename history, the protected-vehicle description, protected assets, the Security Feed layout, the Moondream fine-tune choice, the Security Assistant's model and window |
+| Settings | Camera settings, camera rename history, the protected-vehicle description, protected assets, the Security Feed layout, the arming schedules, the Moondream fine-tune choice, the Security Assistant's model and window |
 | Reference pictures | The frames vehicle zones and protected assets were drawn on |
 | Download history | The list of clips already fetched from Blink, so a restored install does not fetch and analyse them again; and the clip manifest (`clip_manifest.json`) |
 
@@ -2905,6 +2938,8 @@ Downloaded clips are saved under the `share` folder, accessible via:
 | `/data/camera_configs.json` | Per-camera descriptions, custom prompts, car-camera flags, and car zones set via the web UI |
 | `/data/vehicle_settings.json` | Protected-vehicle description set via the Vehicles tab |
 | `/data/assistant_settings.json` | The Security Assistant's model and how many days it looks back, set from the gear on its tab (its chats are in the database) |
+| `/data/arming_schedules.json` | The Sync Module tab's scheduled arm/disarm list (part of a backup) |
+| `/data/arming_schedule_state.json` | What each schedule last did, so a restart does not run one twice (left out of a backup) |
 | `/data/vehicle_zone_snapshots/` | One reference frame (JPEG) per camera with a saved car zone — the exact image the zone was drawn on, so the Vehicles tab's preview never silently shows a different, newer frame |
 | `/data/moondream_packages/` | The `moondream` Python package itself, installed here via the AI tab's **Install** button so it persists across restarts |
 | `/data/model_cache/` | Downloaded computer-vision models (YOLO, Depth Anything V2, SAM2, facenet-pytorch) — see **Disk Space** above |
