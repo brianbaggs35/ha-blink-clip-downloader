@@ -32,6 +32,10 @@
 - Updated eslint to 10.15.0 (frontend and the root e2e project)
 - Updated prettier to 3.10.1
 
+**Backend**
+
+- Updated anthropic to 2.10.0
+
 ### Release Workflow
 
 ## 6.2.0
