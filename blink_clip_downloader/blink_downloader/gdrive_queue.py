@@ -35,6 +35,16 @@ _QUOTA_PAUSE_REASON = "Google Drive storage quota exceeded"
 # come back and undo. Only has to outlast the window Drive counts over.
 _RATE_LIMIT_HOLD_OFF_SECONDS = 900
 
+# After Google rejects the saved sign-in the queue quietly tries it again, in
+# case the refusal was not final: first after five minutes, then twice as
+# far apart each time up to once an hour. The numbers are judgement calls, not
+# anything Google documents. One notification id, so the alert and the later
+# "connected again" notice replace each other (and a restart's repeat)
+# instead of stacking up.
+_RECONNECT_FIRST_DELAY_SECONDS = 300
+_RECONNECT_MAX_DELAY_SECONDS = 3600
+_RECONNECT_NOTIFICATION_ID = "blink_downloader_gdrive_reconnect"
+
 
 class _ClipNotUploadable(Exception):
     """A clip with no local source, or no reachable destination folder.
@@ -93,6 +103,12 @@ class GDriveUploadQueue:
         # see _hold_off(). Zero means "nothing is holding us back".
         self._hold_off_until = 0.0
         self._hold_off_reason = ""
+        # Whether the "Drive was disconnected" notification has been sent
+        # for the current rejection, and when the next quiet retry of the
+        # saved sign-in is due (zero failures so far means none made yet).
+        self._reauth_announced = False
+        self._reconnect_failures = 0
+        self._reconnect_not_before = 0.0
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -107,6 +123,7 @@ class GDriveUploadQueue:
 
         while self._running:
             try:
+                await self._watch_connection()
                 # A cheap local DB query, checked before touching the client
                 # at all — same ordering AnalysisQueue.start() uses for
                 # get_queue_counts() vs. health_check(), so an idle cycle
@@ -412,6 +429,75 @@ class GDriveUploadQueue:
                 "Could not extract %s from %s: %s", arcname, archive_path, exc
             )
             return None
+
+    # ------------------------------------------------------------------
+    # Rejected sign-in
+    # ------------------------------------------------------------------
+
+    async def _watch_connection(self) -> None:
+        """Say so when Google rejects the saved sign-in, and keep retrying it.
+
+        Checked once per cycle rather than hooked into the client: the
+        rejection is found by whichever call needed a token first (an
+        upload, the folder browser, the storage figure), and this loop is
+        what already owns notifying about Drive. Reconnecting needs no one
+        when Google accepts the saved sign-in again; when it never does, the
+        notification is how a person finds out Drive backups have stopped.
+        """
+        if self._client.needs_reauthorization:
+            if not self._reauth_announced:
+                self._reauth_announced = True
+                self._reconnect_failures = 0
+                self._reconnect_not_before = (
+                    time.monotonic() + _RECONNECT_FIRST_DELAY_SECONDS
+                )
+                await self._notify_disconnected()
+            elif await self._retry_reconnect():
+                await self._notify_reconnected()
+        elif self._reauth_announced:
+            # Connected again by signing in on the Storage tab.
+            await self._notify_reconnected()
+
+    async def _retry_reconnect(self) -> bool:
+        """Try the saved sign-in again if its turn has come. True if it worked."""
+        if time.monotonic() < self._reconnect_not_before:
+            return False
+        if await self._client.reconnect():
+            return True
+        self._reconnect_failures += 1
+        delay = min(
+            _RECONNECT_FIRST_DELAY_SECONDS * 2**self._reconnect_failures,
+            _RECONNECT_MAX_DELAY_SECONDS,
+        )
+        self._reconnect_not_before = time.monotonic() + delay
+        return False
+
+    async def _notify_disconnected(self) -> None:
+        _LOGGER.warning("Google Drive disconnected: Google rejected the saved sign-in")
+        if not self._notifier:
+            return
+        await self._notifier.announce(
+            "Google no longer accepts this add-on's saved Google Drive sign-in, "
+            "so backups to Drive have stopped. Clips waiting to upload are kept. "
+            "The add-on will keep trying the saved sign-in and carry on by "
+            "itself if Google accepts it again. If it does not, open the "
+            "add-on's Storage tab and press Reconnect Google Drive; your "
+            "backup folder is remembered.",
+            title="Blink Downloader: Google Drive Disconnected",
+            notification_id=_RECONNECT_NOTIFICATION_ID,
+        )
+
+    async def _notify_reconnected(self) -> None:
+        self._reauth_announced = False
+        self._reconnect_failures = 0
+        _LOGGER.info("Google Drive is connected again")
+        if not self._notifier:
+            return
+        await self._notifier.announce(
+            "Google Drive is connected again. Backups have resumed.",
+            title="Blink Downloader: Google Drive Reconnected",
+            notification_id=_RECONNECT_NOTIFICATION_ID,
+        )
 
     # ------------------------------------------------------------------
     # Hold-off

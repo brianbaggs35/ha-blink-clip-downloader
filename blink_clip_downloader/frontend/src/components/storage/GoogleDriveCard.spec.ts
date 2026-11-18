@@ -163,6 +163,34 @@ describe('GoogleDriveCard', () => {
     expect(wrapper.text()).toContain('Connect Google Drive')
   })
 
+  it('says Google stopped accepting the saved sign-in, and offers to reconnect', async () => {
+    const status = { ...NOT_CONNECTED_STATUS, needs_reauthorization: true, folder_id: 'f1', folder_name: 'Blink Clips' }
+    vi.stubGlobal('fetch', routedFetch({ settings: CONFIGURED, status }))
+    const wrapper = mountCard()
+    await flushPromises()
+    expect(wrapper.text()).toContain("Google stopped accepting this add-on's saved sign-in")
+    expect(wrapper.text()).toContain('your backup folder (Blink Clips) is remembered')
+    const labels = wrapper.findAll('button').map((b) => b.text())
+    expect(labels).toContain('Reconnect Google Drive')
+    expect(labels).not.toContain('Connect Google Drive')
+  })
+
+  it('does not mention a backup folder that was never chosen when reconnecting', async () => {
+    const status = { ...NOT_CONNECTED_STATUS, needs_reauthorization: true }
+    vi.stubGlobal('fetch', routedFetch({ settings: CONFIGURED, status }))
+    const wrapper = mountCard()
+    await flushPromises()
+    expect(wrapper.text()).toContain("Google stopped accepting this add-on's saved sign-in")
+    expect(wrapper.text()).not.toContain('is remembered')
+  })
+
+  it('shows no warning for a Drive that was never connected', async () => {
+    vi.stubGlobal('fetch', routedFetch({ settings: CONFIGURED, status: NOT_CONNECTED_STATUS }))
+    const wrapper = mountCard()
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('stopped accepting')
+  })
+
   it('starting a connection shows the user code and verification URL, and polls for completion', async () => {
     vi.useFakeTimers()
     const routes: Routes = { settings: CONFIGURED, status: NOT_CONNECTED_STATUS }

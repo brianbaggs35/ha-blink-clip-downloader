@@ -89,6 +89,12 @@ _HTTP_ERRORS = (aiohttp.ClientError, asyncio.TimeoutError, OSError)
 
 PollStatus = Literal["pending", "slow_down", "success", "expired", "denied", "error"]
 
+# What one attempt to trade the refresh token for a new access token came to:
+# ``revoked`` is Google's ``invalid_grant`` (RFC 6749 section 5.2: the grant is
+# invalid, expired or revoked); ``failed`` is anything that says nothing about
+# the grant itself, such as a network error or a Google outage.
+RefreshOutcome = Literal["ok", "revoked", "failed"]
+
 
 @dataclass
 class DeviceFlowInfo:
@@ -146,6 +152,13 @@ class GDriveClient:
         self._session: aiohttp.ClientSession | None = None
 
         self.connected = False
+        # Google rejected the saved sign-in (``invalid_grant``), so uploads
+        # are stopped, but the refresh token, the account and the chosen
+        # backup folder are all kept. Deleting them on the first rejection
+        # made a transient refusal as costly as a revoked one: a new sign-in
+        # and the folder picked all over again. ``reconnect()`` tries the
+        # saved sign-in again, and a fresh sign-in clears the flag.
+        self.needs_reauthorization = False
         self.rate_limited = False
         self.quota_exceeded = False
 
@@ -197,7 +210,10 @@ class GDriveClient:
             self._account_email = str(data.get("account_email", ""))
             self._folder_id = str(data.get("folder_id", ""))
             self._folder_name = str(data.get("folder_name", ""))
-            self.connected = bool(self._refresh_token)
+            self.needs_reauthorization = bool(data.get("needs_reauthorization", False))
+            self.connected = (
+                bool(self._refresh_token) and not self.needs_reauthorization
+            )
         except Exception as exc:  # noqa: BLE001
             _LOGGER.warning("Could not load Google Drive credentials: %s", exc)
 
@@ -209,6 +225,7 @@ class GDriveClient:
             "account_email": self._account_email,
             "folder_id": self._folder_id,
             "folder_name": self._folder_name,
+            "needs_reauthorization": self.needs_reauthorization,
         }
         try:
             # Write to a temp file and rename over the target so a crash
@@ -229,6 +246,7 @@ class GDriveClient:
         self._folder_id = ""
         self._folder_name = ""
         self.connected = False
+        self.needs_reauthorization = False
         CREDENTIALS_FILE.unlink(missing_ok=True)
 
     def _auth_headers(self) -> dict[str, str]:
@@ -404,12 +422,20 @@ class GDriveClient:
             return TokenPollResult(status="error", message=str(exc))
 
         if status == 200:
+            previous_email = self._account_email
             self._access_token = str(data.get("access_token", ""))
             if data.get("refresh_token"):
                 self._refresh_token = str(data["refresh_token"])
             self._expires_at = time.time() + float(data.get("expires_in", 3600))
             self.connected = bool(self._refresh_token)
+            self.needs_reauthorization = False
             await self._fetch_account_email()
+            if previous_email and self._account_email not in ("", previous_email):
+                # Signed in as someone else: the remembered folder is theirs
+                # to have chosen, not this account's.
+                self._folder_id = ""
+                self._folder_name = ""
+                self._subfolder_cache.clear()
             self._persist_credentials()
             return TokenPollResult(status="success")
 
@@ -455,11 +481,17 @@ class GDriveClient:
 
     async def _ensure_valid_token(self) -> bool:
         """Refresh the access token if near/past expiry. Returns True if usable."""
-        if not self._refresh_token:
+        if not self._refresh_token or self.needs_reauthorization:
             return False
         if self._access_token and time.time() < self._expires_at - 60:
             return True
+        outcome = await self._refresh_access_token()
+        if outcome == "revoked":
+            self._mark_reauthorization_needed()
+        return outcome == "ok"
 
+    async def _refresh_access_token(self) -> RefreshOutcome:
+        """Trade the refresh token for a new access token, and keep it."""
         try:
             session = self._get_session()
             async with session.post(
@@ -476,19 +508,13 @@ class GDriveClient:
                 status = resp.status
         except _JSON_ERRORS as exc:
             _LOGGER.warning("Google Drive token refresh failed: %s", exc)
-            return False
+            return "failed"
 
         if status != 200:
             if str(data.get("error", "")) == "invalid_grant":
-                # The refresh token itself was revoked/expired — the
-                # connection is dead. Force a clean "disconnected" state
-                # (matching Blink's own hard-failure symmetry) rather than a
-                # confusing half-connected limbo that keeps retrying forever.
-                _LOGGER.warning("Google Drive refresh token invalid — disconnecting")
-                self._clear_credentials()
-            else:
-                _LOGGER.warning("Google Drive token refresh failed: %s", data)
-            return False
+                return "revoked"
+            _LOGGER.warning("Google Drive token refresh failed: %s", data)
+            return "failed"
 
         self._access_token = str(data.get("access_token", ""))
         # Google's refresh-grant response frequently omits refresh_token
@@ -499,6 +525,41 @@ class GDriveClient:
             self._refresh_token = str(data["refresh_token"])
         self._expires_at = time.time() + float(data.get("expires_in", 3600))
         self._persist_credentials()
+        return "ok"
+
+    def _mark_reauthorization_needed(self) -> None:
+        """Stop using a sign-in Google has rejected, without forgetting it.
+
+        Only the access token goes. The refresh token is kept so
+        ``reconnect()`` can try it again (a refusal is not always final),
+        and the account and backup folder are kept so a new sign-in does
+        not also mean choosing the folder again.
+        """
+        _LOGGER.warning(
+            "Google Drive rejected the saved sign-in — uploads stopped until "
+            "it is accepted again or Drive is connected again"
+        )
+        self._access_token = ""  # nosec B105
+        self._expires_at = 0.0
+        self.connected = False
+        self.needs_reauthorization = True
+        self._persist_credentials()
+
+    async def reconnect(self) -> bool:
+        """Try the saved sign-in again after Google rejected it.
+
+        Returns True, and resumes using Drive, when Google now accepts it.
+        Never raises, and never asks anyone for anything: a sign-in Google
+        still rejects stays flagged for the person to connect again.
+        """
+        if not (self.needs_reauthorization and self._refresh_token):
+            return False
+        if await self._refresh_access_token() != "ok":
+            return False
+        self.needs_reauthorization = False
+        self.connected = True
+        self._persist_credentials()
+        _LOGGER.info("Google Drive accepted the saved sign-in again — reconnected")
         return True
 
     async def disconnect(self) -> None:
