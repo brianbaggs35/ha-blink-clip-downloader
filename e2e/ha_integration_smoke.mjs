@@ -224,7 +224,7 @@ try {
   }
   console.log(`Clicking the "${panelTitle}" sidebar panel...`);
   await page.getByText(panelTitle, { exact: true }).click();
-  await page.waitForURL(new RegExp(addonSlug), { timeout: 15000 });
+  await page.waitForURL((url) => url.pathname.includes(addonSlug), { timeout: 15000 });
 
   await assertRealIngress(page, issues);
 
@@ -488,7 +488,7 @@ async function checkAddonSupervisorTabs(page, baseUrl, addonSlug, addonName, iss
     await page.getByText("Apps", { exact: true }).click();
     await page.waitForURL(/\/config\/apps/, { timeout: 10000 });
     await page.getByText(addonName, { exact: false }).first().click();
-    await page.waitForURL(new RegExp(`/config/app/${addonSlug}/info`), {
+    await page.waitForURL((url) => url.pathname.includes(`/config/app/${addonSlug}/info`), {
       timeout: 10000,
     });
   } catch (err) {
@@ -523,7 +523,7 @@ async function checkAddonSupervisorTabs(page, baseUrl, addonSlug, addonName, iss
   // not just that *some* form rendered.
   try {
     await page.getByRole("link", { name: "Configuration" }).click();
-    await page.waitForURL(new RegExp(`/config/app/${addonSlug}/config`), { timeout: 10000 });
+    await page.waitForURL((url) => url.pathname.includes(`/config/app/${addonSlug}/config`), { timeout: 10000 });
     await page.getByText("Blink Username", { exact: false }).waitFor({ state: "visible", timeout: 10000 });
     await page.getByText("Blink Password", { exact: false }).waitFor({ state: "visible", timeout: 5000 });
     console.log("  Configuration tab: confirmed the real options schema rendered.");
@@ -539,7 +539,7 @@ async function checkAddonSupervisorTabs(page, baseUrl, addonSlug, addonName, iss
   // place a real user facing a broken install would look first.
   try {
     await page.getByRole("link", { name: "Log" }).click();
-    await page.waitForURL(new RegExp(`/config/app/${addonSlug}/logs`), {
+    await page.waitForURL((url) => url.pathname.includes(`/config/app/${addonSlug}/logs`), {
       timeout: 10000,
     });
     // The log viewer takes a moment to stream content in after the tab
@@ -771,7 +771,7 @@ async function checkAppHeadersThroughIngress(page, issuesList) {
 async function checkIngressSurvivesReload(page, slug, issuesList) {
   try {
     await page.reload({ waitUntil: "load", timeout: 30000 });
-    await page.waitForURL(new RegExp(slug), { timeout: 15000 });
+    await page.waitForURL((url) => url.pathname.includes(slug), { timeout: 15000 });
 
     const frame = await waitForIngressFrame(page);
     if (!frame) {
