@@ -47,13 +47,15 @@ jobs:
             platform: linux/amd64
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          persist-credentials: false
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
 
       - name: Log in to GHCR
-        uses: docker/login-action@v4
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550  # v4.8.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -77,7 +79,7 @@ jobs:
           # :v5.5.2 and :latest, never create :v6.0.0, and report success.
           # Every release so far has had the two in step; if they are not,
           # stop instead of guessing which one was meant.
-          RELEASE_TAG="${{ github.event.release.tag_name }}"
+          RELEASE_TAG="${RELEASE_TAG_NAME}"
           if [ -n "${RELEASE_TAG}" ] && [ "${RELEASE_TAG}" != "${VERSION}" ]; then
             echo "::error::Release tag ${RELEASE_TAG} does not match" \
               "blink_clip_downloader/config.yaml version ${VERSION}."
@@ -101,10 +103,12 @@ jobs:
           # Feeds the Dockerfile's APT_CACHE_BUST arg (see its own comment
           # there) — see ci.yaml's identical step for why this exists.
           echo "apt_cache_bust=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+        env:
+          RELEASE_TAG_NAME: ${{ github.event.release.tag_name }}
 
       - name: Build and push
         id: build
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
         with:
           context: blink_clip_downloader
           file: blink_clip_downloader/Dockerfile
@@ -159,7 +163,7 @@ jobs:
       # pull the release at all. The step still shows as failed in the run.
       - name: Attest build provenance (per architecture)
         continue-on-error: true
-        uses: actions/attest@v4
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6  # v4.2.2
         with:
           subject-name: ${{ steps.tags.outputs.image_base }}
           subject-digest: ${{ steps.build.outputs.digest }}
@@ -183,7 +187,7 @@ jobs:
       # outage or a full runner disk must never be what breaks a release.
       - name: Scan published image for vulnerabilities (Trivy, SARIF)
         continue-on-error: true
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
         with:
           version: v0.76.2
           image-ref: ${{ steps.tags.outputs.tag_version }}
@@ -207,7 +211,7 @@ jobs:
         # A category of its own, per architecture: these are results for a
         # published release image, and must not overwrite ci.yaml's results
         # for the same commit (GitHub keys uploads by category).
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066  # v4.39.3
         with:
           sarif_file: trivy-release-${{ matrix.arch }}.sarif
           category: trivy-release-${{ matrix.arch }}
@@ -225,10 +229,10 @@ jobs:
 
     steps:
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
 
       - name: Log in to GHCR
-        uses: docker/login-action@v4
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550  # v4.8.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -237,7 +241,7 @@ jobs:
       - name: Create and push multi-arch manifest
         id: manifest
         run: |
-          VERSION="${{ needs.build.outputs.version }}"
+          VERSION="${BUILT_VERSION}"
 
           REGISTRY="${{ env.REGISTRY }}"
 
@@ -287,11 +291,13 @@ jobs:
               ;;
           esac
           echo "image_base=${IMAGE_BASE}" >> "$GITHUB_OUTPUT"
+        env:
+          BUILT_VERSION: ${{ needs.build.outputs.version }}
 
       - name: Attest build provenance (multi-arch index)
         if: steps.manifest.outputs.index_digest != ''
         continue-on-error: true
-        uses: actions/attest@v4
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6  # v4.2.2
         with:
           subject-name: ${{ steps.manifest.outputs.image_base }}
           subject-digest: ${{ steps.manifest.outputs.index_digest }}

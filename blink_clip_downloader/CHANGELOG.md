@@ -56,6 +56,9 @@ Not updated, on purpose: TypeScript 7 (typescript-eslint 8 supports TypeScript b
 
 ### Release Workflow
 
+- CodeQL now analyses the Python and TypeScript code and the workflow files on every pull request, on `main` and weekly, and lists what it found in the job log and summary as well as under Security > Code scanning. It runs as a workflow, so GitHub's default setup for code scanning has to be off.
+- A new **Workflow security** check runs zizmor over the workflow files and fails on any finding. To pass it, every action in every workflow is now pinned to a full commit SHA (the version stays in a comment), every checkout stops keeping its credentials, and the few places that put a `${{ }}` expression straight into a shell script, among them the release tag name in the image build, pass it through an environment variable instead. The pinned `npm install -g npm@...` steps are marked as deliberate.
+
 - SonarCloud's issues now have a job of their own, **SonarCloud Issues**, so a pull request shows it failing, with the issues listed, apart from the scan having run. The scan job hands the scanner's report of the analysis (a project key and two URLs, no token) to it as an artifact. It lists, besides the open issues on the new code (which still fail a pull request), the security hotspots still to review and the issues already open on the branch the pull request merges into, so those can be fixed along the way; neither decides the result, and SonarCloud has no analysis of a ticket branch, so on a stacked pull request the second list says so instead of listing anything.
 - A new **Clear old caches** workflow keeps the repository's Actions caches from filling its allowance: a pull request's caches (the image's build layers, npm and pip) are deleted when it is closed, a weekly run deletes the ones nothing has used for three days, and it can be run by hand from the Actions tab. Main's own caches are left alone.
 
