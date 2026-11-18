@@ -42,25 +42,19 @@ A new **Security Assistant** tab: a chat that answers questions about your secur
 
 ### Dependency Updates
 
-### Release Workflow
-
-- The CI step that fails the `SonarCloud Scan` job on new SonarCloud issues (added with the Security Assistant) is replaced by a tested version, `scripts/ci/sonar_new_issues.py`. The scanner only uploads its analysis and exits, so the job used to pass while sonarcloud.io showed new issues on the PR. The step waits for SonarCloud to finish processing, then prints each open new issue with its rule, `file:line`, message and a link, in the job log, the job summary and as annotations on the PR, and fails the job for a pull request that has any. A push to `main` lists them without failing, it skips with a notice when `SONAR_TOKEN` is not available, it fails with a distinct message if SonarCloud cannot be queried rather than passing silently, and it also prints failing quality gate conditions, which do not decide the result. The add-on itself is unchanged.
-
-<<<<<<< HEAD
-=======
-# Backend Updates
+**Backend**
 
 - Updated anthropic to 2.8.0
 - Updated openai to 3.49.0
 - Updated ultralytics to 8.4.210
 
-# Frontend Updates
+**Frontend**
 
 - Updated eslint-plugin-vue to 10.12.1
 - Updated typescript-eslint to 8.72.2
 - Updated vite to 8.3.8
 
-# Dockerfile Updates
+**Docker image**
 
 - Updated setuptools to 84.2.1
 - Updated wheel to 0.48.0
@@ -73,8 +67,8 @@ A new **Security Assistant** tab: a chat that answers questions about your secur
 
 ### Release Workflow
 
+- The CI step that fails the `SonarCloud Scan` job on new SonarCloud issues (added with the Security Assistant) is replaced by a tested version, `scripts/ci/sonar_new_issues.py`. The scanner only uploads its analysis and exits, so the job used to pass while sonarcloud.io showed new issues on the PR. The step waits for SonarCloud to finish processing, then prints each open new issue with its rule, `file:line`, message and a link, in the job log, the job summary and as annotations on the PR, and fails the job for a pull request that has any. A push to `main` lists them without failing, it skips with a notice when `SONAR_TOKEN` is not available, it fails with a distinct message if SonarCloud cannot be queried rather than passing silently, and it also prints failing quality gate conditions, which do not decide the result. The add-on itself is unchanged.
 
->>>>>>> b1c8e57 (BCD-32 Update ultralytics to 8.4.210)
 ## 6.1.8
 
 ### Bug fixes
