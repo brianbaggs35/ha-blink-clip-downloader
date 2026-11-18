@@ -623,17 +623,169 @@ async def test_ensure_valid_token_preserves_refresh_token_when_response_omits_it
     assert client._refresh_token == "must-survive"
 
 
-async def test_ensure_valid_token_invalid_grant_clears_credentials(
+async def test_ensure_valid_token_invalid_grant_flags_reauthorization_and_keeps_the_rest(
     client: GDriveClient,
 ) -> None:
     _connect(client)
+    client._account_email = "me@example.com"
+    client.select_folder("f1", "Blink Clips")
     client._expires_at = time.time() - 10
-    client._persist_credentials()
     resp = _mock_response(400, {"error": "invalid_grant"})
     client._session = _mock_session(post=resp)
 
     assert await client._ensure_valid_token() is False
     assert client.connected is False
+    assert client.needs_reauthorization is True
+    assert client._refresh_token == "refresh-token"
+    assert client.account_email == "me@example.com"
+    assert client.folder_id == "f1"
+    assert client._access_token == ""
+
+
+async def test_a_rejected_sign_in_is_not_tried_again_by_every_call(
+    client: GDriveClient,
+) -> None:
+    _connect(client)
+    client._expires_at = time.time() - 10
+    resp = _mock_response(400, {"error": "invalid_grant"})
+    client._session = _mock_session(post=resp)
+    await client._ensure_valid_token()
+
+    assert await client._ensure_valid_token() is False
+    assert client._session.post.call_count == 1
+
+
+def test_a_rejected_sign_in_is_remembered_across_a_restart(
+    client: GDriveClient, tmp_path: Path
+) -> None:
+    _connect(client)
+    client.select_folder("f1", "Blink Clips")
+    client._mark_reauthorization_needed()
+
+    restarted = GDriveClient()
+
+    assert restarted.needs_reauthorization is True
+    assert restarted.connected is False
+    assert restarted._refresh_token == "refresh-token"
+    assert restarted.folder_id == "f1"
+
+
+async def test_reconnect_resumes_when_google_accepts_the_saved_sign_in(
+    client: GDriveClient,
+) -> None:
+    _connect(client)
+    client._mark_reauthorization_needed()
+    resp = _mock_response(200, {"access_token": "new-at", "expires_in": 3600})
+    client._session = _mock_session(post=resp)
+
+    assert await client.reconnect() is True
+    assert client.connected is True
+    assert client.needs_reauthorization is False
+    assert client._access_token == "new-at"
+    assert GDriveClient().needs_reauthorization is False
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        _mock_response(400, {"error": "invalid_grant"}),
+        _mock_response(500, {"error": "server_error"}),
+    ],
+)
+async def test_reconnect_stays_flagged_while_google_refuses(
+    client: GDriveClient, response: AsyncMock
+) -> None:
+    _connect(client)
+    client._mark_reauthorization_needed()
+    client._session = _mock_session(post=response)
+
+    assert await client.reconnect() is False
+    assert client.connected is False
+    assert client.needs_reauthorization is True
+
+
+async def test_reconnect_stays_flagged_when_google_cannot_be_reached(
+    client: GDriveClient,
+) -> None:
+    _connect(client)
+    client._mark_reauthorization_needed()
+    client._session = _mock_session(post=_RaiseOnCall(aiohttp.ClientError("down")))
+
+    assert await client.reconnect() is False
+    assert client.needs_reauthorization is True
+
+
+async def test_reconnect_does_nothing_when_nothing_was_rejected(
+    client: GDriveClient,
+) -> None:
+    _connect(client)
+    client._session = _mock_session()
+
+    assert await client.reconnect() is False
+    client._session.post.assert_not_called()
+
+
+async def test_reconnect_does_nothing_without_a_saved_sign_in(
+    client: GDriveClient,
+) -> None:
+    client.needs_reauthorization = True
+
+    assert await client.reconnect() is False
+
+
+async def test_signing_in_again_as_the_same_account_keeps_the_folder(
+    client: GDriveClient,
+) -> None:
+    _configure(client)
+    _connect(client)
+    client._account_email = "me@example.com"
+    client.select_folder("f1", "Blink Clips")
+    client._mark_reauthorization_needed()
+    token_resp = _mock_response(
+        200, {"access_token": "at2", "refresh_token": "rt2", "expires_in": 3600}
+    )
+    email_resp = _mock_response(200, {"user": {"emailAddress": "me@example.com"}})
+    client._session = _mock_session(post=token_resp, get=email_resp)
+
+    assert (await client.poll_once_for_token("dc123")).status == "success"
+    assert client.connected is True
+    assert client.needs_reauthorization is False
+    assert client.folder_id == "f1"
+    assert client.folder_name == "Blink Clips"
+
+
+async def test_signing_in_as_a_different_account_forgets_the_folder(
+    client: GDriveClient,
+) -> None:
+    _configure(client)
+    _connect(client)
+    client._account_email = "me@example.com"
+    client.select_folder("f1", "Blink Clips")
+    client._subfolder_cache["f1/2026-11-18"] = "sub"
+    client._mark_reauthorization_needed()
+    token_resp = _mock_response(
+        200, {"access_token": "at2", "refresh_token": "rt2", "expires_in": 3600}
+    )
+    email_resp = _mock_response(200, {"user": {"emailAddress": "other@example.com"}})
+    client._session = _mock_session(post=token_resp, get=email_resp)
+
+    assert (await client.poll_once_for_token("dc123")).status == "success"
+    assert client.account_email == "other@example.com"
+    assert client.folder_id == ""
+    assert client.folder_name == ""
+    assert client._subfolder_cache == {}
+
+
+async def test_disconnecting_clears_a_pending_reauthorization(
+    client: GDriveClient,
+) -> None:
+    _connect(client)
+    client._mark_reauthorization_needed()
+    client._session = _mock_session(post=_mock_response(200))
+
+    await client.disconnect()
+
+    assert client.needs_reauthorization is False
     assert client._refresh_token == ""
 
 

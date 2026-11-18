@@ -6,6 +6,12 @@
 
 - Stopping the add-on no longer logs `Failed to restore the pool connection floor; retrying` with a traceback. The bundled database stops while the add-on is still shutting down, and the database connection pool answered by trying to reconnect in the background and warning each time. The pool now makes its first connection at start, as before, but no longer keeps a minimum number of connections open: a query that needs one reconnects when it runs. Nothing changes in the add-on's settings or UI.
 
+### Google Drive
+
+- When Google stops accepting the saved Google Drive sign-in, the add-on no longer forgets everything and goes quiet. Backups stop as before, but you now get a **Google Drive Disconnected** notification in Home Assistant (sent even if `notify_ha` is off, and replaced rather than repeated after a restart), the Google Drive card says so, and its button becomes **Reconnect Google Drive**. Clips waiting to upload stay queued, and the account and your backup folder are remembered, so reconnecting resumes into the same folder; signing in as a different account forgets the folder, as it belongs to the old one.
+- The add-on also keeps trying the saved sign-in in the background, first after five minutes and then at longer gaps up to once an hour, and carries on by itself if Google accepts it again, replacing the notification with **Google Drive Reconnected**. The retry timings are judgement calls, not anything Google documents.
+- **Disconnect** is unchanged and still forgets everything. No new settings, so nothing to add to the translations. `/api/storage/gdrive/status` gains a `needs_reauthorization` field.
+
 ### Dependency Updates
 
 ### Release Workflow

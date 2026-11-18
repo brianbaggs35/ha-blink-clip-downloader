@@ -31,9 +31,12 @@ async function mockGDriveApi(
     failedCount?: number
     // false: connected, but no backup folder chosen yet (the folder browser shows inline).
     folderSelected?: boolean
+    // Google stopped accepting the saved sign-in: not connected, but the account and folder are remembered.
+    needsReauthorization?: boolean
   } = {},
 ) {
-  let connected = options.connected ?? true
+  let needsReauthorization = options.needsReauthorization ?? false
+  let connected = (options.connected ?? true) && !needsReauthorization
   const folderSelected = options.folderSelected ?? true
   let connectPhase = 'idle'
   let uploadsPaused = options.uploadsPaused ?? false
@@ -70,9 +73,10 @@ async function mockGDriveApi(
       await fulfillJson(route, {
         configured: true,
         connected,
-        account_email: connected ? 'e2e@example.com' : '',
-        folder_id: connected && folderSelected ? folder.id : '',
-        folder_name: connected && folderSelected ? folder.name : '',
+        needs_reauthorization: needsReauthorization,
+        account_email: connected || needsReauthorization ? 'e2e@example.com' : '',
+        folder_id: (connected || needsReauthorization) && folderSelected ? folder.id : '',
+        folder_name: (connected || needsReauthorization) && folderSelected ? folder.name : '',
         uploads_paused: uploadsPaused,
         pause_reason: pauseReason,
       })
@@ -99,6 +103,7 @@ async function mockGDriveApi(
       if (connectPhase === 'pending') {
         connectPhase = 'connected'
         connected = true
+        needsReauthorization = false
       }
       await fulfillJson(route, connectPhase === 'connected' ? { phase: 'connected' } : { phase: connectPhase })
       return
@@ -716,6 +721,28 @@ test('pauses and resumes Drive uploads without disconnecting the account', async
   await connection.getByRole('button', { name: 'Resume Uploads' }).click()
   await expect(page.getByText('Drive uploads resumed')).toBeVisible()
   await expect(connection).toContainText('Uploads: Running')
+})
+
+test('says Google stopped accepting the saved sign-in, and reconnecting keeps the backup folder', async ({ page }) => {
+  // The sign-in used to be thrown away, folder and all, the moment Google
+  // rejected it, with no word to the person that backups had stopped.
+  await mockGDriveApi(page, { needsReauthorization: true })
+  await page.goto('/')
+  await page.locator('.app-nav-tab[data-tab="storage"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="storage"]')
+
+  const connection = page.locator('.gdrive-connection-card')
+  await expect(connection).toContainText("Google stopped accepting this add-on's saved sign-in")
+  await expect(connection).toContainText('your backup folder (E2E Backups) is remembered')
+  await expect(connection.getByRole('button', { name: 'Connect Google Drive', exact: true })).toHaveCount(0)
+
+  await connection.getByRole('button', { name: 'Reconnect Google Drive' }).click()
+  await expect(connection).toContainText('E2E-CODE')
+
+  // Once Google accepts the new sign-in the card is back to normal, on the same folder.
+  await expect(connection).toContainText('Connected as e2e@example.com', { timeout: 15_000 })
+  await expect(connection).toContainText('E2E Backups')
+  await expect(connection).not.toContainText('stopped accepting')
 })
 
 test('says why the queue paused itself when Drive is full, and resuming clears it', async ({ page }) => {

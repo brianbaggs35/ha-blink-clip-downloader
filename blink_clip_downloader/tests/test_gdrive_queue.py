@@ -52,6 +52,10 @@ def _make_client_mock(**kwargs: Any) -> MagicMock:
     # "the user paused uploads" and stop the queue in every single test.
     m.uploads_paused = kwargs.get("uploads_paused", False)
     m.pause_reason = kwargs.get("pause_reason", "")
+    # An instance attribute too: a truthy child Mock would read as "Google
+    # rejected the saved sign-in" and send the queue into its retry path.
+    m.needs_reauthorization = kwargs.get("needs_reauthorization", False)
+    m.reconnect = AsyncMock(return_value=kwargs.get("reconnects", False))
 
     def _set_uploads_paused(paused: bool, reason: str = "") -> None:
         # The real client updates in memory and persists; the queue reads
@@ -1375,3 +1379,151 @@ def test_local_date_str_recent_real_timestamp_roundtrips() -> None:
     now_utc = datetime.now(UTC)
     result = _local_date_str(now_utc.isoformat())
     assert result == now_utc.astimezone().strftime("%Y-%m-%d")
+
+
+# ------------------------------------------------------------------
+# A sign-in Google has rejected
+# ------------------------------------------------------------------
+
+
+def _notifier() -> MagicMock:
+    notifier = MagicMock()
+    notifier.announce = AsyncMock(return_value=True)
+    return notifier
+
+
+async def test_a_rejected_sign_in_is_announced_once(db: ClipDatabase) -> None:
+    client = _make_client_mock(connected=False, needs_reauthorization=True)
+    notifier = _notifier()
+    queue = _make_queue(client, db, notifier=notifier)
+
+    await queue._watch_connection()
+    await queue._watch_connection()
+
+    notifier.announce.assert_awaited_once()
+    kwargs = notifier.announce.call_args.kwargs
+    assert kwargs["title"] == "Blink Downloader: Google Drive Disconnected"
+    assert "Reconnect Google Drive" in notifier.announce.call_args.args[0]
+
+
+async def test_a_rejected_sign_in_is_logged_without_a_notifier(
+    db: ClipDatabase, caplog: pytest.LogCaptureFixture
+) -> None:
+    client = _make_client_mock(connected=False, needs_reauthorization=True)
+    queue = _make_queue(client, db)
+
+    with caplog.at_level(logging.WARNING):
+        await queue._watch_connection()
+
+    assert "Google rejected the saved sign-in" in caplog.text
+
+
+async def test_nothing_is_announced_while_the_sign_in_is_fine(
+    db: ClipDatabase,
+) -> None:
+    notifier = _notifier()
+    queue = _make_queue(_make_client_mock(), db, notifier=notifier)
+
+    await queue._watch_connection()
+
+    notifier.announce.assert_not_awaited()
+
+
+async def test_the_saved_sign_in_is_not_retried_before_its_turn(
+    db: ClipDatabase,
+) -> None:
+    client = _make_client_mock(connected=False, needs_reauthorization=True)
+    queue = _make_queue(client, db, notifier=_notifier())
+    await queue._watch_connection()
+
+    await queue._watch_connection()
+
+    client.reconnect.assert_not_awaited()
+
+
+async def test_the_saved_sign_in_is_retried_with_longer_gaps_up_to_an_hour(
+    db: ClipDatabase,
+) -> None:
+    client = _make_client_mock(connected=False, needs_reauthorization=True)
+    queue = _make_queue(client, db, notifier=_notifier())
+    now = 1000.0
+    with patch("blink_downloader.gdrive_queue.time.monotonic", lambda: now):
+        await queue._watch_connection()
+        gaps = []
+        for _ in range(6):
+            now = queue._reconnect_not_before
+            before = now
+            await queue._watch_connection()
+            gaps.append(queue._reconnect_not_before - before)
+
+    assert gaps == [600, 1200, 2400, 3600, 3600, 3600]
+    assert client.reconnect.await_count == 6
+
+
+async def test_reconnecting_by_itself_says_so_and_stops_retrying(
+    db: ClipDatabase,
+) -> None:
+    client = _make_client_mock(
+        connected=False, needs_reauthorization=True, reconnects=True
+    )
+    notifier = _notifier()
+    queue = _make_queue(client, db, notifier=notifier)
+    await queue._watch_connection()
+    queue._reconnect_not_before = 0.0
+
+    await queue._watch_connection()
+    client.needs_reauthorization = False
+    await queue._watch_connection()
+
+    assert notifier.announce.await_count == 2
+    assert (
+        notifier.announce.call_args.kwargs["title"]
+        == "Blink Downloader: Google Drive Reconnected"
+    )
+    assert client.reconnect.await_count == 1
+
+
+async def test_signing_in_again_on_the_storage_tab_replaces_the_alert(
+    db: ClipDatabase,
+) -> None:
+    client = _make_client_mock(connected=False, needs_reauthorization=True)
+    notifier = _notifier()
+    queue = _make_queue(client, db, notifier=notifier)
+    await queue._watch_connection()
+    client.needs_reauthorization = False
+    client.connected = True
+
+    await queue._watch_connection()
+    await queue._watch_connection()
+
+    assert notifier.announce.await_count == 2
+    ids = {call.kwargs["notification_id"] for call in notifier.announce.call_args_list}
+    assert len(ids) == 1
+    assert queue._reauth_announced is False
+
+
+async def test_a_reconnect_without_a_notifier_still_clears_the_alert_state(
+    db: ClipDatabase,
+) -> None:
+    client = _make_client_mock(connected=False, needs_reauthorization=True)
+    queue = _make_queue(client, db)
+    await queue._watch_connection()
+    client.needs_reauthorization = False
+
+    await queue._watch_connection()
+
+    assert queue._reauth_announced is False
+
+
+async def test_start_watches_the_connection_each_cycle(db: ClipDatabase) -> None:
+    client = _make_client_mock(connected=False, needs_reauthorization=True)
+    notifier = _notifier()
+    queue = _make_queue(client, db, notifier=notifier, check_interval=1)
+
+    async def fake_sleep(_delay: float) -> None:
+        queue._running = False
+
+    with patch("asyncio.sleep", fake_sleep):
+        await queue.start()
+
+    notifier.announce.assert_awaited_once()

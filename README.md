@@ -396,6 +396,12 @@ the full walkthrough — including moving the OAuth consent screen to
 production (recommended; otherwise Google expires the connection weekly),
 choosing a backup policy, and exactly what does and doesn't get uploaded.
 
+If Google stops accepting the saved sign-in, the add-on sends a **Google Drive
+Disconnected** notification, keeps your queued clips and backup folder, and
+retries quietly; if it never recovers, press **Reconnect Google Drive** on the
+card (see [When Google stops accepting the
+sign-in](blink_clip_downloader/DOCS.md#when-google-stops-accepting-the-sign-in)).
+
 ## Security Assistant
 
 The **Security Assistant** tab is a chat that answers questions about your security

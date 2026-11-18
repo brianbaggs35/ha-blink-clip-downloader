@@ -2457,6 +2457,27 @@ Clips that could not upload because the Drive was full (or rate-limited)
 stay **queued** rather than being recorded as failures. They were never the
 problem, and they upload normally once there is room.
 
+### When Google stops accepting the sign-in
+
+Sometimes Google stops accepting the saved sign-in (for example after you
+remove the app's access in your Google account, or when the sign-in simply
+expires). Backups to Drive stop, and the add-on tells you in three places:
+a **Google Drive Disconnected** notification in Home Assistant (sent even if
+`notify_ha` is off, and replaced rather than repeated), a warning on the
+Google Drive card, and the **Connect Google Drive** button becoming
+**Reconnect Google Drive**.
+
+Nothing is thrown away: clips waiting to upload stay queued, and the
+account and your backup folder are remembered. The add-on keeps trying the
+saved sign-in quietly in the background (after five minutes, then at longer
+and longer gaps up to once an hour), and if Google accepts it again it
+carries on by itself and replaces the notification with **Google Drive
+Reconnected**. If it never does, press **Reconnect Google Drive**, enter the
+code as in the setup steps above, and uploads resume into the same folder.
+Signing in as a different Google account forgets the remembered folder,
+since it belongs to the old one. **Disconnect** is unchanged: it revokes the
+sign-in and forgets everything, folder included.
+
 ### Failed uploads
 
 An individual clip can fail to upload — a dropped connection, a Drive API
@@ -2864,7 +2885,7 @@ Downloaded clips are saved under the `share` folder, accessible via:
 | `/data/moondream_packages/` | The `moondream` Python package itself, installed here via the AI tab's **Install** button so it persists across restarts |
 | `/data/model_cache/` | Downloaded computer-vision models (YOLO, Depth Anything V2, SAM2, facenet-pytorch) — see **Disk Space** above |
 | `/data/google_drive_settings.json` | Google OAuth client ID/secret and backup policy, set via the Storage tab |
-| `/data/google_drive_credentials.json` | Cached Google Drive OAuth token and selected backup folder (do not edit) |
+| `/data/google_drive_credentials.json` | Cached Google Drive OAuth token, selected backup folder, and whether Google has rejected the sign-in (do not edit) |
 | `/data/web_access.json` | The secret that signs direct-port sign-ins, and the access token Home Assistant's own calls carry (do not edit; delete it to sign every browser out and replace the token) |
 
 > All `/data/` files are stored inside the add-on's private data directory and are

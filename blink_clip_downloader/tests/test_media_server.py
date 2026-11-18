@@ -8259,6 +8259,7 @@ def _make_gdrive_client_mock(**kwargs) -> MagicMock:
     m.backup_policy = kwargs.get("backup_policy", "archived_only")
     m.is_configured = kwargs.get("is_configured", False)
     m.connected = kwargs.get("connected", False)
+    m.needs_reauthorization = kwargs.get("needs_reauthorization", False)
     m.account_email = kwargs.get("account_email", "")
     m.folder_id = kwargs.get("folder_id", "")
     m.folder_name = kwargs.get("folder_name", "")
@@ -8375,6 +8376,26 @@ async def test_gdrive_status_not_configured(client: TestClient) -> None:
     assert data["connected"] is False
 
 
+async def test_gdrive_status_reports_a_rejected_sign_in(db: ClipDatabase) -> None:
+    gdrive_client = _make_gdrive_client_mock(
+        is_configured=True,
+        connected=False,
+        needs_reauthorization=True,
+        account_email="me@example.com",
+        folder_id="f1",
+        folder_name="Blink Clips",
+    )
+    server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
+    tc = await _start_server(server)
+    try:
+        data = await (await tc.get("/api/storage/gdrive/status")).json()
+    finally:
+        await tc.close()
+    assert data["connected"] is False
+    assert data["needs_reauthorization"] is True
+    assert data["folder_id"] == "f1"
+
+
 async def test_gdrive_status_reflects_client(db: ClipDatabase) -> None:
     gdrive_client = _make_gdrive_client_mock(
         is_configured=True,
@@ -8391,6 +8412,7 @@ async def test_gdrive_status_reflects_client(db: ClipDatabase) -> None:
         assert data == {
             "configured": True,
             "connected": True,
+            "needs_reauthorization": False,
             "account_email": "me@example.com",
             "folder_id": "f1",
             "folder_name": "Blink Clips",

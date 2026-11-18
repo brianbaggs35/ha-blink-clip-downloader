@@ -273,6 +273,7 @@ class StorageRoutesMixin(_MediaServerBase):
                 {
                     "configured": False,
                     "connected": False,
+                    "needs_reauthorization": False,
                     "account_email": "",
                     "folder_id": "",
                     "folder_name": "",
@@ -284,6 +285,7 @@ class StorageRoutesMixin(_MediaServerBase):
             {
                 "configured": self._gdrive_client.is_configured,
                 "connected": self._gdrive_client.connected,
+                "needs_reauthorization": self._gdrive_client.needs_reauthorization,
                 "account_email": self._gdrive_client.account_email,
                 "folder_id": self._gdrive_client.folder_id,
                 "folder_name": self._gdrive_client.folder_name,
