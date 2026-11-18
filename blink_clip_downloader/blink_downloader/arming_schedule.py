@@ -114,6 +114,29 @@ def _network_id(value: Any) -> str:
     return str(value) if isinstance(value, str | int) else ""
 
 
+def _checked_id(value: Any, strict: bool) -> str:
+    """The schedule's id, a fresh one for a new submission; else an error."""
+    if value in (None, ""):
+        if not strict:
+            raise ScheduleError("A stored schedule has no id")
+        return new_schedule_id()
+    if not isinstance(value, str) or not _ID_PATTERN.match(value):
+        raise ScheduleError("A schedule's id is not valid")
+    return value
+
+
+def _checked_days(days: Any) -> list[int]:
+    """The weekdays as a list of ints 0 (Monday) to 6, or an error."""
+    if (
+        not isinstance(days, list)
+        or not days
+        or any(isinstance(d, bool) or not isinstance(d, int) for d in days)
+        or any(not 0 <= d <= 6 for d in days)
+    ):
+        raise ScheduleError('"days" must list at least one weekday, 0 (Monday) to 6')
+    return days
+
+
 def normalize_schedule(raw: Any, *, strict: bool = True) -> dict[str, Any]:
     """One schedule in canonical form; raises :class:`ScheduleError` if unusable.
 
@@ -124,13 +147,7 @@ def normalize_schedule(raw: Any, *, strict: bool = True) -> dict[str, Any]:
     """
     if not isinstance(raw, dict):
         raise ScheduleError("A schedule must be an object")
-    schedule_id = raw.get("id")
-    if schedule_id in (None, ""):
-        if not strict:
-            raise ScheduleError("A stored schedule has no id")
-        schedule_id = new_schedule_id()
-    if not isinstance(schedule_id, str) or not _ID_PATTERN.match(schedule_id):
-        raise ScheduleError("A schedule's id is not valid")
+    schedule_id = _checked_id(raw.get("id"), strict)
     enabled = raw.get("enabled", True)
     if not isinstance(enabled, bool):
         raise ScheduleError('"enabled" must be true or false')
@@ -140,14 +157,7 @@ def normalize_schedule(raw: Any, *, strict: bool = True) -> dict[str, Any]:
     when = raw.get("time")
     if not isinstance(when, str) or not _TIME_PATTERN.match(when):
         raise ScheduleError('"time" must be a 24-hour HH:MM time')
-    days = raw.get("days")
-    if (
-        not isinstance(days, list)
-        or not days
-        or any(isinstance(d, bool) or not isinstance(d, int) for d in days)
-        or any(not 0 <= d <= 6 for d in days)
-    ):
-        raise ScheduleError('"days" must list at least one weekday, 0 (Monday) to 6')
+    days = _checked_days(raw.get("days"))
     scope = raw.get("scope", "system")
     if scope not in SCOPES:
         raise ScheduleError('"scope" must be "system" or "sync_module"')
@@ -367,7 +377,7 @@ class ArmingScheduler:
     async def tick(self, now: datetime | None = None) -> None:
         """Run whatever is due at *now* (default: the clock's time)."""
         now = now or self._clock()
-        for entry in list(self._schedules):
+        for entry in self._schedules:
             if entry["enabled"] and now.weekday() in entry["days"]:
                 await self._consider(entry, now)
 

@@ -106,13 +106,15 @@ async function persist(next: ArmingSchedule[]): Promise<boolean> {
 
 const atLimit = computed(() => schedules.value.length >= MAX_SCHEDULES)
 
+const byNumber = (a: number, b: number) => a - b
+
 function describeDays(days: number[]): string {
-  const key = [...days].sort().join(',')
+  const key = [...days].sort(byNumber).join(',')
   const preset = PRESETS.find((p) => p.days.join(',') === key)
   return preset
     ? preset.label
     : [...days]
-        .sort()
+        .sort(byNumber)
         .map((d) => DAY_LABELS[d])
         .join(', ')
 }
@@ -169,7 +171,7 @@ function openEdit(schedule: ArmingSchedule) {
 
 function toggleDay(day: number) {
   const days = draft.value.days
-  draft.value.days = days.includes(day) ? days.filter((d) => d !== day) : [...days, day].sort()
+  draft.value.days = days.includes(day) ? days.filter((d) => d !== day) : [...days, day].sort(byNumber)
 }
 
 function chooseDays(days: number[]) {
@@ -332,9 +334,9 @@ onMounted(load)
           <InputText :id="ids.time" v-model="draft.time" type="time" />
         </div>
 
-        <div class="as-field">
-          <span>Days</span>
-          <div class="as-days" role="group" aria-label="Days">
+        <fieldset class="as-field as-fieldset">
+          <legend>Days</legend>
+          <div class="as-days">
             <Button
               v-for="(label, day) in DAY_LABELS"
               :key="label"
@@ -355,7 +357,7 @@ onMounted(load)
               @click="chooseDays(preset.days)"
             />
           </div>
-        </div>
+        </fieldset>
 
         <Message v-if="formError" severity="error" size="small" :closable="false">{{ formError }}</Message>
       </form>
@@ -443,6 +445,16 @@ onMounted(load)
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
+}
+.as-fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.as-fieldset legend {
+  padding: 0;
+  margin-bottom: 0.4rem;
 }
 .as-days {
   display: flex;

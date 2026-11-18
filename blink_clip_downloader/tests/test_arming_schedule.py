@@ -112,12 +112,14 @@ def test_a_valid_schedule_is_canonical_and_gets_an_id() -> None:
     assert schedule["days"] == [0, 3, 6]
     assert len(schedule["id"]) == 12
     assert schedule["scope"] == "system"
-    assert schedule["sync_module"] == "" and schedule["network_id"] == ""
+    assert schedule["sync_module"] == ""
+    assert schedule["network_id"] == ""
 
 
 def test_a_system_schedule_forgets_a_module_it_was_given() -> None:
     schedule = normalize_schedule(raw(sync_module="Home", network_id=5))
-    assert schedule["sync_module"] == "" and schedule["network_id"] == ""
+    assert schedule["sync_module"] == ""
+    assert schedule["network_id"] == ""
 
 
 def test_a_module_schedule_keeps_the_name_and_the_network_id_as_text() -> None:
@@ -170,8 +172,9 @@ def test_a_missing_scope_means_the_whole_system() -> None:
 def test_a_wrong_field_is_refused_with_a_reason(
     change: dict[str, Any], message: str
 ) -> None:
+    submitted = raw(**change)
     with pytest.raises(ScheduleError, match=message):
-        normalize_schedule(raw(**change))
+        normalize_schedule(submitted)
 
 
 def test_a_schedule_must_be_an_object() -> None:
@@ -180,22 +183,22 @@ def test_a_schedule_must_be_an_object() -> None:
 
 
 def test_a_stored_schedule_without_an_id_is_not_made_up() -> None:
+    stored = raw()
     with pytest.raises(ScheduleError, match="no id"):
-        normalize_schedule(raw(), strict=False)
+        normalize_schedule(stored, strict=False)
 
 
 def test_a_name_is_one_bounded_line_and_control_characters_go() -> None:
     schedule = normalize_schedule(raw(name="a\x00b\x1f" + "x" * 200))
-    assert (
-        "\x00" not in schedule["name"]
-        and len(schedule["name"]) == arming.MAX_NAME_LENGTH
-    )
+    assert "\x00" not in schedule["name"]
+    assert len(schedule["name"]) == arming.MAX_NAME_LENGTH
     assert normalize_schedule(raw(name=5))["name"] == ""
 
 
 def test_the_list_is_validated_whole_and_names_the_bad_entry() -> None:
+    submitted = [raw(), raw(time="nope")]
     with pytest.raises(ScheduleError, match=r"^Schedule 2: \"time\""):
-        validate_schedules([raw(), raw(time="nope")])
+        validate_schedules(submitted)
 
 
 def test_the_list_must_be_a_list() -> None:
@@ -204,8 +207,9 @@ def test_the_list_must_be_a_list() -> None:
 
 
 def test_too_many_schedules_are_refused() -> None:
+    submitted = [raw() for _ in range(arming.MAX_SCHEDULES + 1)]
     with pytest.raises(ScheduleError, match="At most"):
-        validate_schedules([raw() for _ in range(arming.MAX_SCHEDULES + 1)])
+        validate_schedules(submitted)
 
 
 def test_a_repeated_id_is_refused() -> None:
@@ -303,8 +307,9 @@ def test_the_returned_list_is_a_copy(tmp_path: Path) -> None:
 def test_a_bad_list_changes_nothing(tmp_path: Path) -> None:
     scheduler, _, _ = make(tmp_path, [raw()])
     before = (tmp_path / "schedules.json").read_text()
+    submitted = [raw(time="nope")]
     with pytest.raises(ScheduleError):
-        scheduler.replace([raw(time="nope")])
+        scheduler.replace(submitted)
     assert (tmp_path / "schedules.json").read_text() == before
     assert len(scheduler.schedules) == 1
 
@@ -458,7 +463,8 @@ async def test_a_refused_request_is_retried_until_it_goes_through(
     blink.answers["Home"] = True
     await scheduler.tick(at(22, 32))
     assert next(iter(scheduler.outcomes().values()))["outcome"] == "done"
-    assert announcements is not None and announcements.sent == []
+    assert announcements is not None
+    assert announcements.sent == []
     calls = len(blink.calls)
     await scheduler.tick(at(22, 33))
     assert len(blink.calls) == calls
@@ -473,7 +479,8 @@ async def test_a_request_that_keeps_failing_is_reported_once_the_grace_runs_out(
     )
     await scheduler.tick(at(22, 30))
     await scheduler.tick(at(22, 34, 59))
-    assert announcements is not None and announcements.sent == []
+    assert announcements is not None
+    assert announcements.sent == []
     await scheduler.tick(at(22, 35))
     outcome = scheduler.outcomes()["aaaaaaaaaaaa"]
     assert outcome["outcome"] == "failed"
@@ -667,7 +674,8 @@ async def test_the_loop_ticks_on_the_clock_until_cancelled(
     await asyncio.gather(task, return_exceptions=True)
     assert task.cancelled()
     assert len(blink.calls) == 2
-    assert slept and slept[0] == arming.TICK_SECONDS
+    assert slept
+    assert slept[0] == arming.TICK_SECONDS
 
 
 async def test_one_failed_look_does_not_stop_the_loop(

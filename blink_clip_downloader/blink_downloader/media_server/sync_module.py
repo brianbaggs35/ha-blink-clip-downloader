@@ -152,7 +152,7 @@ class SyncModuleRoutesMixin(_MediaServerBase):
         except ScheduleError as exc:
             raise web.HTTPBadRequest(text=exc.reason) from exc
         except OSError as exc:
-            _LOGGER.error("Could not save the arming schedules: %s", exc)
+            _LOGGER.exception("Could not save the arming schedules")
             raise web.HTTPInternalServerError(
                 text="Could not save the schedules"
             ) from exc
