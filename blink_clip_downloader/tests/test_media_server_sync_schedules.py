@@ -59,8 +59,10 @@ async def test_the_list_starts_empty_and_says_which_clock_it_uses(
     resp = await client.get("/api/sync-modules/schedules")
     assert resp.status == 200
     body = await resp.json()
-    assert body["schedules"] == [] and body["outcomes"] == {}
-    assert len(body["clock"]["now"]) == 5 and ":" in body["clock"]["now"]
+    assert body["schedules"] == []
+    assert body["outcomes"] == {}
+    assert len(body["clock"]["now"]) == 5
+    assert ":" in body["clock"]["now"]
     assert isinstance(body["clock"]["timezone"], str)
 
 
@@ -131,7 +133,8 @@ async def test_without_a_scheduler_the_list_is_empty_and_saving_is_unavailable(
     await tc.start_server()
     try:
         body = await (await tc.get("/api/sync-modules/schedules")).json()
-        assert body["schedules"] == [] and body["outcomes"] == {}
+        assert body["schedules"] == []
+        assert body["outcomes"] == {}
         put = await tc.put("/api/sync-modules/schedules", json={"schedules": []})
         assert put.status == 503
     finally:
