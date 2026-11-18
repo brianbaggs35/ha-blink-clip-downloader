@@ -295,7 +295,7 @@ RUN ( \
             # add-on's usage here is exactly that surface, never
             # trust_remote_code (which stays at its safe default of False).
             "transformers==5.22.2" \
-            "ultralytics==8.4.210" \
+            "ultralytics==8.4.215" \
         && pip3 install --no-cache-dir --only-binary :all: --no-deps "facenet-pytorch==2.6.0" \
         2>&1 | tail -20 \
     ) || echo "INFO: computer-vision pipeline install failed; ai_object_detection_enabled \
