@@ -24,6 +24,7 @@
 - Updated @playwright/test to 1.65.1 (and playwright in the root e2e project)
 - Updated @primeuix/themes to 3.1.1
 - Updated primevue to 5.0.5
+- Updated @vitejs/plugin-vue to 6.0.11
 
 ### Release Workflow
 
