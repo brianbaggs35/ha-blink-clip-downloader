@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch, watchEffect } from 'vue'
-import AppSidebar, { TAB_NAMES, type TabName } from './components/layout/AppSidebar.vue'
+import AppSidebar from './components/layout/AppSidebar.vue'
+import { TAB_NAMES, type TabName } from './components/layout/tabs'
 import ToastHost from './components/layout/ToastHost.vue'
 import ConfirmDialog from './components/layout/ConfirmDialog.vue'
 import HelpOverlay from './components/layout/HelpOverlay.vue'

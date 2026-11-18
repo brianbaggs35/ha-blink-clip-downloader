@@ -54,7 +54,7 @@ try {
 
   await page.getByText(panelTitle, { exact: true }).click()
 
-  await page.waitForURL(new RegExp(addonSlug), {
+  await page.waitForURL((url) => url.pathname.includes(addonSlug), {
     timeout: 15000,
   })
 
