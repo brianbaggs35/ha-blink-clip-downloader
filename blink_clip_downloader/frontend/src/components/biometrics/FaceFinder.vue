@@ -231,8 +231,8 @@ defineExpose({ reveal, scanClip, addPhotosFor })
         <Message v-if="addingFor" severity="info" :closable="false" class="adding-for">
           <div class="adding-for-body">
             <span>
-              Adding photos of <strong>{{ addingFor }}</strong
-              >. Scan clips from each camera they're seen on — or upload a photo — then pick their faces below.
+              Adding photos of <strong>{{ addingFor }}</strong>. Scan clips from each camera they're seen on — or upload
+              a photo — then pick their faces below.
             </span>
             <Button label="Done" size="small" text @click="stopAdding" />
           </div>

@@ -165,16 +165,14 @@ onBeforeUnmount(() => {
 
       <div v-if="phase === 'uploading'" class="restore-progress">
         <p>
-          Sending <strong>{{ fileName }}</strong
-          >…
+          Sending <strong>{{ fileName }}</strong>…
         </p>
         <ProgressBar :value="progress" />
         <Button label="Cancel" severity="secondary" size="small" outlined @click="cancel" />
       </div>
 
       <p v-if="phase === 'inspecting'" class="restore-working">
-        Checking <strong>{{ fileName }}</strong
-        >…
+        Checking <strong>{{ fileName }}</strong>…
       </p>
 
       <template v-if="phase === 'review' && summary">

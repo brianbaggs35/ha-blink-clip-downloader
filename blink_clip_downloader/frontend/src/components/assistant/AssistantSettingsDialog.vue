@@ -84,9 +84,8 @@ async function save() {
     <div class="settings-form" data-testid="assistant-settings">
       <p class="settings-note">
         The assistant uses your main AI provider,
-        <strong>{{ providerLabel(status?.provider) }}</strong
-        >, the one that analyzes your clips, not the escalation provider. Pick which of its models answers your
-        questions.
+        <strong>{{ providerLabel(status?.provider) }}</strong>, the one that analyzes your clips, not the escalation
+        provider. Pick which of its models answers your questions.
       </p>
 
       <div class="settings-field">
