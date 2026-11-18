@@ -255,7 +255,7 @@ RUN ( \
         && rm -rf /usr/lib/python3/dist-packages/wheel \
             /usr/lib/python3/dist-packages/wheel-*.dist-info \
         && pip3 install --no-cache-dir --only-binary :all: \
-            "filelock==4.2.10" \
+            "filelock==4.2.12" \
             # lap isn't in ultralytics' own declared dependencies (`pip show
             # ultralytics` doesn't list it) — it's an optional extra
             # ultralytics only imports inside YOLO.track() (the Hungarian-
