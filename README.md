@@ -420,6 +420,10 @@ clips it mentions. You can keep several named chats, rename and delete them.
   enrolled person's name: questions are text, enrolled names are replaced with "a
   household member" before anything is sent, and face recognition reaches it only as
   counts.
+- **It searches for what you ask about.** A question that names a camera, a time
+  (*yesterday*, *last night*) or what happened (*package*, *dog*) also searches the
+  stored AI descriptions and detected objects of your clips, locally and at no cost,
+  and the clips found are added to what the model sees.
 - What it costs shows on the AI Usage tab, and chats and that spend are part of a
   backup.
 

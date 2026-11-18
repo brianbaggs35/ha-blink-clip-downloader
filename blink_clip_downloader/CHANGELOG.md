@@ -12,6 +12,11 @@
 - The add-on also keeps trying the saved sign-in in the background, first after five minutes and then at longer gaps up to once an hour, and carries on by itself if Google accepts it again, replacing the notification with **Google Drive Reconnected**. The retry timings are judgement calls, not anything Google documents.
 - **Disconnect** is unchanged and still forgets everything. No new settings, so nothing to add to the translations. `/api/storage/gdrive/status` gains a `needs_reauthorization` field.
 
+### Security Assistant
+
+- The assistant can now find a specific clip. Before each question is sent, the add-on reads it on this machine (no model, no cost) for a camera name, a time (*today*, *yesterday*, *last night*, *this morning*, a number of days), *flagged* or *starred*, and the words that describe what happened, and searches the stored AI descriptions and the objects the detector saw for them. The best matches are added to the report as **Clips matching your question**, and the section says what was searched, so an empty result is not mistaken for "nothing happened". A question with none of those is answered from the report exactly as before.
+- Each clip in the report now also lists the objects the detector saw and the sounds it heard. Nothing new leaves the device beyond that text: no picture, face data or enrolled name, and the question's words reach the database only as values. No new settings, so nothing to add to the translations.
+
 ### Dependency Updates
 
 ### Release Workflow

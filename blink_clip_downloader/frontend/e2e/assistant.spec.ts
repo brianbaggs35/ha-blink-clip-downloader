@@ -73,6 +73,25 @@ test('a question is answered, titled and kept, and no enrolled name reaches the 
   await expect(page.getByTestId('assistant-chat-item').first()).toContainText('Was Riley E2E at the door?')
 })
 
+test('a question naming a camera and a time is searched for, and the answer says what was searched @standalone', async ({
+  page,
+}) => {
+  // The search reads the question locally, with no model. The stand-in provider reports
+  // the line the real report carries about what was searched, so this sees the server
+  // turn "Front Door" and "yesterday" into a search, and that no name is searched for.
+  await ask(page, 'Did Riley E2E leave a package at the Front Door yesterday?')
+
+  const answer = bubbles(page).nth(1)
+  await expect(answer).toContainText('camera Front Door; yesterday; mentioning leave, package')
+  await expect(answer).toContainText('[enrolled names sent: no]')
+})
+
+test('a question that names nothing to look for is answered without a search @standalone', async ({ page }) => {
+  await ask(page, 'How are you?')
+
+  await expect(bubbles(page).nth(1)).toContainText('[search: none]')
+})
+
 test('a clip the answer cites opens in the Library player without leaving the tab @standalone', async ({ page }) => {
   // Nothing seeded is analyzed (any analysis row would move the AI tabs' counts),
   // so the server has no clip to cite itself -- pytest covers that half. This adds

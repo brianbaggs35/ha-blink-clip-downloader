@@ -38,6 +38,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from .analyzer.chat import ChatReply
+from .assistant_search import ClipSearch, parse_question
 from .face_outcomes import summarize_face_outcomes
 
 if TYPE_CHECKING:
@@ -60,6 +61,7 @@ DAYS_CHOICES = (1, 3, 7, 14, 30)
 # Rows per list in the report, and the width of one stored summary.
 NOTABLE_CLIPS = 30
 RECENT_CLIPS = 30
+SEARCH_CLIPS = 20
 SUMMARY_CHARS = 240
 BATTERY_HISTORY_ROWS = 6
 
@@ -81,7 +83,13 @@ Rules:
 - Answer only from the report. If it does not say, say you do not know and, if it \
 helps, point to the part of the web UI that would (Library, Security Events, Status, \
 Sync Module, Biometrics). Never guess or invent clips, times or counts.
-- You see descriptions and numbers, not video. Never claim to have watched a clip.
+- You see descriptions and numbers, not video. Never claim to have watched a clip. \
+Each clip line carries the AI's written description plus what the object detector \
+and the sound model picked up (objects seen, sounds heard).
+- When the report has a "Clips matching your question" section, the system searched \
+the stored AI descriptions and detected objects for the question and says what it \
+searched. Say what the search covered, and remember it can miss clips that were never \
+analyzed or whose description uses other words.
 - Cite the clips you rely on by their ref (for example C3) so the person can open \
 them. Use only refs that appear in the report.
 - Times in the report are the home's local time. Say "today", "last night" and so on \
@@ -228,12 +236,19 @@ class ContextBuilder:
         days: int,
         live: dict[str, Any],
         names: list[str],
+        question: str = "",
     ) -> None:
         self._db = db
         self._days = days
         self._live = live
         self._names = names
+        # Already cleaned of enrolled names, like everything else the builder
+        # lets near a provider: its words become search terms.
+        self._question = question
         self.refs: dict[str, dict[str, Any]] = {}
+        # Clip ids already listed, so a clip found by the search is not
+        # listed again, under a second ref, further down.
+        self._listed: set[str] = set()
 
     def _clean(self, text: object, limit: int) -> str:
         return redact_names(one_line(text, limit), self._names)
@@ -254,6 +269,7 @@ class ContextBuilder:
         lines += await self._battery_section()
         lines += await self._events_section()
         lines += await self._faces_section()
+        lines += await self._search_section()
         lines += await self._clip_sections()
         return "\n".join(lines)
 
@@ -446,13 +462,56 @@ class ContextBuilder:
         if clip["starred"]:
             notes.append("starred")
         events = ", ".join(clip["event_types"]) or "none"
+        seen = ", ".join(self._clean(label, 30) for label in clip["objects"])
+        heard = ", ".join(self._clean(label, 30) for label in clip["heard"])
         return (
             f"{ref} | {_local(clip['timestamp'])} | {self._clean(clip['camera'], 60)} | "
             f"{verdict} (confidence {clip['confidence']:.2f}) | severity "
             f"{clip['severity']}, risk {clip['risk_score']:.0f}/100 | events: {events}"
+            + (f" | objects seen: {seen}" if seen else "")
+            + (f" | sounds heard: {heard}" if heard else "")
             + (f" | {'; '.join(notes)}" if notes else "")
             + f" | {self._clean(clip['summary'], SUMMARY_CHARS) or 'no description'}"
         )
+
+    async def _camera_names(self) -> list[str]:
+        """Every camera name the question could mean, from the clips and Blink."""
+        names = {
+            row["camera"]
+            for row in await self._db.get_assistant_camera_counts(MAX_DAYS)
+        }
+        names.update(str(n) for n in (self._live.get("camera_names") or []))
+        return sorted(names)
+
+    async def _search_section(self) -> list[str]:
+        """Clips matching what the question asks for, when it asks for any.
+
+        The only part of the report the question shapes. It searches stored
+        descriptions and detected objects, so it reads no video, and says
+        exactly what it searched so an empty result is not mistaken for
+        "nothing happened".
+        """
+        search: ClipSearch | None = parse_question(
+            self._question,
+            await self._camera_names(),
+            default_days=self._days,
+            now=datetime.now().astimezone(),
+        )
+        if search is None:
+            return []
+        rows = await self._db.search_assistant_clips(search, SEARCH_CLIPS + 1)
+        lines = [
+            f"Searched the stored AI descriptions of analyzed clips for: {search.description}.",
+            "Best match first, then newest first.",
+        ]
+        for clip in rows[:SEARCH_CLIPS]:
+            self._listed.add(clip["id"])
+            lines.append(self._clip_line(clip))
+        if not rows:
+            lines.append("No analyzed clip matched this search.")
+        elif len(rows) > SEARCH_CLIPS:
+            lines.append(f"(more clips match than the {SEARCH_CLIPS} shown)")
+        return _section("Clips matching your question", lines)
 
     async def _clip_sections(self) -> list[str]:
         notable = await self._db.get_assistant_clips(
@@ -460,7 +519,6 @@ class ContextBuilder:
         )
         recent = await self._db.get_assistant_clips(self._days, RECENT_CLIPS + 1, False)
         out: list[str] = []
-        seen: set[str] = set()
         for title, rows, cap in (
             (
                 "Notable clips (flagged, or an event above routine), newest first",
@@ -471,9 +529,9 @@ class ContextBuilder:
         ):
             lines = []
             for clip in rows[:cap]:
-                if clip["id"] in seen:
+                if clip["id"] in self._listed:
                     continue
-                seen.add(clip["id"])
+                self._listed.add(clip["id"])
                 lines.append(self._clip_line(clip))
             if len(rows) > cap:
                 lines.append(f"(more clips exist in this window than the {cap} shown)")
@@ -500,7 +558,9 @@ async def ask(
         {"role": m["role"], "content": redact_names(m["content"], names)}
         for m in clean_conversation(question, history)
     ]
-    builder = ContextBuilder(db, days, live, names)
+    builder = ContextBuilder(
+        db, days, live, names, redact_names(str(question).strip(), names)
+    )
     report = await builder.build()
     reply: ChatReply = await analyzer.chat(
         f"{SYSTEM_PROMPT}\n{report}", messages, model=model or None
