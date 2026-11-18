@@ -1,0 +1,61 @@
+---
+# Audits the workflow files for the mistakes that make GitHub Actions
+# exploitable: script injection, tokens with more access than a job needs,
+# unpinned actions, credentials left in the checkout. Results appear under
+# Security > Code scanning, and any finding fails the check. Run the same audit
+# locally with `uvx --no-build zizmor@1.32.0 .github/workflows`. To accept a
+# finding on purpose, put `# zizmor: ignore[<rule>] <why>` on the line it is
+# about.
+name: Workflow security
+
+"on":
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: zizmor-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  zizmor:
+    name: zizmor
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      # Checks out the code and looks up the actions the workflows use.
+      contents: read
+      # Uploads the results to code scanning.
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
+        with:
+          enable-cache: false
+
+      - name: Audit the workflows for code scanning
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uvx --no-build zizmor@1.32.0 --format sarif --no-exit-codes .github/workflows > zizmor.sarif
+
+      # GitHub makes fork pull requests' tokens read-only, so those are audited
+      # without uploading.
+      - name: Upload the audit to GitHub code scanning
+        if: >-
+          ${{ !cancelled() && (github.event_name != 'pull_request' ||
+          github.event.pull_request.head.repo.full_name == github.repository) }}
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066  # v4.39.3
+        with:
+          sarif_file: zizmor.sarif
+          category: zizmor
+
+      - name: Fail on findings
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uvx --no-build zizmor@1.32.0 .github/workflows

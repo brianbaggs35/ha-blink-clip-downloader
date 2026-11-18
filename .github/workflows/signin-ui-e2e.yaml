@@ -54,10 +54,12 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
@@ -68,14 +70,14 @@ jobs:
           pip install -e "blink_clip_downloader[test]"
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version: "24"
           cache: npm
           cache-dependency-path: blink_clip_downloader/frontend/package-lock.json
 
       - name: Update npm
-        run: npm install -g npm@12.2.3
+        run: npm install -g npm@12.2.3  # zizmor: ignore[adhoc-packages] pinned to the Dockerfile's npm
 
       - name: Install frontend dependencies
         working-directory: blink_clip_downloader/frontend
@@ -104,7 +106,7 @@ jobs:
 
       - name: Upload Playwright report
         if: ${{ failure() }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: playwright-report-signed-in
           path: blink_clip_downloader/frontend/playwright-report

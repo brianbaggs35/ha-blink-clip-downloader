@@ -1,0 +1,57 @@
+---
+# Static analysis for security bugs and code quality problems in the Python and
+# TypeScript code and in the workflow files themselves. Results appear under
+# Security > Code scanning. This is the advanced setup, so GitHub's "default
+# setup" for code scanning must stay off (Settings > Advanced Security).
+name: CodeQL
+
+"on":
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    # New queries ship weekly, so the code is re-checked even when nothing changes.
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      # Checks out the code.
+      contents: read
+      # Uploads the results to code scanning.
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [actions, javascript-typescript, python]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066  # v4.39.3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          queries: security-and-quality
+
+      - id: analyze
+        uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066  # v4.39.3
+        with:
+          category: /language:${{ matrix.language }}
+
+      - name: What CodeQL found
+        if: ${{ !cancelled() && steps.analyze.outcome == 'success' }}
+        env:
+          SARIF_DIRECTORY: ${{ steps.analyze.outputs.sarif-output }}
+        run: ./.github/scripts/codeql-report.sh "$SARIF_DIRECTORY"
