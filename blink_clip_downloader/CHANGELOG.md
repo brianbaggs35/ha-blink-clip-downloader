@@ -29,6 +29,7 @@
 - Updated typescript-eslint to 8.73.0
 - Updated vitest and @vitest/coverage-v8 to 5.1.1
 - Updated @vue/test-utils to 2.6.0
+- Updated eslint to 10.15.0 (frontend and the root e2e project)
 
 ### Release Workflow
 
