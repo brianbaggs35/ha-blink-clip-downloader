@@ -270,7 +270,7 @@ RUN ( \
             # output warns the current process may need restarting for
             # the newly installed package to actually take effect.
             "lap==0.5.14" \
-            "opencv-python-headless==5.0.0.93" \
+            "opencv-python-headless==5.1.0.95" \
             # Cap raised from <5 to <6: verified by hand in isolated venvs
             # that both cv2 call sites this add-on actually uses
             # (FramePreprocessor.enhance's imdecode/cvtColor/CLAHE/

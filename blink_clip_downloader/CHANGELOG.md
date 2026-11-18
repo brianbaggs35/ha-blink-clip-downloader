@@ -40,6 +40,7 @@
 - Updated python-slugify to 9.2.0
 - Updated pytest-asyncio to 1.5.0
 - Updated ultralytics (floor and Docker image pin) to 8.4.215
+- Updated opencv-python-headless (floor and Docker image pin) to 5.1.0.95
 
 ### Release Workflow
 
