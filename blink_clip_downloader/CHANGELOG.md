@@ -37,6 +37,7 @@
 - Updated anthropic to 2.10.0
 - Updated openai to 3.55.0
 - Updated numpy to 2.5.5
+- Updated python-slugify to 9.2.0
 
 ### Release Workflow
 
