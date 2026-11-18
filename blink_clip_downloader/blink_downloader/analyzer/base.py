@@ -62,6 +62,7 @@ if TYPE_CHECKING:
     from ..vision import (
         DetectedObject,
         FaceRecognitionResult,
+        StageHealth,
         VisionHints,
         VisionPipeline,
     )
@@ -1108,6 +1109,15 @@ class BaseAnalyzer(abc.ABC):
         pipeline does not by itself enable anything.
         """
         self._vision_pipeline = pipeline
+
+    def vision_stage_health(self) -> list[StageHealth]:
+        """Which optional vision stages' models loaded, and why not if they did not.
+
+        Empty with no pipeline attached, and for a stage that has not been
+        asked to load yet — see :meth:`VisionPipeline.stage_health`.
+        """
+        pipeline = self._vision_pipeline
+        return pipeline.stage_health() if pipeline is not None else []
 
     # ------------------------------------------------------------------
     # Abstract interface

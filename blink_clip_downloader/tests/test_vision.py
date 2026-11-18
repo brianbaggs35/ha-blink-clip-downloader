@@ -2064,6 +2064,143 @@ async def test_face_embedder_ensure_ready_is_idempotent(
     mock_fp.MTCNN.assert_called_once()
 
 
+async def test_face_embedder_does_not_retry_a_failed_load_on_every_frame(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    mock_fp = MagicMock()
+    mock_fp.MTCNN.side_effect = RuntimeError("boom")
+    monkeypatch.setitem(sys.modules, "facenet_pytorch", mock_fp)
+    embedder = FaceEmbedder()
+    with caplog.at_level("DEBUG", logger="blink_downloader.vision.faces"):
+        for _ in range(5):
+            assert await embedder.ensure_ready() is False
+    assert mock_fp.MTCNN.call_count == 1
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 1
+    # A failure nobody anticipated keeps its traceback, once.
+    assert warnings[0].exc_info is not None
+    health = embedder.health()
+    assert health is not None
+    assert health.state == "failed"
+    assert health.permanent is False
+    assert health.detail == "RuntimeError: boom"
+    assert health.retry_in is not None
+    assert health.retry_in > 0
+
+
+async def test_face_embedder_tries_again_once_the_wait_is_over(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_fp = MagicMock()
+    mock_fp.MTCNN.side_effect = [RuntimeError("boom"), MagicMock()]
+    monkeypatch.setitem(sys.modules, "facenet_pytorch", mock_fp)
+    now = [1000.0]
+    embedder = FaceEmbedder()
+    embedder._load_guard = runtime_module.LoadGuard("face recognition", lambda: now[0])
+    assert await embedder.ensure_ready() is False
+    assert await embedder.ensure_ready() is False
+    assert mock_fp.MTCNN.call_count == 1
+    now[0] += 61
+    assert await embedder.ensure_ready() is True
+    health = embedder.health()
+    assert health is not None
+    assert health.state == "ready"
+
+
+async def test_face_embedder_logs_a_repeat_of_the_same_failure_quietly(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    mock_fp = MagicMock()
+    mock_fp.MTCNN.side_effect = RuntimeError("boom")
+    monkeypatch.setitem(sys.modules, "facenet_pytorch", mock_fp)
+    embedder = FaceEmbedder()
+    with caplog.at_level("DEBUG", logger="blink_downloader.vision.faces"):
+        for _ in range(3):
+            assert await embedder.ensure_ready(retry_now=True) is False
+    assert mock_fp.MTCNN.call_count == 3
+    assert [r.levelname for r in caplog.records].count("WARNING") == 1
+    assert [r.levelname for r in caplog.records].count("DEBUG") == 2
+
+
+async def test_face_embedder_calls_waiting_on_a_failing_load_do_not_each_retry_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_fp = MagicMock()
+    mock_fp.MTCNN.side_effect = lambda **_kw: (time.sleep(0.05), 1 / 0)[1]
+    monkeypatch.setitem(sys.modules, "facenet_pytorch", mock_fp)
+    embedder = FaceEmbedder()
+    results = await asyncio.gather(*(embedder.ensure_ready() for _ in range(4)))
+    assert results == [False] * 4
+    mock_fp.MTCNN.assert_called_once()
+
+
+async def test_face_embedder_retry_now_skips_the_wait(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_fp = MagicMock()
+    mock_fp.MTCNN.side_effect = [RuntimeError("boom"), MagicMock()]
+    monkeypatch.setitem(sys.modules, "facenet_pytorch", mock_fp)
+    embedder = FaceEmbedder()
+    assert await embedder.ensure_ready() is False
+    assert await embedder.ensure_ready(retry_now=True) is True
+    assert mock_fp.MTCNN.call_count == 2
+
+
+async def test_face_embedder_a_missing_package_is_permanent_and_quiet_after_the_first(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.delitem(sys.modules, "facenet_pytorch", raising=False)
+    embedder = FaceEmbedder()
+    with (
+        patch("builtins.__import__", side_effect=ImportError("no facenet_pytorch")),
+        caplog.at_level("DEBUG", logger="blink_downloader.vision.faces"),
+    ):
+        for _ in range(3):
+            assert await embedder.ensure_ready(retry_now=True) is False
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 1
+    assert not warnings[0].exc_info
+    health = embedder.health()
+    assert health is not None
+    assert health.permanent is True
+    assert health.retry_in is None
+    assert "not installed" in health.detail
+
+
+async def test_face_embedder_an_incompatible_cpu_is_permanent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "blink_downloader.vision.runtime.torch_cpu_compatible", lambda: False
+    )
+    embedder = FaceEmbedder()
+    assert await embedder.ensure_ready() is False
+    health = embedder.health()
+    assert health is not None
+    assert health.permanent is True
+    assert "CPU" in health.detail
+
+
+async def test_face_embedder_has_no_health_until_something_asks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert FaceEmbedder().health() is None
+
+
+async def test_the_pipeline_reports_only_the_stages_that_were_tried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pipeline = VisionPipeline(VisionConfig())
+    assert pipeline.stage_health() == []
+    mock_fp = MagicMock()
+    mock_fp.MTCNN.side_effect = RuntimeError("boom")
+    monkeypatch.setitem(sys.modules, "facenet_pytorch", mock_fp)
+    assert await pipeline._face_embedder.ensure_ready() is False
+    reports = pipeline.stage_health()
+    assert [r.stage for r in reports] == [SOURCE_FACE_RECOGNITION]
+    assert reports[0].state == "failed"
+
+
 # Landmarks MTCNN returns per face: left eye, right eye, nose, mouth corners.
 _FRONTAL_POINTS = np.array(
     [[[30.0, 40.0], [70.0, 40.0], [50.0, 55.0], [35.0, 70.0], [65.0, 70.0]]]

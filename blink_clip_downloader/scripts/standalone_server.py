@@ -205,7 +205,7 @@ class _E2EFaceEmbedder(FaceEmbedder):
     unreadable image still returns None, exactly like the real embedder.
     """
 
-    async def ensure_ready(self) -> bool:
+    async def ensure_ready(self, *, retry_now: bool = False) -> bool:
         return True
 
     async def detect(
