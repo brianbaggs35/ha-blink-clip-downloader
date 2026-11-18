@@ -47,6 +47,10 @@
 
 - Updated filelock to 4.2.12
 
+**CI tooling**
+
+- Updated ruff to 0.17.5 in CI and in the pin CLAUDE.md tells contributors to match
+
 ### Release Workflow
 
 ## 6.2.0
