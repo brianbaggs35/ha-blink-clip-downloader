@@ -50,6 +50,7 @@
 **CI tooling**
 
 - Updated ruff to 0.17.5 in CI and in the pin CLAUDE.md tells contributors to match
+- Updated npm to 12.2.3, in the image's frontend build stage and in CI
 
 ### Release Workflow
 
