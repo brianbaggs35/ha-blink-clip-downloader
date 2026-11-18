@@ -297,7 +297,11 @@ class VisionPipeline:
         clip has reached it) is left out: nothing is known about it, which is
         not the same as being healthy.
         """
-        reports = (self._face_embedder.health(),)
+        reports = [self._face_embedder.health()]
+        if isinstance(self._detector, ObjectDetector):
+            # The Hugging Face detector loads no model here: it fails per
+            # request, and `detect()` already reports that as "unavailable".
+            reports.insert(0, self._detector.health())
         return [report for report in reports if report is not None]
 
     @property

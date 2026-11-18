@@ -12,10 +12,12 @@ import {
 } from '../../api/ai'
 import { listClips } from '../../api/clips'
 import { PROVIDER_LABELS, providerLabel } from '../../api/constants'
+import { capitalize, failedStages, retryWording } from '../../api/stageHealth'
 import type { AiModelEntry, AiStatus, AnalysisResultDict, MoondreamInstallStatus } from '../../api/types'
 import { useToastStore } from '../../stores/toast'
 
 const props = defineProps<{ status: AiStatus }>()
+const failedVisionStages = computed(() => failedStages(props.status.vision_stages))
 
 const toast = useToastStore()
 
@@ -284,6 +286,20 @@ function confPct(r: AnalysisResultDict): number {
         style="font-size: 0.82rem; color: var(--muted); margin-bottom: 0.6rem"
       >
         Object detection: <strong>Hugging Face</strong> — sampled clip frames are uploaded for it
+      </div>
+      <div
+        v-for="stage in failedVisionStages"
+        :key="stage.stage"
+        class="vision-stage-failed"
+        role="alert"
+        style="font-size: 0.82rem; color: var(--danger); margin-bottom: 0.6rem"
+      >
+        <strong>{{ capitalize(stage.stage) }} could not load</strong
+        ><template v-if="stage.detail"> — {{ stage.detail }}</template
+        >. It is skipped until that is fixed<template v-if="stage.permanent">; waiting will not fix it.</template
+        ><template v-else-if="stage.retry_in !== null"
+          >; the add-on tries again {{ retryWording(stage.retry_in) }}.</template
+        ><template v-else>.</template>
       </div>
 
       <div v-if="showModelPicker()" class="model-picker">

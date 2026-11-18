@@ -3,7 +3,7 @@ import { mount, flushPromises, DOMWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import AiConnectionCard from './AiConnectionCard.vue'
 import { useToastStore } from '../../stores/toast'
-import type { AiStatus } from '../../api/types'
+import type { AiStatus, StageHealthReport } from '../../api/types'
 
 // PrimeVue's Select opens a teleported (to <body>) overlay on click and
 // selects an option on click — see primevue/select's option template.
@@ -391,6 +391,54 @@ describe('AiConnectionCard', () => {
     expect(local.find('.remote-vision').exists()).toBe(false)
     const unset = mount(AiConnectionCard, { props: { status: baseStatus() } })
     expect(unset.find('.remote-vision').exists()).toBe(false)
+  })
+
+  describe('vision models that failed to load', () => {
+    const stage = (overrides: Partial<StageHealthReport> = {}): StageHealthReport => ({
+      stage: 'object detection',
+      state: 'failed',
+      detail: 'RuntimeError: download blocked',
+      permanent: false,
+      retry_in: 180,
+      ...overrides,
+    })
+    const notices = (stages: StageHealthReport[]) =>
+      mount(AiConnectionCard, { props: { status: baseStatus({ vision_stages: stages }) } }).findAll(
+        '.vision-stage-failed',
+      )
+
+    it('names the stage, why, and when the add-on tries again', () => {
+      const [notice] = notices([stage()])
+      expect(notice.text()).toContain('Object detection could not load')
+      expect(notice.text()).toContain('RuntimeError: download blocked')
+      expect(notice.text()).toContain('skipped until that is fixed')
+      expect(notice.text()).toContain('tries again in 3 minutes')
+      expect(notice.attributes('role')).toBe('alert')
+    })
+
+    it('says waiting will not help for a permanent failure', () => {
+      const [notice] = notices([stage({ permanent: true, retry_in: null })])
+      expect(notice.text()).toContain('waiting will not fix it')
+      expect(notice.text()).not.toContain('tries again')
+    })
+
+    it('has no retry sentence and no dash when the server gave neither detail nor a wait', () => {
+      const [notice] = notices([stage({ detail: '', retry_in: null })])
+      expect(notice.text()).toBe('Object detection could not load. It is skipped until that is fixed.')
+    })
+
+    it('lists each failed stage and leaves out the ones that loaded', () => {
+      const found = notices([
+        stage(),
+        stage({ stage: 'face recognition', state: 'ready', detail: '', retry_in: null }),
+        stage({ stage: 'face recognition' }),
+      ])
+      expect(found.map((n) => n.text().split(' could')[0])).toEqual(['Object detection', 'Face recognition'])
+    })
+
+    it.each([[undefined], [[]]])('shows nothing when %j', (stages) => {
+      expect(notices(stages as StageHealthReport[])).toHaveLength(0)
+    })
   })
 
   it('marks the top two Ollama Cloud models as recommended', async () => {
