@@ -43,6 +43,10 @@
 - Updated opencv-python-headless (floor and Docker image pin) to 5.1.0.95
 - Updated transformers (floor and Docker image pin) to 5.23.0
 
+**Docker image**
+
+- Updated filelock to 4.2.12
+
 ### Release Workflow
 
 ## 6.2.0
