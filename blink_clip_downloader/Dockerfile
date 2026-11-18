@@ -281,7 +281,7 @@ RUN ( \
             # No known CVEs in either line at the time of this bump (checked
             # via pip-audit) — this one's just staying current, unlike the
             # transformers bump below.
-            # Pinned to 5.22.2 to clear two HIGH-severity CVEs
+            # Pinned to 5.23.0; 5.22.2 or later clears two HIGH-severity CVEs
             # (2026-4372 RCE, 2026-5241 arbitrary code execution via
             # trust_remote_code) that the 4.x line never fixed — found via
             # a trivy image scan. Verified by hand before bumping: the pinned
@@ -294,7 +294,7 @@ RUN ( \
             # backward-compatible surface across major versions, and this
             # add-on's usage here is exactly that surface, never
             # trust_remote_code (which stays at its safe default of False).
-            "transformers==5.22.2" \
+            "transformers==5.23.0" \
             "ultralytics==8.4.215" \
         && pip3 install --no-cache-dir --only-binary :all: --no-deps "facenet-pytorch==2.6.0" \
         2>&1 | tail -20 \
