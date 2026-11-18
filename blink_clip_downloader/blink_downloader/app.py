@@ -24,6 +24,7 @@ from .analyzer import (
     create_analyzer,
 )
 from .archiver import ClipArchiver
+from .arming_schedule import ArmingScheduler
 from .battery_monitor import BatteryMonitor
 from .config import AppConfig
 from .database import ClipDatabase
@@ -241,6 +242,24 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         if config.ai_analysis_enabled:
             self._setup_ai_analysis(config)
 
+        # The Sync Module tab's schedules arm through the same two callables
+        # the tab's own buttons use, so a schedule and a click can never
+        # disagree about how a sync module is found or armed.
+        get_sync_module_snapshot = (
+            self._e2e_fixtures.sync_module.snapshot
+            if self._e2e_fixtures is not None
+            else self._downloader.get_sync_module_snapshot
+        )
+        arm_sync_module = (
+            self._e2e_fixtures.sync_module.arm_module
+            if self._e2e_fixtures is not None
+            else self._downloader.set_sync_module_armed
+        )
+        self._arming_scheduler = ArmingScheduler(
+            get_sync_module_snapshot,
+            arm_sync_module,
+            announce=self._notifier.announce,
+        )
         self._media_server = MediaServer(
             db=self._db,
             port=config.media_server_port,
@@ -289,16 +308,9 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
                 else self._downloader.get_camera_snapshot
             ),
             update_auto_analysis_cameras=self._set_auto_analysis_disabled_cameras,
-            get_sync_module_snapshot=(
-                self._e2e_fixtures.sync_module.snapshot
-                if self._e2e_fixtures is not None
-                else self._downloader.get_sync_module_snapshot
-            ),
-            arm_sync_module=(
-                self._e2e_fixtures.sync_module.arm_module
-                if self._e2e_fixtures is not None
-                else self._downloader.set_sync_module_armed
-            ),
+            get_sync_module_snapshot=get_sync_module_snapshot,
+            arm_sync_module=arm_sync_module,
+            arming_scheduler=self._arming_scheduler,
             arm_camera=(
                 self._e2e_fixtures.sync_module.arm_camera
                 if self._e2e_fixtures is not None
@@ -1068,6 +1080,11 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             self._bg_tasks.append(
                 asyncio.create_task(self._event_watcher.start(), name="event_watcher")
             )
+
+        # After Blink auth, like the others here: arming needs a session.
+        self._bg_tasks.append(
+            asyncio.create_task(self._arming_scheduler.run(), name="arming_schedule")
+        )
 
         if self._analysis_queue:
             _model_by_provider = {

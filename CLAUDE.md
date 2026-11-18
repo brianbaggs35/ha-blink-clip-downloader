@@ -543,6 +543,26 @@ architecture.
     A tile with no picture yet says *Loading snapshot…*; its text is a fixed
     light colour because it sits on that black backing (`--muted` is 4.0:1 on
     black in the light theme).
+  - `arming_schedule.py` (BCD-7) — scheduled arm/disarm from the Sync Module
+    tab's Schedules card (`/data/arming_schedules.json`, full-array PUT on
+    `/api/sync-modules/schedules`, routes in `media_server/sync_module.py`;
+    `app.py` builds one `ArmingScheduler` and passes it to `MediaServer` as
+    `arming_scheduler`). Rules that must not erode, each pinned in
+    `tests/test_arming_schedule.py`: a schedule fires **at most once a day and
+    only inside `[time, time + GRACE_MINUTES)`** — a restart after the window is
+    *missed*, never run late, because arming or disarming a house at 3am is a
+    surprise; a **new or edited schedule starts from now** (the `since` stamp), so
+    saving "arm at 22:00" at 22:30 does not arm at once; it uses the same
+    `set_sync_module_armed` as the tab's button, so "whole system" never
+    re-arms a camera disarmed on its own and a schedule never touches single
+    cameras; failures are retried through the window, then settle as *failed* and
+    go out through `HANotifier.announce` (sent even with `notify_ha` off).
+    Times are the add-on's local wall clock; the tab shows which. The schedule
+    list is in `backup/catalogue.py`'s `DATA_FILES` and
+    `arming_schedule_state.json` (runtime state) in `LEFT_OUT`. Its routes must
+    never be in `access_control.TOKEN_ROUTES`. The e2e backend gets a real
+    `ArmingScheduler` that is never started; specs clean up with
+    `page.request.put(...)`, never a navigation.
   - Sync Module tab arming has no dedicated module either: `BlinkDownloader`'s
     `get_sync_module_snapshot`/`set_sync_module_armed`/`set_camera_armed`
     plus `media_server/sync_module.py`. Rules that were each a real bug:

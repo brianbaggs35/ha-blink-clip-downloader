@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
 
+from ..arming_schedule import ArmingScheduler
 from ..backup import RestoreStaging
 from ..database import ClipDatabase
 from ..face_enrollment import FaceCandidateStore
@@ -70,6 +71,7 @@ class _MediaServerBase:
     _get_sync_module_snapshot: Callable[[], list[dict[str, Any]]] | None
     _arm_sync_module: Callable[..., Awaitable[bool | None]] | None
     _arm_camera: Callable[..., Awaitable[bool | None]] | None
+    _arming_scheduler: ArmingScheduler | None
     # Records clip ids in the downloader's history (the Backup & Restore tab).
     _merge_downloaded_clip_ids: Callable[[Iterable[str]], int] | None
 
