@@ -28,6 +28,7 @@
 - Updated jsdom to 31.0.1
 - Updated typescript-eslint to 8.73.0
 - Updated vitest and @vitest/coverage-v8 to 5.1.1
+- Updated @vue/test-utils to 2.6.0
 
 ### Release Workflow
 
