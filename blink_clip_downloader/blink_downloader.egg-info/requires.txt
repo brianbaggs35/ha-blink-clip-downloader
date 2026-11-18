@@ -20,5 +20,5 @@ aioresponses>=0.7.9
 [vision]
 ultralytics<9,>=8.4.215
 opencv-python-headless<6,>=5.1.0.95
-transformers<6,>=5.22.2
+transformers<6,>=5.23.0
 facenet-pytorch<3,>=2.6.0
