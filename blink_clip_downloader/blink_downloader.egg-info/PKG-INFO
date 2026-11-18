@@ -23,6 +23,6 @@ Requires-Dist: pytest-cov>=7.1.0; extra == "test"
 Requires-Dist: aioresponses>=0.7.9; extra == "test"
 Provides-Extra: vision
 Requires-Dist: ultralytics<9,>=8.4.215; extra == "vision"
-Requires-Dist: opencv-python-headless<6,>=5.0.0.93; extra == "vision"
+Requires-Dist: opencv-python-headless<6,>=5.1.0.95; extra == "vision"
 Requires-Dist: transformers<6,>=5.22.2; extra == "vision"
 Requires-Dist: facenet-pytorch<3,>=2.6.0; extra == "vision"
