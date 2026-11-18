@@ -25,6 +25,7 @@
 - Updated @primeuix/themes to 3.1.1
 - Updated primevue to 5.0.5
 - Updated @vitejs/plugin-vue to 6.0.11
+- Updated jsdom to 31.0.1
 
 ### Release Workflow
 
