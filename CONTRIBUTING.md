@@ -22,10 +22,11 @@ push them up. Then create a pull request and your changes will be
 reviewed and approved or rejected.
 
 CI scans every pull request with SonarCloud. If your change introduces new
-SonarCloud issues, the `SonarCloud Scan` job fails and lists each one (rule,
-file and line, message) in its log and summary, so there is no need to open
-sonarcloud.io to see what to fix. (Pull requests from forks cannot use the
-repository's SonarCloud token, so that job is skipped for them.)
+SonarCloud issues, the `SonarCloud Issues` job fails and lists each one (rule,
+file and line, message) in its log and summary, along with any security
+hotspots still to review, so there is no need to open sonarcloud.io to see what
+to fix. (Pull requests from forks cannot use the repository's SonarCloud token,
+so that job is skipped for them.)
 
 ## Local testing without a Home Assistant OS install
 

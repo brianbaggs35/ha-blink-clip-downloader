@@ -1,0 +1,81 @@
+---
+# Keeps the repository's GitHub Actions caches from piling up. Every pull request
+# writes its own caches (the add-on image's Buildx layers, the npm packages and
+# the pip downloads), nothing else can read them once it is closed, and the
+# repository has a fixed room for caches: past it, GitHub deletes the ones used
+# least recently, which can be the ones main's builds need. So a pull request's
+# caches are deleted when it is closed, and a weekly run deletes whatever a pull
+# request left behind that nothing has used for a while (a closed fork's, a pull
+# request that went quiet, a release tag's). Main's own caches are left to
+# GitHub, which deletes any that is not used for 7 days. Run it by hand from the
+# Actions tab to clear them now.
+name: Clear old caches
+
+on:
+  pull_request:
+    types: [closed]
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: clear-caches-${{ github.event.pull_request.number || github.event_name }}
+  cancel-in-progress: false
+
+jobs:
+  closed:
+    name: Closed pull request
+    # A fork's pull request gets a token that can't delete, so the weekly run
+    # clears what it leaves.
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      # Deletes this pull request's caches.
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      PULL_REQUEST: ${{ github.event.pull_request.number }}
+    steps:
+      - name: Delete the caches of the pull request
+        run: |
+          set -euo pipefail
+          # A pull request's caches belong to its merge ref.
+          ids=$(gh cache list --ref "refs/pull/${PULL_REQUEST}/merge" --limit 1000 --json id --jq '.[].id')
+          for id in $ids; do
+            gh cache delete "$id"
+          done
+          echo "Deleted $(wc -w <<< "$ids") caches of pull request ${PULL_REQUEST}."
+
+  old:
+    name: Caches nothing has used lately
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      # Deletes the caches.
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      DEFAULT_REF: refs/heads/${{ github.event.repository.default_branch }}
+      # How long a cache that is not the default branch's may go unused before
+      # it is deleted.
+      UNUSED_DAYS: "3"
+    steps:
+      - name: Delete the caches that nothing has used lately
+        run: |
+          set -euo pipefail
+          cutoff=$(date -u --date "${UNUSED_DAYS} days ago" +%Y-%m-%dT%H:%M:%S)
+          # Both are ISO timestamps, which sort as text, so the comparison needs
+          # no date arithmetic.
+          ids=$(gh api --paginate "repos/${GH_REPO}/actions/caches?per_page=100" |
+            jq -r --arg ref "$DEFAULT_REF" --arg cutoff "$cutoff" \
+              '.actions_caches[] | select(.ref != $ref and .last_accessed_at[0:19] < $cutoff) | .id')
+          for id in $ids; do
+            gh cache delete "$id"
+          done
+          echo "Deleted $(wc -w <<< "$ids") caches last used before ${cutoff} UTC."

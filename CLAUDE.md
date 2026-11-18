@@ -1427,14 +1427,19 @@ config at the repo root's `sonar-project.properties`) against SonarCloud —
 which isn't practical to run locally since it needs a `SONAR_TOKEN` and
 network access to sonarcloud.io; skipped automatically for PRs from forks,
 which don't have repo secrets. The scanner only uploads its analysis, so a
-step after it (`scripts/ci/sonar_new_issues.py`, tested by
-`tests/test_sonar_new_issues.py`) waits for SonarCloud to process it, lists
-the open issues on the new code (rule, `file:line`, message, link) in the log,
-the job summary and PR annotations, and **fails the job for a pull request that
-has any** (a push to `main` lists them without failing). Read that list instead
-of opening SonarCloud, and fix them before declaring a task done. The quality
-gate's own conditions (coverage, duplication) are printed but do not decide the
-job's result, and whether a red job blocks a merge is branch protection's call.
+second job, `SonarCloud Issues` (`sonarqube-issues`, which `needs` the scan and is
+handed the scanner's `report-task.txt` as an artifact; `scripts/ci/sonar_new_issues.py`,
+tested by `tests/test_sonar_new_issues.py`), waits for SonarCloud to process it,
+lists the open issues on the new code (rule, `file:line`, message, link) in the
+log, the job summary and PR annotations, and **fails for a pull request that has
+any** (a push to `main` lists them without failing). It also lists, for fixing
+along the way and without deciding the result, the security hotspots still to
+review and the issues already open on the base branch (SonarCloud only analyses
+`main`, so for a stacked PR that list is a notice that there is none). Read
+that list instead of opening SonarCloud, and fix them before declaring a task
+done. The quality gate's own conditions (coverage, duplication) are printed but
+do not decide the job's result, and whether a red job blocks a merge is branch
+protection's call.
 Before pushing a follow-up you can read the same list yourself:
 `https://sonarcloud.io/api/issues/search?componentKeys=brianbaggs35_ha-blink-clip-downloader&pullRequest=<n>&issueStatuses=OPEN,CONFIRMED&inNewCodePeriod=true`
 (the project is public, so no token is needed for reading it).
