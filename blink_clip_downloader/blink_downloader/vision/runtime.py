@@ -361,3 +361,100 @@ class LoadGuard:
             permanent=self._permanent,
             retry_in=retry_in,
         )
+
+
+def record_load_failure(
+    guard: LoadGuard,
+    logger: logging.Logger,
+    exc: BaseException,
+    *,
+    label: str,
+    package: str,
+    install: str,
+    huggingface_name: str | None = None,
+) -> None:
+    """Record why a stage's model did not load, and log it once.
+
+    What every stage's ``ensure_ready`` used to spell out on its own, with its
+    own wording: a missing package, a CPU PyTorch cannot run on and (for the
+    stages that download from the Hub) a rejected token are *permanent* —
+    nothing the add-on does while running changes them — and anything else is
+    treated as transient and retried on :class:`LoadGuard`'s schedule.
+    *package* is the import name that was missing, *install* what pip is told,
+    *huggingface_name* the model's name in the token message (``None`` for a
+    stage that does not use the Hub). A failure is logged in full only when
+    its reason is new; a repeat of it is a debug line.
+    """
+    permanent = True
+    level = logging.WARNING
+    exc_info: BaseException | None = None
+    if isinstance(exc, ImportError):
+        reason = f"the {package} package is not installed"
+        message = (
+            f"{package} package is not installed, {label} unavailable: {exc}. "
+            f"Install it with: pip install {install}"
+        )
+    elif isinstance(exc, CPUIncompatibleError):
+        reason = "this CPU cannot run PyTorch"
+        message = f"{label.capitalize()} unavailable: {exc}"
+    elif huggingface_name is not None and _is_huggingface_auth_error(exc):
+        reason = "Hugging Face refused the configured token"
+        message = _HF_AUTH_FAILURE_MESSAGE % huggingface_name
+        level = logging.ERROR
+    else:
+        permanent = False
+        reason = describe_load_failure(exc)
+        message = f"Failed to load the {label} model: {reason}"
+        exc_info = exc
+    if not guard.failed(reason, permanent=permanent):
+        logger.debug(message)
+        return
+    # A traceback only for the failure nobody anticipated.
+    logger.log(level, message, exc_info=exc_info)
+
+
+async def load_model(
+    guard: LoadGuard,
+    lock: asyncio.Lock,
+    is_loaded: Callable[[], bool],
+    load: Callable[[], None],
+    logger: logging.Logger,
+    *,
+    label: str,
+    package: str,
+    install: str,
+    huggingface_name: str | None = None,
+) -> bool:
+    """Load a stage's model once, remembering how it went; ``True`` when loaded.
+
+    The body of every stage's ``ensure_ready``: *load* runs in a thread under
+    *lock*, only while *guard* is not backing off from a failure, and a
+    failure is recorded and logged by :func:`record_load_failure` (see it for
+    *label*, *package*, *install* and *huggingface_name*). Checked again once
+    the lock is held, because a caller that waited behind a load which just
+    failed must not start another.
+    """
+    if is_loaded():
+        return True
+    if guard.backing_off():
+        return False
+    async with lock:
+        if is_loaded():
+            return True
+        if guard.backing_off():
+            return False
+        try:
+            await asyncio.get_running_loop().run_in_executor(None, load)
+        except Exception as exc:  # noqa: BLE001 - recorded and logged below
+            record_load_failure(
+                guard,
+                logger,
+                exc,
+                label=label,
+                package=package,
+                install=install,
+                huggingface_name=huggingface_name,
+            )
+            return False
+        guard.ready()
+        return True

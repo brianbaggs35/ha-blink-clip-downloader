@@ -153,6 +153,9 @@ export interface AiStatus {
   /** True when object detection runs on Hugging Face's servers
    *  (ai_vision_backend), i.e. sampled clip frames are uploaded for it. */
   remote_vision?: boolean
+  /** The optional vision stages (object detection, face recognition) whose
+   *  models something has already tried to load, and how each went. */
+  vision_stages?: StageHealthReport[]
   moondream_installed?: boolean
   moondream_arch_supported?: boolean
   escalation_provider?: AiProvider

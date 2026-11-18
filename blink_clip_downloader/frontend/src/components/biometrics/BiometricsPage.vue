@@ -8,6 +8,7 @@ import Tag from 'primevue/tag'
 import { describeApiError } from '../../api/client'
 import { deleteFacePhoto, listFaces, removePerson, updatePerson } from '../../api/faces'
 import type { FacesResponse } from '../../api/types'
+import { retryWording } from '../../api/stageHealth'
 import { useConfirm } from '../../composables/useConfirm'
 import { useRefreshStore } from '../../stores/refresh'
 import { useToastStore } from '../../stores/toast'
@@ -42,14 +43,6 @@ const legacyCount = computed(() => people.value.filter((p) => p.onlyLegacy).leng
 const managingName = ref<string | null>(null)
 const managing = computed(() => people.value.find((p) => p.name === managingName.value) ?? null)
 const busy = ref(false)
-
-/** "in 45 seconds", "in 3 minutes", "now" — the retry wait in words. */
-function retryText(seconds: number): string {
-  if (seconds <= 0) return 'on the next clip'
-  if (seconds < 90) return `in ${seconds} second${seconds === 1 ? '' : 's'}`
-  const minutes = Math.round(seconds / 60)
-  return `in ${minutes} minutes`
-}
 
 let loadSeq = 0
 async function load() {
@@ -190,7 +183,7 @@ function scanReportedClip(clipId: string) {
       suspicious flag cleared. Clips are still analyzed as usual.
       <template v-if="modelsFailed.permanent"> Waiting will not fix this.</template>
       <template v-else-if="modelsFailed.retry_in !== null">
-        The add-on tries again {{ retryText(modelsFailed.retry_in) }}, or when you scan a clip or photo here.
+        The add-on tries again {{ retryWording(modelsFailed.retry_in) }}, or when you scan a clip or photo here.
       </template>
     </Message>
     <Message v-if="mismatchedCount" severity="info" size="small" :closable="false" class="status-banner">

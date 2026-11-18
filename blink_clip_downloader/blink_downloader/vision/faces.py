@@ -241,66 +241,18 @@ class FaceEmbedder:
         skips the wait after a failed load, which exists for clips, not for
         somebody who has just fixed the cause.
         """
-        if self._resnet is not None:
-            return True
         if retry_now:
             self._load_guard.retry_now()
-        # A load that just failed is not retried for every frame: see
-        # runtime.LoadGuard. The stage is simply unavailable until it is due.
-        if self._load_guard.backing_off():
-            return False
-        async with self._get_lock():
-            if self._resnet is not None:
-                return True
-            if self._load_guard.backing_off():
-                return False
-            try:
-                loop = asyncio.get_running_loop()
-                await loop.run_in_executor(None, self._load_sync)
-                self._load_guard.ready()
-                return True
-            except ImportError as exc:
-                self._note_load_failure(
-                    "facenet_pytorch package is not installed",
-                    exc,
-                    permanent=True,
-                    message=(
-                        "facenet_pytorch package is not installed, face "
-                        "recognition unavailable: %s. Install it with: "
-                        "pip install facenet-pytorch"
-                    ),
-                )
-                return False
-            except runtime.CPUIncompatibleError as exc:
-                self._note_load_failure(
-                    "this CPU cannot run PyTorch",
-                    exc,
-                    permanent=True,
-                    message="Face recognition unavailable: %s",
-                )
-                return False
-            except Exception as exc:  # noqa: BLE001 - recorded and logged below
-                self._note_load_failure(
-                    runtime.describe_load_failure(exc),
-                    exc,
-                    message="Failed to load face-recognition models: %s",
-                )
-                return False
-
-    def _note_load_failure(
-        self,
-        reason: str,
-        exc: BaseException,
-        *,
-        message: str,
-        permanent: bool = False,
-    ) -> None:
-        """Record a failed load, and log it once rather than once per frame."""
-        if not self._load_guard.failed(reason, permanent=permanent):
-            _LOGGER.debug(message, exc)
-            return
-        # A traceback only for the failure nobody anticipated.
-        _LOGGER.warning(message, exc, exc_info=not permanent)
+        return await runtime.load_model(
+            self._load_guard,
+            self._get_lock(),
+            lambda: self._resnet is not None,
+            self._load_sync,
+            _LOGGER,
+            label="face-recognition",
+            package="facenet_pytorch",
+            install="facenet-pytorch",
+        )
 
     def _detect_sync(self, frame: bytes, thumbnails: bool) -> list[DetectedFace]:
         import torch  # type: ignore[import-not-found]

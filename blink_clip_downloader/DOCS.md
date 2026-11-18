@@ -1078,6 +1078,18 @@ package fails to install in the Docker image (see the Dockerfile) or isn't prese
 for any other reason, the corresponding option simply reports itself unavailable at
 runtime and analysis proceeds exactly as if it were disabled.
 
+**When a model cannot be loaded.** The first clip that needs a stage's model loads
+it. If that fails — a download the network blocked, a package that is missing, a CPU
+PyTorch cannot run on — the **AI** tab's AI Connection card says which stage could
+not load and why, and that it is skipped until fixed. A failure waiting cannot fix
+(a missing package, an incompatible CPU) says so and is not retried until the add-on
+restarts. Any other failure is retried after one minute, then two, four and so on up
+to once an hour, rather than on every clip as before, and the log carries one warning
+per distinct reason instead of a traceback per attempt. Object detection and face
+recognition report this so far (the Biometrics tab shows the face-recognition case
+too); those waits are judgement calls, not measurements. The `/api/ai/status`
+response lists the stages as `vision_stages`.
+
 **Why this exists:** these stages sit on top of the existing prompt pipeline, not in
 place of it — each one produces a bounded, hedged hint appended to the same prompt
 the "SCENE BASELINE" and "ZONE MOTION" hints already use, so the model still judges

@@ -6,6 +6,8 @@ fake clock rather than sleeping.
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from blink_downloader.vision import runtime
@@ -13,6 +15,7 @@ from blink_downloader.vision.runtime import (
     LoadGuard,
     StageHealth,
     describe_load_failure,
+    record_load_failure,
 )
 
 
@@ -210,3 +213,94 @@ def test_the_json_form_of_a_ready_stage_has_no_wait() -> None:
         "permanent": False,
         "retry_in": None,
     }
+
+
+# --- record_load_failure -----------------------------------------------------
+
+_LOG = logging.getLogger("test_vision_runtime")
+
+
+def _record(guard: LoadGuard, exc: BaseException, **kwargs: object) -> None:
+    options: dict = {"label": "depth-estimation", "package": "transformers"}
+    options |= {"install": "transformers"} | kwargs
+    record_load_failure(guard, _LOG, exc, **options)
+
+
+def test_a_missing_package_is_permanent_and_says_how_to_install_it(
+    guard: LoadGuard, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level("DEBUG", logger=_LOG.name):
+        _record(guard, ImportError("No module named transformers"))
+    health = guard.health()
+    assert health is not None
+    assert health.permanent is True
+    assert health.detail == "the transformers package is not installed"
+    record = caplog.records[0]
+    assert record.levelname == "WARNING"
+    assert "pip install transformers" in record.getMessage()
+    assert not record.exc_info
+
+
+def test_an_incompatible_cpu_is_permanent(
+    guard: LoadGuard, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level("DEBUG", logger=_LOG.name):
+        _record(guard, runtime.CPUIncompatibleError(runtime._CPU_INCOMPATIBLE_MESSAGE))
+    health = guard.health()
+    assert health is not None
+    assert health.permanent is True
+    assert health.detail == "this CPU cannot run PyTorch"
+    assert caplog.records[0].getMessage().startswith("Depth-estimation unavailable:")
+
+
+def test_a_rejected_hugging_face_token_is_permanent_and_an_error(
+    guard: LoadGuard, caplog: pytest.LogCaptureFixture
+) -> None:
+    class _Refused(Exception):
+        status_code = 401
+
+    with caplog.at_level("DEBUG", logger=_LOG.name):
+        _record(guard, _Refused("nope"), huggingface_name="depth-estimation")
+    health = guard.health()
+    assert health is not None
+    assert health.permanent is True
+    assert "token" in health.detail
+    assert caplog.records[0].levelname == "ERROR"
+    assert "depth-estimation model" in caplog.records[0].getMessage()
+
+
+def test_an_auth_looking_failure_is_transient_for_a_stage_that_does_not_use_the_hub(
+    guard: LoadGuard,
+) -> None:
+    class _Refused(Exception):
+        status_code = 401
+
+    _record(guard, _Refused("nope"))
+    health = guard.health()
+    assert health is not None
+    assert health.permanent is False
+
+
+def test_any_other_failure_is_transient_and_keeps_its_traceback_once(
+    guard: LoadGuard, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level("DEBUG", logger=_LOG.name):
+        _record(guard, RuntimeError("corrupt weights"))
+        _record(guard, RuntimeError("corrupt weights"))
+    health = guard.health()
+    assert health is not None
+    assert health.permanent is False
+    assert health.detail == "RuntimeError: corrupt weights"
+    first, second = caplog.records
+    assert first.levelname == "WARNING"
+    assert first.exc_info
+    assert second.levelname == "DEBUG"
+    assert not second.exc_info
+
+
+def test_a_message_containing_percent_signs_is_logged_as_is(
+    guard: LoadGuard, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level("DEBUG", logger=_LOG.name):
+        _record(guard, RuntimeError("disk 100% full %s"))
+    assert "disk 100% full %s" in caplog.records[0].getMessage()

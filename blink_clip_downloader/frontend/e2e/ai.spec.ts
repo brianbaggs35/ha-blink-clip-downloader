@@ -369,6 +369,40 @@ test('the escalation tier shows the unreachable fallback note when offline', asy
   await expect(page.getByText('🔴 unreachable — falling back to tier 1')).toBeVisible()
 })
 
+// The real server only lists a vision stage once something has tried to load
+// its model, and the e2e backend has no ultralytics to fail with, so the
+// failure notice is reached by adding the field to the real status response.
+test('the AI connection card says when a vision model could not be loaded', async ({ page }) => {
+  await page.route('**/api/ai/status', async (route) => {
+    const response = await route.fetch()
+    const status = (await response.json()) as Record<string, unknown>
+    await route.fulfill({
+      response,
+      json: {
+        ...status,
+        vision_stages: [
+          {
+            stage: 'object detection',
+            state: 'failed',
+            detail: 'RuntimeError: download blocked',
+            permanent: false,
+            retry_in: 600,
+          },
+        ],
+      },
+    })
+  })
+
+  await page.goto('/')
+  await page.locator('.app-nav-tab[data-tab="ai"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="ai"]')
+
+  const notice = page.locator('.vision-stage-failed')
+  await expect(notice).toContainText('Object detection could not load')
+  await expect(notice).toContainText('RuntimeError: download blocked')
+  await expect(notice).toContainText('tries again in 10 minutes')
+})
+
 // The unsupported-architecture state and the full idle->installing->failed/
 // installed install flow are already covered by mocked-integrations.spec.ts
 // ("shows the unsupported-architecture state...", "completes a mocked
