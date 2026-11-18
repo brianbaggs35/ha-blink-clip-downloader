@@ -19,6 +19,10 @@
 
 ### Dependency Updates
 
+**Frontend**
+
+- Updated @playwright/test to 1.65.1 (and playwright in the root e2e project)
+
 ### Release Workflow
 
 ## 6.2.0
