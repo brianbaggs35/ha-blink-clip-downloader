@@ -786,6 +786,10 @@ export interface GDriveSettings {
 export interface GDriveStatus {
   configured: boolean
   connected: boolean
+  /** Google stopped accepting the saved sign-in. The account and backup
+   *  folder are kept, the add-on retries quietly, and connecting again
+   *  fixes it for good. */
+  needs_reauthorization: boolean
   account_email: string
   folder_id: string
   folder_name: string

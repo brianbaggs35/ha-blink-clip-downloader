@@ -52,6 +52,7 @@ const settings = ref<GDriveSettings>({ client_id: '', has_client_secret: false, 
 const status = ref<GDriveStatus>({
   configured: false,
   connected: false,
+  needs_reauthorization: false,
   account_email: '',
   folder_id: '',
   folder_name: '',
@@ -362,6 +363,13 @@ onUnmounted(stopConnectPolling)
           <p class="muted-note">Waiting for confirmation…</p>
         </template>
         <template v-else-if="!status.connected">
+          <Message v-if="status.needs_reauthorization" severity="warn" :closable="false">
+            Google stopped accepting this add-on's saved sign-in, so Drive backups have stopped. Clips waiting to upload
+            are kept<template v-if="status.folder_name"
+              >, and your backup folder ({{ status.folder_name }}) is remembered</template
+            >. The add-on keeps retrying the saved sign-in in the background and carries on by itself if Google accepts
+            it again. If it does not, connect again below.
+          </Message>
           <Message v-if="connectState.phase === 'error'" severity="error" :closable="false">
             {{ connectState.message || 'Sign-in failed.' }}
           </Message>
@@ -372,7 +380,7 @@ onUnmounted(stopConnectPolling)
             size="small"
             :disabled="connecting"
             :loading="connecting"
-            label="Connect Google Drive"
+            :label="status.needs_reauthorization ? 'Reconnect Google Drive' : 'Connect Google Drive'"
             @click="connect"
           />
         </template>
