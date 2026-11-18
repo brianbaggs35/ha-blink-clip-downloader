@@ -35,7 +35,7 @@ def _solid_jpeg(
 class E2EFaceEmbedder(FaceEmbedder):
     """Provide stable candidates while retaining the real server enrollment flow."""
 
-    async def ensure_ready(self) -> bool:
+    async def ensure_ready(self, *, retry_now: bool = False) -> bool:
         return True
 
     async def detect(

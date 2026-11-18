@@ -84,6 +84,7 @@ from .pose import PoseEstimator, PostureResult
 from .remote_detection import RemoteObjectDetector
 from .runtime import (
     CPUIncompatibleError,
+    StageHealth,
     configure_cv_concurrency,
     is_face_recognition_available,
     torch_cpu_compatible,
@@ -113,6 +114,7 @@ __all__ = [
     "PoseEstimator",
     "PostureResult",
     "RemoteObjectDetector",
+    "StageHealth",
     "VisionConfig",
     "VisionHints",
     "VisionPipeline",

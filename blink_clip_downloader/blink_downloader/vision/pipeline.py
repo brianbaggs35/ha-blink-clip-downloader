@@ -36,7 +36,7 @@ from ..security import (
 from ..security.geometry import GROUND_DEPTH_WEIGHT, box_foot_point
 from ..security.tracks import _ZONE_BOX_OVERLAP
 from ..security.vehicles import VehicleSignature
-from . import imaging
+from . import imaging, runtime
 from .audio import AudioTagger, AudioTags, build_audio_hint
 from .contact import ContactSegmenter, _build_contact_hint
 from .depth import DepthEstimator, _build_depth_hint
@@ -172,19 +172,19 @@ class VisionConfig:
 #: counted downstream — ``security.evidence.assess_evidence`` scores stage
 #: coverage from the length of that list, so a typo here would silently
 #: change an evidence-quality score rather than fail.
-SOURCE_OBJECT_DETECTION = "object detection"
+SOURCE_OBJECT_DETECTION = runtime.STAGE_OBJECT_DETECTION
 
 
-SOURCE_DEPTH_ESTIMATION = "depth estimation"
+SOURCE_DEPTH_ESTIMATION = runtime.STAGE_DEPTH_ESTIMATION
 
 
-SOURCE_CONTACT_SEGMENTATION = "contact segmentation"
+SOURCE_CONTACT_SEGMENTATION = runtime.STAGE_CONTACT_SEGMENTATION
 
 
-SOURCE_POSE_ESTIMATION = "pose estimation"
+SOURCE_POSE_ESTIMATION = runtime.STAGE_POSE_ESTIMATION
 
 
-SOURCE_FACE_RECOGNITION = "face recognition"
+SOURCE_FACE_RECOGNITION = runtime.STAGE_FACE_RECOGNITION
 
 
 @dataclass
@@ -289,6 +289,16 @@ class VisionPipeline:
         self._pose = PoseEstimator(config.pose_model)
         self._face_embedder = FaceEmbedder()
         self._audio = AudioTagger(config.audio_model, config.hf_token)
+
+    def stage_health(self) -> list[runtime.StageHealth]:
+        """Whether each stage's model loaded and, if not, why.
+
+        A stage that has not been asked to load yet (switched off, or no
+        clip has reached it) is left out: nothing is known about it, which is
+        not the same as being healthy.
+        """
+        reports = (self._face_embedder.health(),)
+        return [report for report in reports if report is not None]
 
     @property
     def tracks_subjects(self) -> bool:

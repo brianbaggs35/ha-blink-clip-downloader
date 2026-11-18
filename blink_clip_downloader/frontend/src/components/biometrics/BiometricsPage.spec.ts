@@ -7,7 +7,7 @@ import PersonCard from './PersonCard.vue'
 import { useConfirmStore } from '../../stores/confirm'
 import { useRefreshStore } from '../../stores/refresh'
 import { useToastStore } from '../../stores/toast'
-import type { FaceEnrollment, FacesResponse } from '../../api/types'
+import type { FaceEnrollment, FacesResponse, StageHealthReport } from '../../api/types'
 import { deferred, enrollment, errorResponse, jsonResponse } from './testing'
 
 const addPhotosFor = vi.fn()
@@ -154,6 +154,69 @@ describe('BiometricsPage', () => {
     stubFetch(() => facesResponse([], extra))
     const wrapper = await mountPage()
     expect(wrapper.find('.privacy-banner').text()).not.toContain('Hugging Face')
+  })
+
+  describe('when the recognition models could not be loaded', () => {
+    const failed = (extra: Partial<StageHealthReport>) => ({
+      models: {
+        stage: 'face recognition',
+        state: 'failed' as const,
+        detail: 'No module named facenet_pytorch',
+        permanent: false,
+        retry_in: 45,
+        ...extra,
+      },
+    })
+
+    it('says why, that nothing is recognized meanwhile, and when it will try again', async () => {
+      stubFetch(() => facesResponse([], failed({})))
+      const text = (await mountPage()).text()
+      expect(text).toContain('face-recognition models could not be loaded')
+      expect(text).toContain('No module named facenet_pytorch')
+      expect(text).toContain('no clip is recognized as a household member')
+      expect(text).toContain('tries again in 45 seconds')
+    })
+
+    it.each([
+      [0, 'on the next clip'],
+      [1, 'in 1 second'],
+      [180, 'in 3 minutes'],
+      [60, 'in 60 seconds'],
+      [3600, 'in 60 minutes'],
+      [89, 'in 89 seconds'],
+      [90, 'in 2 minutes'],
+    ])('words a %i second wait as "%s"', async (seconds, words) => {
+      stubFetch(() => facesResponse([], failed({ retry_in: seconds })))
+      expect((await mountPage()).text()).toContain(`tries again ${words}`)
+    })
+
+    it('says waiting will not help when the failure is permanent, and promises no retry', async () => {
+      stubFetch(() => facesResponse([], failed({ permanent: true, retry_in: null })))
+      const text = (await mountPage()).text()
+      expect(text).toContain('Waiting will not fix this')
+      expect(text).not.toContain('tries again')
+    })
+
+    it('leaves out the colon and detail when the server gave none', async () => {
+      stubFetch(() => facesResponse([], failed({ detail: '', retry_in: null })))
+      const text = (await mountPage()).text()
+      expect(text).toContain('could not be loaded.')
+      expect(text).not.toContain('tries again')
+    })
+
+    it.each<[Partial<FacesResponse>]>([
+      [{ models: { stage: 'face recognition', state: 'ready', detail: '', permanent: false, retry_in: null } }],
+      [{ models: null }],
+      [{}],
+    ])('shows nothing when they loaded or nothing has asked yet (%j)', async (extra) => {
+      stubFetch(() => facesResponse([], extra))
+      expect((await mountPage()).text()).not.toContain('could not be loaded')
+    })
+
+    it('is not shown on top of "recognition is unavailable", which already explains it', async () => {
+      stubFetch(() => facesResponse([], { available: false, ...failed({}) }))
+      expect((await mountPage()).text()).not.toContain('could not be loaded')
+    })
   })
 
   it('cannot start finding faces where recognition cannot run', async () => {

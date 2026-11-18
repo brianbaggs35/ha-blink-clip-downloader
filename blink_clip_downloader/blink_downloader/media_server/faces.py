@@ -40,6 +40,7 @@ from ..face_outcomes import summarize_face_outcomes
 from ..ffmpeg_output import extract_jpeg_frames
 from ..vision import is_face_recognition_available
 from ..vision.faces import DetectedFace, match_enrollment
+from ..vision.runtime import STAGE_FACE_RECOGNITION
 from .core import _MediaServerBase
 from .support import _CLIP_NOT_FOUND, _json_object
 
@@ -180,6 +181,8 @@ class FaceRoutesMixin(_MediaServerBase):
         flags a photo that resembles none of the person's other photos, or
         that would be recognized as someone else — see
         :func:`~blink_downloader.face_enrollment.review_enrollments`.
+        ``models`` says whether the recognition models loaded and, when they
+        did not, why (``null`` until something has asked for them).
         """
         enrollments = await self._db.list_face_enrollments()
         warnings = review_enrollments(enrollments)
@@ -190,6 +193,7 @@ class FaceRoutesMixin(_MediaServerBase):
                 "analysis_enabled": self._analyzer is not None,
                 "frame_width": self._face_frame_width,
                 "remote_vision": self._remote_vision,
+                "models": self._face_models_health(),
                 "faces": [
                     {
                         "id": e["id"],
@@ -224,9 +228,30 @@ class FaceRoutesMixin(_MediaServerBase):
         """Why faces cannot be detected right now, or ``None`` if they can."""
         if not is_face_recognition_available():
             return _UNAVAILABLE
-        if not await self._face_embedder.ensure_ready():
-            return _MODELS_FAILED
+        if not await self._face_embedder.ensure_ready(retry_now=True):
+            health = self._face_embedder.health()
+            return f"{_MODELS_FAILED} ({health.detail})" if health else _MODELS_FAILED
         return None
+
+    def _face_models_health(self) -> dict[str, object] | None:
+        """How the face-recognition models are doing, or ``None`` if untried.
+
+        Looks at both places they load: the analysis pipeline's (what clips
+        are recognized with) and this tab's own for scans. A failure in
+        either is the one worth showing, since recognition needs the models
+        wherever it runs.
+        """
+        reports = [self._face_embedder.health()]
+        if self._analyzer is not None:
+            reports += [
+                health
+                for health in self._analyzer.vision_stage_health()
+                if health.stage == STAGE_FACE_RECOGNITION
+            ]
+        known = [report for report in reports if report is not None]
+        failed = [report for report in known if report.state == "failed"]
+        chosen = (failed or known or [None])[0]
+        return chosen.to_dict() if chosen is not None else None
 
     def _offer(
         self,
