@@ -2187,6 +2187,18 @@ async def test_run_starts_live_view_sweep_task_when_media_server_enabled(app):
     assert any(t.get_name() == "live_view_sweep" for t in app._bg_tasks)
 
 
+async def test_startup_runs_the_arming_scheduler_in_the_background(base_config) -> None:
+    app = _app_with(base_config)
+    app._notifier.update_sensor = AsyncMock(return_value=True)
+    app._arming_scheduler.run = AsyncMock()
+
+    await app._finish_startup()
+    await asyncio.gather(*app._bg_tasks)
+
+    app._arming_scheduler.run.assert_awaited_once()
+    assert any(t.get_name() == "arming_schedule" for t in app._bg_tasks)
+
+
 def test_live_view_wired_to_downloader_camera_accessors(app):
     from requests.structures import CaseInsensitiveDict
 
@@ -3280,9 +3292,14 @@ async def test_the_watcher_starts_for_the_button_alone(base_config) -> None:
     assert app._event_watcher._event_types() == ["mobile_app_notification_action"]
 
     await app._finish_startup()
-    await asyncio.gather(*app._bg_tasks)
+    # The arming scheduler's loop never returns, so it is not waited for.
+    await asyncio.gather(
+        *(t for t in app._bg_tasks if t.get_name() != "arming_schedule")
+    )
 
     app._event_watcher.start.assert_awaited_once()
+    for task in app._bg_tasks:
+        task.cancel()
 
 
 async def test_the_watcher_stays_off_with_nothing_to_hear(base_config) -> None:

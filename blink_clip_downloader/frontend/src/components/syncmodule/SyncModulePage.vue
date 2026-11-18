@@ -10,6 +10,7 @@ import { useClipViewerStore } from '../../stores/clipViewer'
 import { useRefreshStore } from '../../stores/refresh'
 import { useToastStore } from '../../stores/toast'
 import LoadingIndicator from '../layout/LoadingIndicator.vue'
+import ArmingScheduleCard from './ArmingScheduleCard.vue'
 import { cameraKey } from './cameraKey'
 import SyncModuleCard from './SyncModuleCard.vue'
 
@@ -369,6 +370,8 @@ watch(
           @clip-click="onClipClick"
         />
       </div>
+
+      <ArmingScheduleCard :modules="syncModules" />
     </template>
   </div>
 </template>

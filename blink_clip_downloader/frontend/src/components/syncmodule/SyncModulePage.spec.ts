@@ -2,12 +2,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import SyncModulePage from './SyncModulePage.vue'
+import ArmingScheduleCard from './ArmingScheduleCard.vue'
 import SyncModuleCard from './SyncModuleCard.vue'
 import SyncModuleCameraCard from './SyncModuleCameraCard.vue'
 import { useConfirmStore } from '../../stores/confirm'
 import { useRefreshStore } from '../../stores/refresh'
 import { useToastStore } from '../../stores/toast'
 import type { SyncModuleInfo } from '../../api/types'
+
+// The schedules card has its own spec and its own endpoint; here its fetch
+// would be answered with whatever this page's catch-all route returns.
+vi.mock('./ArmingScheduleCard.vue', () => ({
+  default: { name: 'ArmingScheduleCard', props: ['modules'], template: '<div class="schedules-stub" />' },
+}))
 
 function jsonResponse(body: unknown, ok = true) {
   return {
@@ -86,6 +93,18 @@ describe('SyncModulePage', () => {
     await flushPromises()
     expect(wrapper.findComponent({ name: 'LoadingIndicator' }).exists()).toBe(false)
     expect(wrapper.text()).toContain('Home')
+  })
+
+  it('shows the schedules under the sync modules, given the modules to choose from', async () => {
+    vi.stubGlobal(
+      'fetch',
+      routedFetch(() => Promise.resolve(jsonResponse([makeModule()]))),
+    )
+    const wrapper = mountPage()
+    await flushPromises()
+    const card = wrapper.findComponent(ArmingScheduleCard)
+    expect(card.exists()).toBe(true)
+    expect((card.props('modules') as SyncModuleInfo[]).map((m) => m.name)).toEqual(['Home'])
   })
 
   it('shows a load error message when the request fails', async () => {

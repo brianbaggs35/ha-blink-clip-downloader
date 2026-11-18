@@ -1,5 +1,5 @@
-import { apiGet, apiPost } from './client'
-import type { SyncModuleInfo } from './types'
+import { apiGet, apiPost, apiPut } from './client'
+import type { ArmingSchedule, ArmingSchedulesResponse, SyncModuleInfo } from './types'
 
 type NetworkId = number | string | null
 
@@ -34,4 +34,13 @@ export function armCamera(
     ...(ids.cameraId != null && { camera_id: ids.cameraId }),
     ...(ids.networkId != null && { network_id: ids.networkId }),
   })
+}
+
+export function getArmingSchedules(): Promise<ArmingSchedulesResponse> {
+  return apiGet('/api/sync-modules/schedules')
+}
+
+/** Replaces the whole list, like the camera configurations. */
+export function saveArmingSchedules(schedules: ArmingSchedule[]): Promise<ArmingSchedulesResponse> {
+  return apiPut('/api/sync-modules/schedules', { schedules })
 }

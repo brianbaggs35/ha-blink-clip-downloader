@@ -17,6 +17,10 @@
 - The assistant can now find a specific clip. Before each question is sent, the add-on reads it on this machine (no model, no cost) for a camera name, a time (*today*, *yesterday*, *last night*, *this morning*, a number of days), *flagged* or *starred*, and the words that describe what happened, and searches the stored AI descriptions and the objects the detector saw for them. The best matches are added to the report as **Clips matching your question**, and the section says what was searched, so an empty result is not mistaken for "nothing happened". A question with none of those is answered from the report exactly as before.
 - Each clip in the report now also lists the objects the detector saw and the sounds it heard. Nothing new leaves the device beyond that text: no picture, face data or enrolled name, and the question's words reach the database only as values. No new settings, so nothing to add to the translations.
 
+### Sync Module
+
+- The Sync Module tab can now arm or disarm the whole system, or one sync module, on a schedule: pick Arm or Disarm, a time and the days of the week, with presets for every day, weekdays and weekends. Times follow the add-on's own clock, which the card shows. A schedule runs at most once a day and only within five minutes of its time; if Blink refuses, it is retried and then reported with a Home Assistant notification, and if the add-on was not running it is marked missed rather than run late. A new or changed schedule starts from now. Each row shows what it last did. The list is saved in `/data/arming_schedules.json` and is part of a Backup & Restore. No new add-on option, so nothing to add to the translations. New routes: `GET`/`PUT /api/sync-modules/schedules`.
+
 ### Dependency Updates
 
 **Frontend**

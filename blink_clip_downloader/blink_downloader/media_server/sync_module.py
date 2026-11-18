@@ -1,7 +1,10 @@
-"""The Sync Module tab's API: arming and disarming.
+"""The Sync Module tab's API: arming and disarming, and its schedules.
 
 Both the whole system and one camera at a time, through narrow callables
 the downloader supplies, so this module never touches blinkpy directly.
+The schedule list (``/api/sync-modules/schedules``) is read and replaced
+whole, like the camera configs; ``arming_schedule.py`` validates, stores and
+runs it.
 
 The route says *which* by name, since that is what Home Assistant's
 generated YAML has. The tab also sends the ids it was shown
@@ -14,10 +17,12 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
+from datetime import datetime
 from typing import Any
 
 from aiohttp import web
 
+from ..arming_schedule import ScheduleError
 from .core import _MediaServerBase
 from .support import (
     _SYNC_MODULES_NOT_AVAILABLE,
@@ -39,6 +44,12 @@ class SyncModuleRoutesMixin(_MediaServerBase):
         app.router.add_post(
             "/api/sync-modules/cameras/{camera}/arm",
             self._handle_sync_module_camera_arm,
+        )
+        app.router.add_get(
+            "/api/sync-modules/schedules", self._handle_arming_schedules_get
+        )
+        app.router.add_put(
+            "/api/sync-modules/schedules", self._handle_arming_schedules_put
         )
 
     async def _handle_sync_modules_get(  # NOSONAR
@@ -109,6 +120,43 @@ class SyncModuleRoutesMixin(_MediaServerBase):
             self._arm_camera,
             ("camera_id", "network_id"),
         )
+
+    def _schedules_payload(self) -> dict[str, Any]:
+        """The list, what each last did, and the clock the times are read on."""
+        scheduler = self._arming_scheduler
+        now = datetime.now().astimezone()
+        return {
+            "schedules": scheduler.schedules if scheduler else [],
+            "outcomes": scheduler.outcomes() if scheduler else {},
+            "clock": {
+                "now": now.strftime("%H:%M"),
+                "timezone": now.tzname() or "",
+            },
+        }
+
+    async def _handle_arming_schedules_get(  # NOSONAR
+        self, _request: web.Request
+    ) -> web.Response:
+        """Every schedule, with what each last did (``async`` is for aiohttp)."""
+        return web.json_response(self._schedules_payload())
+
+    async def _handle_arming_schedules_put(self, request: web.Request) -> web.Response:
+        """Replace the whole list; a wrong field is a 400 saying which, and a
+        failed write is a 500 rather than a saved-looking response."""
+        scheduler = self._arming_scheduler
+        if scheduler is None:
+            raise web.HTTPServiceUnavailable(text=_SYNC_MODULES_NOT_AVAILABLE)
+        body = await _json_object(request)
+        try:
+            scheduler.replace(body.get("schedules"))
+        except ScheduleError as exc:
+            raise web.HTTPBadRequest(text=str(exc)) from exc
+        except OSError as exc:
+            _LOGGER.error("Could not save the arming schedules: %s", exc)
+            raise web.HTTPInternalServerError(
+                text="Could not save the schedules"
+            ) from exc
+        return web.json_response(self._schedules_payload())
 
 
 def _identifier(body: dict[str, Any], key: str) -> str | None:
