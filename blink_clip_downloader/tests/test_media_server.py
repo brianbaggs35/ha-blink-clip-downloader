@@ -5035,6 +5035,124 @@ async def test_faces_list_reports_whether_recognition_actually_runs(
     assert data["analysis_enabled"] is True
 
 
+def _failed_health(**changes: Any) -> Any:
+    from blink_downloader.vision.runtime import StageHealth
+
+    fields: dict[str, Any] = {
+        "stage": "face recognition",
+        "state": "failed",
+        "detail": "OSError: offline",
+        "permanent": False,
+        "retry_in": 42.0,
+    }
+    return StageHealth(**{**fields, **changes})
+
+
+async def test_faces_list_has_no_model_report_until_something_asked(
+    client: TestClient,
+) -> None:
+    assert (await (await client.get("/api/ai/faces")).json())["models"] is None
+
+
+async def test_faces_list_reports_why_the_tabs_own_models_did_not_load(
+    client: TestClient,
+) -> None:
+    with patch.object(
+        FaceEmbedder, "health", return_value=_failed_health(permanent=True)
+    ):
+        models = (await (await client.get("/api/ai/faces")).json())["models"]
+    assert models["state"] == "failed"
+    assert models["detail"] == "OSError: offline"
+    assert models["permanent"] is True
+
+
+async def test_faces_list_reports_a_failure_in_the_analysis_pipeline_too(
+    db: ClipDatabase,
+) -> None:
+    """Clips are recognized by the pipeline's own copy of the models, so its
+    failure is the one that matters even when the tab's copy never loaded."""
+    analyzer = _make_analyzer()
+    server = MediaServer(db=db, port=0, analyzer=analyzer)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        with patch.object(
+            analyzer, "vision_stage_health", return_value=[_failed_health()]
+        ):
+            data = await (await tc.get("/api/ai/faces")).json()
+    finally:
+        await tc.close()
+    assert data["models"] == {
+        "stage": "face recognition",
+        "state": "failed",
+        "detail": "OSError: offline",
+        "permanent": False,
+        "retry_in": 42,
+    }
+
+
+async def test_faces_list_shows_a_failure_ahead_of_a_success(
+    db: ClipDatabase,
+) -> None:
+    from blink_downloader.vision.runtime import StageHealth
+
+    analyzer = _make_analyzer()
+    server = MediaServer(db=db, port=0, analyzer=analyzer)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        with (
+            patch.object(
+                FaceEmbedder,
+                "health",
+                return_value=StageHealth("face recognition", "ready"),
+            ),
+            patch.object(
+                analyzer, "vision_stage_health", return_value=[_failed_health()]
+            ),
+        ):
+            data = await (await tc.get("/api/ai/faces")).json()
+    finally:
+        await tc.close()
+    assert data["models"]["state"] == "failed"
+
+
+async def test_faces_list_ignores_other_stages_health(db: ClipDatabase) -> None:
+    analyzer = _make_analyzer()
+    server = MediaServer(db=db, port=0, analyzer=analyzer)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        with patch.object(
+            analyzer,
+            "vision_stage_health",
+            return_value=[_failed_health(stage="depth estimation")],
+        ):
+            data = await (await tc.get("/api/ai/faces")).json()
+    finally:
+        await tc.close()
+    assert data["models"] is None
+
+
+async def test_a_scan_that_cannot_load_the_models_says_why(client: TestClient) -> None:
+    with (
+        _detection(ready=False),
+        patch.object(FaceEmbedder, "health", return_value=_failed_health()),
+    ):
+        resp = await client.post("/api/ai/faces/detect", json=_photo_body())
+    body = await resp.json()
+    assert "could not be loaded" in body["error"]
+    assert "OSError: offline" in body["error"]
+
+
+async def test_a_scan_asks_for_a_retry_rather_than_waiting_out_the_backoff(
+    client: TestClient,
+) -> None:
+    with _detection([]):
+        await client.post("/api/ai/faces/detect", json=_photo_body())
+        FaceEmbedder.ensure_ready.assert_awaited_with(retry_now=True)  # type: ignore[attr-defined]
+
+
 async def test_faces_list_flags_a_photo_unlike_the_persons_others(
     client: TestClient, db: ClipDatabase
 ) -> None:

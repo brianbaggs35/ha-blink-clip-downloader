@@ -14,6 +14,11 @@ per-stage, and having two of any of them would be a bug:
   availability checks every stage consults before attempting an import
   that would otherwise crash the process on an older ARM board.
 
+And one thing every stage shares without sharing any state: :class:`LoadGuard`,
+which remembers how a model's load went so that a failure is neither retried
+(and logged with a traceback) on every single frame or clip, nor invisible to
+the person who has to fix it.
+
 Stage modules reach these through the module (``runtime.torch_cpu_``
 ``compatible()``) rather than importing the names, so there is exactly one
 of each rather than a copied reference per stage — and exactly one place
@@ -25,9 +30,24 @@ from __future__ import annotations
 import asyncio
 import logging
 import platform
+import re
 import threading
+import time
+from collections.abc import Callable
+from dataclasses import dataclass
 
 _LOGGER = logging.getLogger(__name__)
+
+#: The optional stages' names, as they appear in :class:`StageHealth` and on
+#: the tabs. ``pipeline.SOURCE_*`` are the same strings, because the evidence
+#: line a clip's analysis ends up with and the stage list a person reads
+#: should agree.
+STAGE_OBJECT_DETECTION = "object detection"
+STAGE_DEPTH_ESTIMATION = "depth estimation"
+STAGE_CONTACT_SEGMENTATION = "contact segmentation"
+STAGE_POSE_ESTIMATION = "pose estimation"
+STAGE_FACE_RECOGNITION = "face recognition"
+STAGE_AUDIO_ANALYSIS = "audio analysis"
 
 
 # Each stage below guards its own *first load* with an asyncio.Lock (see each
@@ -197,3 +217,147 @@ def is_face_recognition_available() -> bool:
         return True
     except ImportError:
         return False
+
+
+#: How long a stage waits before trying to load a model that failed to load,
+#: doubling with each further failure up to :data:`_RETRY_MAX_SECONDS`. A
+#: judgement, not a measurement: long enough that a wrong model name or a
+#: blocked download is not retried per clip (each attempt holds a heavy-stage
+#: slot while it fails), short enough that a download interrupted by a network
+#: blip is retried within a few clips.
+_RETRY_FIRST_SECONDS = 60.0
+
+_RETRY_MAX_SECONDS = 3600.0
+
+# What a failure's reason may say. Exception text from a model download can
+# be long and can name a path; the reason is shown on a settings tab, so it is
+# cut to one bounded line and anything shaped like a Hugging Face token is
+# removed (the library redacts them itself, but this is not the place to find
+# out that a version stopped).
+_MAX_REASON_LENGTH = 200
+
+_HF_TOKEN_PATTERN = re.compile(r"hf_[A-Za-z0-9]{8,}")
+
+
+def describe_load_failure(exc: BaseException) -> str:
+    """One bounded line saying why a model failed to load, for the tabs.
+
+    The exception's class and the first line of its message: enough to tell a
+    blocked download from corrupt weights, without a traceback and without a
+    token that an upstream message happened to echo.
+    """
+    first_line = (str(exc).strip().splitlines() or [""])[0]
+    reason = f"{type(exc).__name__}: {first_line}" if first_line else type(exc).__name__
+    reason = _HF_TOKEN_PATTERN.sub("hf_***", reason)
+    if len(reason) > _MAX_REASON_LENGTH:
+        reason = reason[: _MAX_REASON_LENGTH - 1] + "…"
+    return reason
+
+
+@dataclass(frozen=True)
+class StageHealth:
+    """Whether one optional stage's model is usable, and if not, why.
+
+    ``state`` is ``"ready"`` once the model has loaded, ``"failed"`` after a
+    load that did not. A stage that has not been asked to load yet has no
+    health at all (:meth:`LoadGuard.health` returns ``None``), which is
+    different from either: nothing has been tried.
+    """
+
+    stage: str
+    state: str
+    #: Why it failed, as :func:`describe_load_failure` words it; empty when ready.
+    detail: str = ""
+    #: ``True`` for a failure that waiting cannot fix (a package that is not
+    #: installed, a CPU PyTorch cannot run on) — it is not retried until restart.
+    permanent: bool = False
+    #: Seconds until the next load attempt, for a failure that will be retried.
+    retry_in: float | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        """The JSON the tabs read: whole seconds, and no more than is shown."""
+        return {
+            "stage": self.stage,
+            "state": self.state,
+            "detail": self.detail,
+            "permanent": self.permanent,
+            "retry_in": None if self.retry_in is None else round(self.retry_in),
+        }
+
+
+class LoadGuard:
+    """Remembers how a stage's model load went.
+
+    Each stage's ``ensure_ready`` used to try the load again on every call
+    after a failure, and log a traceback each time: a model name that does not
+    exist, or a download the network blocks, then cost one failed attempt and
+    one traceback per frame, with the heavy-stage slot held throughout. This
+    keeps the verdict between attempts. It holds no model and does no loading;
+    the stage still owns both.
+    """
+
+    def __init__(self, stage: str, clock: Callable[[], float] = time.monotonic) -> None:
+        self._stage = stage
+        self._clock = clock
+        self._ready = False
+        self._failures = 0
+        self._detail = ""
+        self._permanent = False
+        self._retry_at = 0.0
+
+    def backing_off(self) -> bool:
+        """Whether a load should not be attempted now because one just failed."""
+        if self._failures == 0 or self._ready:
+            return False
+        return self._permanent or self._clock() < self._retry_at
+
+    def retry_now(self) -> None:
+        """Make a failed load due immediately — for a person who asked.
+
+        Backing off exists so that clips do not each pay for a failing load;
+        someone pressing a button after fixing the cause has asked for it
+        outright. A permanent failure stays permanent: nothing they can do
+        from a browser installs a package.
+        """
+        if not self._permanent:
+            self._retry_at = self._clock()
+
+    def ready(self) -> None:
+        """Record that the model loaded."""
+        self._ready = True
+        self._failures = 0
+        self._detail = ""
+        self._permanent = False
+
+    def failed(self, reason: str, *, permanent: bool = False) -> bool:
+        """Record a failed load; return whether *reason* is news.
+
+        ``True`` when this failure differs from the previous one (or is the
+        first), which is when the caller should log it in full; a repeat of
+        the same reason deserves a debug line, not another warning.
+        """
+        is_new = self._failures == 0 or reason != self._detail
+        self._ready = False
+        self._failures += 1
+        self._detail = reason
+        self._permanent = permanent
+        delay = min(
+            _RETRY_FIRST_SECONDS * 2 ** (self._failures - 1), _RETRY_MAX_SECONDS
+        )
+        self._retry_at = self._clock() + delay
+        return is_new
+
+    def health(self) -> StageHealth | None:
+        """What is known about the model, or ``None`` if it was never asked for."""
+        if self._ready:
+            return StageHealth(self._stage, "ready")
+        if self._failures == 0:
+            return None
+        retry_in = None if self._permanent else max(0.0, self._retry_at - self._clock())
+        return StageHealth(
+            self._stage,
+            "failed",
+            detail=self._detail,
+            permanent=self._permanent,
+            retry_in=retry_in,
+        )

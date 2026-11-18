@@ -595,6 +595,20 @@ export interface FaceEnrollment {
   warning: FacePhotoWarning | null
 }
 
+/** Whether one optional vision stage's model loaded (`StageHealth` on the
+ *  server). A stage nothing has asked to load yet has no report at all. */
+export interface StageHealthReport {
+  /** The stage's name, e.g. "face recognition". */
+  stage: string
+  state: 'ready' | 'failed'
+  /** Why it failed, one line; empty when ready. */
+  detail: string
+  /** True when waiting cannot fix it (a missing package, an unsupported CPU). */
+  permanent: boolean
+  /** Whole seconds until the next load attempt; null when ready or permanent. */
+  retry_in: number | null
+}
+
 export interface FacesResponse {
   available: boolean
   /** ai_face_recognition_enabled. */
@@ -606,6 +620,8 @@ export interface FacesResponse {
   /** True when object detection runs on Hugging Face, so the clip frames
    *  (which can contain faces) are uploaded — enrollment data never is. */
   remote_vision?: boolean
+  /** Whether the recognition models loaded; null until something asked for them. */
+  models?: StageHealthReport | null
   faces: FaceEnrollment[]
 }
 

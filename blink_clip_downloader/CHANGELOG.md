@@ -4,6 +4,8 @@
 
 ### Bug fixes
 
+- Face recognition no longer retries a failed model load on every frame, and the Biometrics tab now says when it has failed. A model that could not be loaded (a download blocked by the network, a package missing, a CPU PyTorch cannot run on) used to be attempted again for each frame of each clip, holding up analysis and logging a full traceback every time, while the tab gave no sign that nothing was being recognized. The load is now retried after a minute, then at doubling gaps up to an hour (a scan on the Biometrics tab retries at once), the log carries one warning per distinct reason, and the tab shows the reason and what it means for clips. The `/api/ai/faces` response gains a `models` field for it. Recognition itself, its thresholds and the suspicious-flag bypass are unchanged. The retry timings are judgement calls, not measurements.
+
 ### Dependency Updates
 
 ### Release Workflow

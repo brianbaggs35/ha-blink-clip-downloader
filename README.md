@@ -283,7 +283,9 @@ it, so that call is left to the AI model. Face recognition on the
 **Biometrics** tab can clear the routine clips of household members you
 enroll, such as getting in or out of their own car. It never clears a
 possible impact, a clip with someone it doesn't recognize, or evidence
-strong enough to raise an alert on its own.
+strong enough to raise an alert on its own. If the recognition models can't
+be loaded, the Biometrics tab says why and that nothing is being recognized
+until it's fixed.
 
 Details are in the docs:
 [Vehicles tab](blink_clip_downloader/DOCS.md#vehicles-tab--protected-vehicle-monitoring),

@@ -6017,6 +6017,27 @@ def test_attach_vision_pipeline_sets_field() -> None:
     assert a._vision_pipeline is pipeline
 
 
+def test_vision_stage_health_is_empty_without_a_pipeline_and_follows_one() -> None:
+    from blink_downloader.vision import VisionConfig, VisionPipeline
+    from blink_downloader.vision.runtime import StageHealth
+
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    assert a.vision_stage_health() == []
+    pipeline = VisionPipeline(VisionConfig())
+    a.attach_vision_pipeline(pipeline)
+    assert a.vision_stage_health() == []
+    pipeline._face_embedder._load_guard.failed("OSError: offline")
+    report = a.vision_stage_health()
+    assert report == [
+        StageHealth(
+            "face recognition",
+            "failed",
+            detail="OSError: offline",
+            retry_in=report[0].retry_in,
+        )
+    ]
+
+
 async def test_analyze_clip_prompt_identical_with_fully_disabled_vision_pipeline() -> (
     None
 ):

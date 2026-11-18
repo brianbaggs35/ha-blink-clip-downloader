@@ -1685,7 +1685,20 @@ saying nothing happened.
 Once `ai_face_recognition_enabled` is on, enroll household members from the
 **Biometrics** nav tab (moved out of the AI tab in 5.0.0). Face recognition
 runs as part of AI clip analysis, so an AI provider has to be configured too;
-the tab says so if either is missing. Enrolling is pick-from-what-was-found:
+the tab says so if either is missing.
+
+**When the recognition models cannot load.** The first time a clip (or a scan
+on this tab) needs face recognition, the add-on loads its two models. If that
+fails — the package is not installed, the CPU cannot run PyTorch, or the
+download was blocked — the tab shows a red notice with the reason in one line,
+and says that until it is fixed no face is examined, so no clip is recognized
+as a household member and none has its suspicious flag cleared (clips are still
+analyzed as usual). A failure that waiting cannot fix says so. One that might
+be a network blip is retried by the add-on after one minute, then two, four and
+so on up to once an hour, instead of on every clip as before, and the log now
+carries one warning per distinct reason rather than a traceback per frame. A
+scan on this tab always tries again at once. The waits are judgement calls, not
+measurements. Enrolling is pick-from-what-was-found:
 
 - **From clips (recommended)** — choose a camera (or all of them) and a time
   range, then click a clip, or **Find faces in N clips** to scan every clip

@@ -29,6 +29,7 @@ const finder = ref<InstanceType<typeof FaceFinder> | null>(null)
 
 const available = computed(() => data.value?.available ?? true)
 const remoteVision = computed(() => data.value?.remote_vision === true)
+const modelsFailed = computed(() => (data.value?.models?.state === 'failed' ? data.value.models : null))
 const frameWidth = computed(() => data.value?.frame_width ?? 640)
 const people = computed<Person[]>(() => groupPeople(data.value?.faces ?? [], frameWidth.value))
 const approvedCount = computed(() => people.value.filter((p) => p.approved).length)
@@ -41,6 +42,14 @@ const legacyCount = computed(() => people.value.filter((p) => p.onlyLegacy).leng
 const managingName = ref<string | null>(null)
 const managing = computed(() => people.value.find((p) => p.name === managingName.value) ?? null)
 const busy = ref(false)
+
+/** "in 45 seconds", "in 3 minutes", "now" — the retry wait in words. */
+function retryText(seconds: number): string {
+  if (seconds <= 0) return 'on the next clip'
+  if (seconds < 90) return `in ${seconds} second${seconds === 1 ? '' : 's'}`
+  const minutes = Math.round(seconds / 60)
+  return `in ${minutes} minutes`
+}
 
 let loadSeq = 0
 async function load() {
@@ -173,6 +182,16 @@ function scanReportedClip(clipId: string) {
     >
       Face recognition runs as part of AI clip analysis, which isn't configured — enrolled people won't be recognized
       until an AI provider is set up in the add-on's Configuration tab.
+    </Message>
+    <Message v-if="available && modelsFailed" severity="error" size="small" :closable="false" class="status-banner">
+      The face-recognition models could not be loaded<template v-if="modelsFailed.detail"
+        >: <code>{{ modelsFailed.detail }}</code></template
+      >. Until they load, no face is examined, so no clip is recognized as a household member and none has its
+      suspicious flag cleared. Clips are still analyzed as usual.
+      <template v-if="modelsFailed.permanent"> Waiting will not fix this.</template>
+      <template v-else-if="modelsFailed.retry_in !== null">
+        The add-on tries again {{ retryText(modelsFailed.retry_in) }}, or when you scan a clip or photo here.
+      </template>
     </Message>
     <Message v-if="mismatchedCount" severity="info" size="small" :closable="false" class="status-banner">
       {{ mismatchedCount }} photo{{ mismatchedCount === 1 ? ' was' : 's were' }} captured at a different Face

@@ -206,6 +206,11 @@ class FaceEmbedder:
         self._mtcnn: Any = None
         self._resnet: Any = None
         self._lock: asyncio.Lock | None = None
+        self._load_guard = runtime.LoadGuard(runtime.STAGE_FACE_RECOGNITION)
+
+    def health(self) -> runtime.StageHealth | None:
+        """Whether the models loaded and, if not, why (``None``: not tried yet)."""
+        return self._load_guard.health()
 
     def _get_lock(self) -> asyncio.Lock:
         if self._lock is None:
@@ -229,30 +234,73 @@ class FaceEmbedder:
             self._resnet = InceptionResnetV1(pretrained="vggface2").eval()
             _LOGGER.info("Face-recognition models ready")
 
-    async def ensure_ready(self) -> bool:
+    async def ensure_ready(self, *, retry_now: bool = False) -> bool:
+        """Load the models if they are not loaded; ``True`` when they are.
+
+        *retry_now* is for a person who asked (the Biometrics tab's scan): it
+        skips the wait after a failed load, which exists for clips, not for
+        somebody who has just fixed the cause.
+        """
         if self._resnet is not None:
             return True
+        if retry_now:
+            self._load_guard.retry_now()
+        # A load that just failed is not retried for every frame: see
+        # runtime.LoadGuard. The stage is simply unavailable until it is due.
+        if self._load_guard.backing_off():
+            return False
         async with self._get_lock():
             if self._resnet is not None:
                 return True
+            if self._load_guard.backing_off():
+                return False
             try:
                 loop = asyncio.get_running_loop()
                 await loop.run_in_executor(None, self._load_sync)
+                self._load_guard.ready()
                 return True
             except ImportError as exc:
-                _LOGGER.warning(
-                    "facenet_pytorch package is not installed, face "
-                    "recognition unavailable: %s. Install it with: "
-                    "pip install facenet-pytorch",
+                self._note_load_failure(
+                    "facenet_pytorch package is not installed",
                     exc,
+                    permanent=True,
+                    message=(
+                        "facenet_pytorch package is not installed, face "
+                        "recognition unavailable: %s. Install it with: "
+                        "pip install facenet-pytorch"
+                    ),
                 )
                 return False
             except runtime.CPUIncompatibleError as exc:
-                _LOGGER.warning("Face recognition unavailable: %s", exc)
+                self._note_load_failure(
+                    "this CPU cannot run PyTorch",
+                    exc,
+                    permanent=True,
+                    message="Face recognition unavailable: %s",
+                )
                 return False
-            except Exception:
-                _LOGGER.exception("Failed to load face-recognition models")
+            except Exception as exc:  # noqa: BLE001 - recorded and logged below
+                self._note_load_failure(
+                    runtime.describe_load_failure(exc),
+                    exc,
+                    message="Failed to load face-recognition models: %s",
+                )
                 return False
+
+    def _note_load_failure(
+        self,
+        reason: str,
+        exc: BaseException,
+        *,
+        message: str,
+        permanent: bool = False,
+    ) -> None:
+        """Record a failed load, and log it once rather than once per frame."""
+        if not self._load_guard.failed(reason, permanent=permanent):
+            _LOGGER.debug(message, exc)
+            return
+        # A traceback only for the failure nobody anticipated.
+        _LOGGER.warning(message, exc, exc_info=not permanent)
 
     def _detect_sync(self, frame: bytes, thumbnails: bool) -> list[DetectedFace]:
         import torch  # type: ignore[import-not-found]
