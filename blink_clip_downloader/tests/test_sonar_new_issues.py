@@ -13,6 +13,7 @@ import io
 import json
 import runpy
 import sys
+from email.message import Message
 from pathlib import Path
 from typing import Any, Self
 from urllib import error
@@ -103,6 +104,7 @@ def search_answer(
 
 
 GATE_OK = {"projectStatus": {"status": "OK", "conditions": []}}
+NO_HOTSPOTS = {"hotspots": [], "paging": {"total": 0}}
 TASK_DONE = {"task": {"status": "SUCCESS"}}
 
 
@@ -149,6 +151,7 @@ ROUTES = {
     "/api/ce/task": TASK_DONE,
     "/api/issues/search": search_answer([issue()]),
     "/api/qualitygates/project_status": GATE_OK,
+    "/api/hotspots/search": NO_HOTSPOTS,
 }
 
 
@@ -166,6 +169,150 @@ def test_a_pull_request_with_new_issues_fails_and_lists_them(
     )
     assert "Refactor this function." in output
     assert f"{SERVER}/project/issues?id={PROJECT}&open=K1&pullRequest=315" in output
+
+
+def hotspot(key: str = "H1", line: int | None = 40) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "key": key,
+        "ruleKey": "python:S5122",
+        "component": f"{PROJECT}:blink_clip_downloader/blink_downloader/app.py",
+        "message": "Make sure allowing cross-origin requests is safe here.",
+    }
+    return {**base, "line": line} if line is not None else base
+
+
+def test_hotspots_to_review_are_listed_but_do_not_decide_the_exit(
+    report_task: Path, tmp_path: Path
+) -> None:
+    routes = {
+        **ROUTES,
+        "/api/issues/search": search_answer([]),
+        "/api/hotspots/search": {"hotspots": [hotspot()], "paging": {"total": 1}},
+    }
+    code, output, fake = run_script(
+        env_for(tmp_path, SONAR_PULL_REQUEST="315"), report_task, routes
+    )
+    assert code == sonar.EXIT_OK
+    assert "Security hotspots to review:" in output
+    assert (
+        "blink_clip_downloader/blink_downloader/app.py:40  python:S5122  "
+        "Make sure allowing cross-origin requests is safe here." in output
+    )
+    assert fake.queries("/api/hotspots/search") == [
+        {
+            "projectKey": PROJECT,
+            "status": "TO_REVIEW",
+            "inNewCodePeriod": "true",
+            "ps": "500",
+            "pullRequest": "315",
+        }
+    ]
+    summary = (tmp_path / "summary.md").read_text()
+    assert "Security hotspots to review: 1" in summary
+    assert "`blink_clip_downloader/blink_downloader/app.py:40` python:S5122" in summary
+
+
+def test_no_hotspots_means_no_hotspot_section(
+    report_task: Path, tmp_path: Path
+) -> None:
+    _, output, _ = run_script(
+        env_for(tmp_path, SONAR_PULL_REQUEST="315"), report_task, ROUTES
+    )
+    assert "hotspot" not in output.lower()
+    assert "hotspot" not in (tmp_path / "summary.md").read_text().lower()
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        error.HTTPError(
+            f"{SERVER}/api/hotspots/search", 403, "Forbidden", Message(), None
+        ),
+        {"paging": {"total": 0}},
+    ],
+)
+def test_an_unreadable_hotspot_list_is_a_notice_only(
+    report_task: Path, tmp_path: Path, answer: Any
+) -> None:
+    routes = {
+        **ROUTES,
+        "/api/issues/search": search_answer([]),
+        "/api/hotspots/search": answer,
+    }
+    code, output, _ = run_script(
+        env_for(tmp_path, SONAR_PULL_REQUEST="315"), report_task, routes
+    )
+    assert code == sonar.EXIT_OK
+    assert "::notice::Could not list the security hotspots:" in output
+
+
+def test_the_issues_already_open_on_the_base_branch_are_listed(
+    report_task: Path, tmp_path: Path
+) -> None:
+    base = issue(key="B1", rule="python:S1192", line=7, message="Define a constant.")
+    # Two analyses answer the one path: the pull request's, then the base branch's.
+    routes = {
+        **ROUTES,
+        "/api/issues/search": [search_answer([]), search_answer([base])],
+    }
+    code, output, fake = run_script(
+        env_for(tmp_path, SONAR_PULL_REQUEST="315", SONAR_BASE_BRANCH="main"),
+        report_task,
+        routes,
+    )
+    assert code == sonar.EXIT_OK
+    assert "Open issues on main, to fix along the way:" in output
+    assert (
+        "blink_clip_downloader/blink_downloader/app.py:7  python:S1192  Define a constant."
+        in output
+    )
+    assert fake.queries("/api/issues/search")[-1] == {
+        "componentKeys": PROJECT,
+        "issueStatuses": "OPEN,CONFIRMED",
+        "s": "FILE_LINE",
+        "ps": "500",
+        "branch": "main",
+    }
+    assert "Already open on `main`: 1" in (tmp_path / "summary.md").read_text()
+
+
+def test_the_base_branch_is_not_asked_about_without_a_pull_request(
+    report_task: Path, tmp_path: Path
+) -> None:
+    _, output, fake = run_script(
+        env_for(tmp_path, SONAR_BRANCH="main", SONAR_BASE_BRANCH="main"),
+        report_task,
+        ROUTES,
+    )
+    assert "to fix along the way" not in output
+    assert all(
+        "branch" not in q or q["branch"] == "main"
+        for q in fake.queries("/api/issues/search")
+    )
+    assert len(fake.queries("/api/issues/search")) == 1
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        error.HTTPError(
+            f"{SERVER}/api/issues/search", 404, "Not Found", Message(), None
+        ),
+        {"paging": {"total": 0}},
+    ],
+)
+def test_a_base_branch_sonarcloud_never_analysed_is_a_notice_only(
+    report_task: Path, tmp_path: Path, answer: Any
+) -> None:
+    # A stacked pull request's base is a ticket branch, which SonarCloud has no analysis of.
+    routes = {**ROUTES, "/api/issues/search": [search_answer([]), answer]}
+    code, output, _ = run_script(
+        env_for(tmp_path, SONAR_PULL_REQUEST="315", SONAR_BASE_BRANCH="BCD-40-x"),
+        report_task,
+        routes,
+    )
+    assert code == sonar.EXIT_OK
+    assert "::notice::Could not list the issues open on BCD-40-x:" in output
 
 
 def test_the_summary_is_a_markdown_table(report_task: Path, tmp_path: Path) -> None:

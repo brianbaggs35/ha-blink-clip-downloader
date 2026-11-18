@@ -426,19 +426,56 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
       # The scanner uploads its analysis and exits; it does not wait for
-      # SonarCloud to process it, so the step above passes whatever the
-      # analysis finds and the issues were only visible on sonarcloud.io.
-      # This waits for the processing, lists the open issues on the new code
-      # (log, job summary and PR annotations) and, for a pull request, fails
-      # the job if there are any. A push lists them without failing. See
-      # scripts/ci/sonar_new_issues.py. No SONAR_TOKEN (the job is already
-      # skipped for fork PRs, which never get one) skips it with a notice.
-      - name: List new SonarCloud issues
+      # SonarCloud to process it, so this job passes whatever the analysis
+      # finds. The SonarCloud Issues job below waits for the processing and
+      # fails the pull request on what it found. It needs to know which
+      # analysis to wait for, which is all report-task.txt says (a project
+      # key, server URL and task URL: no token), so it is handed over here.
+      - name: Keep the scanner's report of the analysis
+        uses: actions/upload-artifact@v7
+        with:
+          name: sonar-report-task
+          path: .scannerwork/report-task.txt
+          include-hidden-files: true
+          retention-days: 1
+          if-no-files-found: error
+
+  # Its own job so that a pull request shows "SonarCloud Issues" failing, with
+  # the issues listed, apart from the scan having run. The issues are those on
+  # the pull request's new code; a push lists them without failing (nothing can
+  # be un-merged by failing afterwards). Alongside, for fixing along the way:
+  # the security hotspots still to review and the issues already open on the
+  # branch the pull request merges into (when SonarCloud analyses that branch).
+  # See scripts/ci/sonar_new_issues.py. It runs only when the scan did, so a
+  # fork's pull request (no SONAR_TOKEN) skips both.
+  sonarqube-issues:
+    name: SonarCloud Issues
+    runs-on: ubuntu-latest
+    needs: sonarqube
+    if: ${{ !cancelled() && needs.sonarqube.result == 'success' }}
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Download the scanner's report of the analysis
+        uses: actions/download-artifact@v8
+        with:
+          name: sonar-report-task
+          path: sonar-report
+
+      - name: List the SonarCloud issues
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_PULL_REQUEST: ${{ github.event.pull_request.number }}
           SONAR_BRANCH: ${{ github.event_name == 'push' && github.ref_name || '' }}
-        run: python3 scripts/ci/sonar_new_issues.py
+          SONAR_BASE_BRANCH: ${{ github.base_ref }}
+        run: python3 scripts/ci/sonar_new_issues.py --report-task sonar-report/report-task.txt
 
   build:
     name: Build Add-on Image (${{ matrix.arch }})
