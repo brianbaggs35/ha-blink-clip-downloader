@@ -51,7 +51,14 @@ class ConnectionMixin(_DatabaseBase):
         """Connect to PostgreSQL and create tables if needed."""
         self._pool = await asyncpg.create_pool(
             self._dsn,
-            min_size=1,
+            # One connection is made up front so a wrong DSN fails at start,
+            # but there is no floor to maintain (``min_size=0``): asyncpg 0.32
+            # otherwise retries a lost connection in the background and logs
+            # a warning with a traceback each time, which is all it could do
+            # while the bundled server stops at shutdown ("the database
+            # system is shutting down"). A query reconnects on demand.
+            init_size=1,
+            min_size=0,
             max_size=10,
             # Every timestamp column in this schema is a UTC ISO-8601 TEXT
             # string (see datetime.now(timezone.utc).isoformat() throughout

@@ -4,6 +4,8 @@
 
 ### Bug fixes
 
+- Stopping the add-on no longer logs `Failed to restore the pool connection floor; retrying` with a traceback. The bundled database stops while the add-on is still shutting down, and the database connection pool answered by trying to reconnect in the background and warning each time. The pool now makes its first connection at start, as before, but no longer keeps a minimum number of connections open: a query that needs one reconnects when it runs. Nothing changes in the add-on's settings or UI.
+
 ### Dependency Updates
 
 ### Release Workflow
