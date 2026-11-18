@@ -682,6 +682,19 @@ describe('ClipModal', () => {
     wrapper.unmount()
   })
 
+  it('keyboard: Space swallows a play() the browser refuses', async () => {
+    const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
+    await flushPromises()
+    const refused = Promise.reject(new Error('NotAllowedError'))
+    fakePlayer.paused.mockReturnValue(true)
+    fakePlayer.play.mockReturnValueOnce(refused)
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }))
+    await flushPromises()
+    // The rejection is handled rather than surfacing as an unhandled one.
+    await expect(refused).rejects.toThrow('NotAllowedError')
+    wrapper.unmount()
+  })
+
   it('keyboard: ArrowUp/ArrowDown emit nav', async () => {
     const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
     await flushPromises()
