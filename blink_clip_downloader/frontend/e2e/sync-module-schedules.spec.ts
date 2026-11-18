@@ -62,6 +62,7 @@ test('switches a schedule off, edits it to disarm one sync module, then deletes 
   await expect(row).toContainText('Disarm Home at 22:00')
 
   await row.getByRole('button', { name: /^Delete / }).click()
-  await page.locator('.modal-bg.open').getByRole('button', { name: 'Confirm' }).click()
+  await expect(page.getByText('Delete this schedule?')).toBeVisible()
+  await page.getByRole('button', { name: 'Confirm' }).click()
   await expect(card.getByText('No schedules yet')).toBeVisible()
 })
