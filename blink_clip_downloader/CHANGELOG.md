@@ -22,6 +22,7 @@
 **Frontend**
 
 - Updated @playwright/test to 1.65.1 (and playwright in the root e2e project)
+- Updated @primeuix/themes to 3.1.1
 
 ### Release Workflow
 
