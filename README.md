@@ -473,6 +473,8 @@ they get merged. The CI pipeline includes:
 - Vitest (100% frontend coverage)
 - Playwright e2e (92% of all lines covered as of Sep. 18th, 2026 but always adding more)
 - Sonarqube scans (a pull request with new SonarCloud issues fails CI, and the issues are listed in the job log and summary)
+- CodeQL code scanning (Python, TypeScript and the workflows)
+- zizmor audit of the workflow files, with every action pinned to a commit SHA
 - Codecov coverage reports
 - Built addon images and trivy scans
 - Build provenance attestations for each published addon image
