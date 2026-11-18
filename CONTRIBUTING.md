@@ -28,6 +28,16 @@ hotspots still to review, so there is no need to open sonarcloud.io to see what
 to fix. (Pull requests from forks cannot use the repository's SonarCloud token,
 so that job is skipped for them.)
 
+Two more checks run on every pull request and report under the repository's
+Security > Code scanning tab: **CodeQL** (security and code quality analysis of
+the Python and TypeScript code and of the workflow files) and **Workflow
+security**, which runs [zizmor](https://docs.zizmor.sh) over `.github/workflows`
+and fails on any finding. Run the same audit locally with
+`uvx --no-build zizmor@1.32.0 .github/workflows`. Actions are pinned to a full
+commit SHA with the version in a trailing comment, jobs ask for the least
+permission they need, and a checkout does not keep its credentials. CodeQL runs
+as a workflow, so GitHub's "default setup" for code scanning has to stay off.
+
 ## Local testing without a Home Assistant OS install
 
 Running `docker run` against the built image directly fails with

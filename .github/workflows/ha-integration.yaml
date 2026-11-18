@@ -115,7 +115,9 @@ jobs:
       github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          persist-credentials: false
 
       - name: Set integration image
         id: integration-image
@@ -135,7 +137,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
 
       # Supervisor's nested Docker build does not expose a way to forward
       # BuildKit secrets, so it cannot build this image itself — the
@@ -143,7 +145,7 @@ jobs:
       # on the runner, where the secret is available, and make the CI-only
       # add-on copy reference it so Supervisor pulls rather than builds.
       - name: Build the licensed integration image
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
         with:
           context: blink_clip_downloader
           file: blink_clip_downloader/Dockerfile
@@ -161,7 +163,7 @@ jobs:
             primevue_license_key=${{ secrets.PRIMEVUE_LICENSE_KEY }}
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38  # v6.5.0
         with:
           node-version: "24"
           cache: npm
@@ -170,7 +172,7 @@ jobs:
             blink_clip_downloader/frontend/package-lock.json
 
       - name: Update npm
-        run: npm install -g npm@12.2.3
+        run: npm install -g npm@12.2.3  # zizmor: ignore[adhoc-packages] pinned to the Dockerfile's npm
 
       - name: Install e2e dependencies
         working-directory: e2e
@@ -286,7 +288,7 @@ jobs:
           # reasons having nothing to do with this repo.
           docker pull registry:2
           docker save \
-            "${{ steps.integration-image.outputs.image }}:${{ steps.integration-image.outputs.version }}" \
+            "${INTEGRATION_IMAGE}:${INTEGRATION_VERSION}" \
             registry:2 \
             -o "${RUNNER_TEMP}/integration-image.tar"
           scripts/ci/ha_integration_setup.sh serve-local-image \
@@ -315,7 +317,9 @@ jobs:
       - name: Verify Supervisor is running the version we just built
         run: >-
           scripts/ci/ha_integration_setup.sh assert-version
-          "${{ steps.integration-image.outputs.version }}"
+          "${INTEGRATION_VERSION}"
+        env:
+          INTEGRATION_VERSION: ${{ steps.integration-image.outputs.version }}
 
       # config.yaml's declarations are promises only a real Supervisor
       # reads. Dropping `ingress: true` or `homeassistant_api: true` still
@@ -489,7 +493,7 @@ jobs:
 
       - name: Upload diagnostics
         if: ${{ !env.ACT && failure() }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: ha-integration-diagnostics
           path: |

@@ -1444,6 +1444,21 @@ Before pushing a follow-up you can read the same list yourself:
 `https://sonarcloud.io/api/issues/search?componentKeys=brianbaggs35_ha-blink-clip-downloader&pullRequest=<n>&issueStatuses=OPEN,CONFIRMED&inNewCodePeriod=true`
 (the project is public, so no token is needed for reading it).
 
+Two more scanners run as their own workflows and report to Security > Code
+scanning. `codeql.yaml` runs CodeQL (`security-and-quality`, no build) on the
+`actions`, `javascript-typescript` and `python` languages, and prints what it
+found in the log and summary through `.github/scripts/codeql-report.sh`; it
+needs GitHub's *default setup* for code scanning to stay **off**, or the upload
+is refused. `zizmor.yaml` audits `.github/workflows` and **fails on any
+finding**: a new or edited workflow must pin every `uses:` to a full commit SHA
+with the version after it (`@<sha>  # v1.2.3`, two spaces for yamllint), give
+a checkout `persist-credentials: false`, set `permissions:` per job, and never
+put a `${{ }}` expression inside a `run:` script (pass it through `env:`). Run
+`pip install zizmor==1.32.0 && zizmor --offline .github/workflows` before pushing
+a workflow change (CI also runs its online audits, which need a token). A
+finding that is deliberate gets `# zizmor: ignore[<rule>] <why>` on its line,
+as the pinned `npm install -g npm@...` steps do.
+
 CI's `frontend-e2e` job runs `npm run test:e2e:coverage` (Playwright, see
 **Web UI**'s E2E testing/E2E coverage bullets) — unlike `build`/
 `smoke-test`, this one *is* practical to run locally (no Docker: just a

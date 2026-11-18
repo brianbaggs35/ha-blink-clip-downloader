@@ -44,10 +44,12 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
@@ -59,7 +61,7 @@ jobs:
           pip install pyright yamllint "ruff==0.17.5" "bandit[toml]"
 
       - name: Run Home Assistant add-on linter
-        uses: frenck/action-addon-linter@v2
+        uses: frenck/action-addon-linter@d51677290aef26cdfc835271dd3c7343ce502809  # v2.21.2
         with:
           path: blink_clip_downloader
           community: false
@@ -84,14 +86,14 @@ jobs:
       # Frontend checks don't depend on the Python matrix leg, so they only
       # need to run once — pinned to the 3.13 leg to avoid running twice.
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version: "24"
           cache: npm
           cache-dependency-path: blink_clip_downloader/frontend/package-lock.json
 
       - name: Update npm
-        run: npm install -g npm@12.2.3
+        run: npm install -g npm@12.2.3  # zizmor: ignore[adhoc-packages] pinned to the Dockerfile's npm
 
       - name: Install frontend dependencies
         working-directory: blink_clip_downloader/frontend
@@ -158,10 +160,12 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
@@ -202,14 +206,14 @@ jobs:
         # ACT=true for every job, so skip this step there — the artifact
         # isn't needed for a local `act` run anyway.
         if: ${{ !env.ACT && matrix.python-version == '3.13' }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: coverage-report
           path: coverage.xml
 
       - name: Upload coverage reports to Codecov
         if: ${{ !env.ACT && matrix.python-version == '3.13' }}
-        uses: codecov/codecov-action@v7
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5  # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: coverage.xml
@@ -217,14 +221,14 @@ jobs:
           fail_ci_if_error: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version: "24"
           cache: npm
           cache-dependency-path: blink_clip_downloader/frontend/package-lock.json
 
       - name: Update npm
-        run: npm install -g npm@12.2.3
+        run: npm install -g npm@12.2.3  # zizmor: ignore[adhoc-packages] pinned to the Dockerfile's npm
 
       - name: Install frontend dependencies
         working-directory: blink_clip_downloader/frontend
@@ -236,7 +240,7 @@ jobs:
 
       - name: Upload Vitest coverage to Codecov
         if: ${{ !env.ACT && matrix.python-version == '3.13' }}
-        uses: codecov/codecov-action@v7
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5  # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: blink_clip_downloader/frontend/coverage/cobertura-coverage.xml
@@ -245,7 +249,7 @@ jobs:
 
       - name: Upload frontend coverage artifact
         if: ${{ !env.ACT && matrix.python-version == '3.13' }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: frontend-coverage-report
           # cobertura-coverage.xml is for Codecov (uploaded above); lcov.info
@@ -287,10 +291,12 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
@@ -301,14 +307,14 @@ jobs:
           pip install -e "blink_clip_downloader[test]"
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version: "24"
           cache: npm
           cache-dependency-path: blink_clip_downloader/frontend/package-lock.json
 
       - name: Update npm
-        run: npm install -g npm@12.2.3
+        run: npm install -g npm@12.2.3  # zizmor: ignore[adhoc-packages] pinned to the Dockerfile's npm
 
       - name: Install frontend dependencies
         working-directory: blink_clip_downloader/frontend
@@ -343,7 +349,7 @@ jobs:
 
       - name: Upload Playwright report
         if: ${{ !env.ACT && failure() }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: playwright-report
           path: blink_clip_downloader/frontend/playwright-report
@@ -351,14 +357,14 @@ jobs:
 
       - name: Upload e2e coverage artifact
         if: ${{ !env.ACT }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: e2e-coverage-report
           path: blink_clip_downloader/frontend/coverage-e2e
 
       - name: Upload e2e coverage to Codecov
         if: ${{ !env.ACT }}
-        uses: codecov/codecov-action@v7
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5  # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: blink_clip_downloader/frontend/coverage-e2e/lcov.info
@@ -381,12 +387,13 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           # Full history, not the default shallow clone - SonarCloud uses it
           # for blame data (issue age/author) and new-code-since-baseline
           # comparisons.
           fetch-depth: 0
+          persist-credentials: false
 
       # Without frontend/node_modules present, SonarCloud's TS analyzer
       # can't resolve tsconfig.app.json's "extends": "@vue/tsconfig/..."
@@ -396,32 +403,32 @@ jobs:
       # job's node_modules carries over), so it needs its own install --
       # same version/cache convention as the test job's frontend steps.
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version: "24"
           cache: npm
           cache-dependency-path: blink_clip_downloader/frontend/package-lock.json
 
       - name: Update npm
-        run: npm install -g npm@12.2.3
+        run: npm install -g npm@12.2.3  # zizmor: ignore[adhoc-packages] pinned to the Dockerfile's npm
 
       - name: Install frontend dependencies
         working-directory: blink_clip_downloader/frontend
         run: npm ci
 
       - name: Download backend coverage artifact
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           name: coverage-report
 
       - name: Download frontend coverage artifact
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           name: frontend-coverage-report
           path: blink_clip_downloader/frontend/coverage
 
       - name: SonarCloud Scan
-        uses: SonarSource/sonarqube-scan-action@v8
+        uses: SonarSource/sonarqube-scan-action@59202af334b4ba7b5db01b701b8e79f8b3bef0f4  # v8.5.0
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
@@ -432,7 +439,7 @@ jobs:
       # analysis to wait for, which is all report-task.txt says (a project
       # key, server URL and task URL: no token), so it is handed over here.
       - name: Keep the scanner's report of the analysis
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: sonar-report-task
           path: .scannerwork/report-task.txt
@@ -459,12 +466,12 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
 
       - name: Download the scanner's report of the analysis
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           name: sonar-report-task
           path: sonar-report
@@ -503,10 +510,12 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
 
       # Feeds the Dockerfile's APT_CACHE_BUST arg (see its own comment
       # there) — a value that changes once per UTC day so the shared,
@@ -518,7 +527,7 @@ jobs:
         run: echo "date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
 
       - name: Build add-on image
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
         with:
           context: blink_clip_downloader
           file: blink_clip_downloader/Dockerfile
@@ -551,7 +560,7 @@ jobs:
       - name: Verify built image
         run: |
           docker image inspect \
-            ${{ env.ADDON_IMAGE }}:${{ env.TAG }} \
+            "${ADDON_IMAGE}:${TAG}" \
             >/dev/null
 
           echo "Built ${{ matrix.arch }} image successfully"
@@ -577,7 +586,7 @@ jobs:
         # act cannot authenticate to the public Trivy DB mirrors in this
         # environment; hosted CI still runs the scan on every architecture.
         if: ${{ !env.ACT }}
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
         with:
           version: v0.76.2
           image-ref: ${{ env.ADDON_IMAGE }}:${{ env.TAG }}
@@ -603,7 +612,7 @@ jobs:
         # the whole job is skipped for them (see the job's `if:` above), so
         # no token-less upload attempt is possible.
         if: ${{ !env.ACT }}
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066  # v4.39.3
         with:
           sarif_file: trivy-results-${{ matrix.arch }}.sarif
           category: trivy-image-${{ matrix.arch }}
@@ -613,7 +622,7 @@ jobs:
       # than SARIF so the log says what broke.
       - name: Scan image for vulnerabilities (Trivy)
         if: ${{ !env.ACT }}
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
         with:
           version: v0.76.2
           image-ref: ${{ env.ADDON_IMAGE }}:${{ env.TAG }}
@@ -628,12 +637,12 @@ jobs:
       - name: Save built Docker image
         run: |
           docker save \
-            ${{ env.ADDON_IMAGE }}:${{ env.TAG }} \
+            "${ADDON_IMAGE}:${TAG}" \
             -o addon-image.tar
 
       - name: Upload image artifact
         if: ${{ !env.ACT }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: addon-image-${{ matrix.arch }}
           path: addon-image.tar
@@ -661,17 +670,19 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version: "24"
           cache: npm
           cache-dependency-path: e2e/package-lock.json
 
       - name: Update npm
-        run: npm install -g npm@12.2.3
+        run: npm install -g npm@12.2.3  # zizmor: ignore[adhoc-packages] pinned to the Dockerfile's npm
 
       - name: Install e2e dependencies
         working-directory: e2e
@@ -684,7 +695,7 @@ jobs:
       - name: Download built image artifact
         # Skipped under `act` — see the `build` job's upload step for why.
         if: ${{ !env.ACT }}
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           name: addon-image-${{ matrix.arch }}
 
@@ -734,7 +745,7 @@ jobs:
             -p 8099:8099 \
             -v "${{ github.workspace }}/smoke-test/data:/data" \
             -v "${{ github.workspace }}/smoke-test/share:/share" \
-            ${{ env.ADDON_IMAGE }}:${{ env.TAG }}
+            "${ADDON_IMAGE}:${TAG}"
 
       - name: Wait for startup
         run: sleep 15
@@ -854,17 +865,19 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version: "24"
           cache: npm
           cache-dependency-path: e2e/package-lock.json
 
       - name: Update npm
-        run: npm install -g npm@12.2.3
+        run: npm install -g npm@12.2.3  # zizmor: ignore[adhoc-packages] pinned to the Dockerfile's npm
 
       - name: Install e2e dependencies
         working-directory: e2e
@@ -877,7 +890,7 @@ jobs:
       - name: Download built image artifact
         # Skipped under `act` -- see the `build` job's upload step for why.
         if: ${{ !env.ACT }}
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           name: addon-image-amd64
 
@@ -932,7 +945,7 @@ jobs:
             -p 8099:8099 \
             -v "${{ github.workspace }}/signin-smoke/data:/data" \
             -v "${{ github.workspace }}/signin-smoke/share:/share" \
-            ${{ env.ADDON_IMAGE }}:${{ env.TAG }}
+            "${ADDON_IMAGE}:${TAG}"
 
       - name: Wait for the media server
         run: |
@@ -997,17 +1010,19 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version: "24"
           cache: npm
           cache-dependency-path: e2e/package-lock.json
 
       - name: Update npm
-        run: npm install -g npm@12.2.3
+        run: npm install -g npm@12.2.3  # zizmor: ignore[adhoc-packages] pinned to the Dockerfile's npm
 
       - name: Install e2e dependencies
         working-directory: e2e
@@ -1020,7 +1035,7 @@ jobs:
       - name: Download built image artifact
         # Skipped under `act` -- see the `build` job's upload step for why.
         if: ${{ !env.ACT }}
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           name: addon-image-aarch64
 
@@ -1075,7 +1090,7 @@ jobs:
             -p 8099:8099 \
             -v "${{ github.workspace }}/signin-smoke/data:/data" \
             -v "${{ github.workspace }}/signin-smoke/share:/share" \
-            ${{ env.ADDON_IMAGE }}:${{ env.TAG }}
+            "${ADDON_IMAGE}:${TAG}"
 
       - name: Wait for the media server
         run: |
