@@ -3608,6 +3608,59 @@ async def test_ai_status_enabled_ollama(db: ClipDatabase, tmp_path: Path) -> Non
         await tc.close()
 
 
+async def test_ai_status_lists_vision_stages_whose_models_were_tried(
+    db: ClipDatabase,
+) -> None:
+    from blink_downloader.vision.runtime import StageHealth
+
+    analyzer = _make_analyzer()
+    analyzer.vision_stage_health.return_value = [
+        StageHealth(
+            "object detection",
+            "failed",
+            detail="OSError: offline",
+            retry_in=59.6,
+        ),
+        StageHealth("face recognition", "ready"),
+    ]
+    server = MediaServer(db=db, port=0, analyzer=analyzer)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        data = await (await tc.get("/api/ai/status")).json()
+    finally:
+        await tc.close()
+    assert data["vision_stages"] == [
+        {
+            "stage": "object detection",
+            "state": "failed",
+            "detail": "OSError: offline",
+            "permanent": False,
+            "retry_in": 60,
+        },
+        {
+            "stage": "face recognition",
+            "state": "ready",
+            "detail": "",
+            "permanent": False,
+            "retry_in": None,
+        },
+    ]
+
+
+async def test_ai_status_has_no_vision_stages_until_something_asked(
+    db: ClipDatabase,
+) -> None:
+    server = MediaServer(db=db, port=0, analyzer=_make_analyzer())
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        data = await (await tc.get("/api/ai/status")).json()
+    finally:
+        await tc.close()
+    assert data["vision_stages"] == []
+
+
 async def test_ai_status_smtp_configured_true(db: ClipDatabase, tmp_path: Path) -> None:
     from blink_downloader.notification_channels import NotificationDispatcher
 

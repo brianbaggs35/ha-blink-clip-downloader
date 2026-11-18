@@ -134,6 +134,11 @@ class AiRoutesMixin(_MediaServerBase):
             # any provider can have layered on top. See torch_cpu_compatible().
             data["torch_cpu_compatible"] = torch_cpu_compatible()
             data["remote_vision"] = self._remote_vision
+            # Which optional vision stages' models failed to load, and why —
+            # only stages something has already asked for appear.
+            data["vision_stages"] = [
+                health.to_dict() for health in self._analyzer.vision_stage_health()
+            ]
             if self._analyzer.provider_name == "moondream_local":
                 data["moondream_installed"] = _is_moondream_installed()
                 data["moondream_arch_supported"] = _moondream_arch_supported()
