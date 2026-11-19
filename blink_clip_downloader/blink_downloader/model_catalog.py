@@ -21,9 +21,15 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-# Private by convention, shared with sibling modules: the provider modules and
-# the analyzer package facade read these tables.
+# Names the sibling modules import (private by convention, or shared
+# constants): the provider modules and the analyzer package facade read these
+# tables.
 __all__ = [
+    "DEFAULT_HUGGINGFACE_MODEL",
+    "DEFAULT_REPLICATE_MODEL",
+    "HUGGINGFACE_ROUTER_URL",
+    "REPLICATE_API_URL",
+    "REPLICATE_VISION_MODELS",
     "_ANTHROPIC_DATED_SNAPSHOT_RE",
     "_ANTHROPIC_FALLBACK_MODELS",
     "_OLLAMA_CLOUD_RECOMMENDED_MODELS",
