@@ -84,6 +84,7 @@ class AssistantRoutesMixin(_MediaServerBase):
         try:
             data = json.loads(self._ASSISTANT_SETTINGS_FILE.read_text())
         except (OSError, ValueError):
+            # Missing or damaged file: fall through to the defaults.
             pass
         if not isinstance(data, dict):
             data = {}

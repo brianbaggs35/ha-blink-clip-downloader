@@ -309,7 +309,8 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                     self._session = None
                 # Retry with fresh credentials and fresh session
                 await asyncio.sleep(0.5)
-                return await self.connect()
+                await self.connect()
+                return
 
             # No cache was used and auth still failed → credentials are wrong
             # (or Blink requires additional verification).
@@ -1793,6 +1794,7 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                     if base:
                         return f"{base}{url}"
             except AttributeError:
+                # A client without the expected URL attributes: use the default host.
                 pass
         return f"https://rest-prod.immedia-semi.com{url}"
 
@@ -2040,6 +2042,7 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                     timeout=min(2.0, max(0.01, remaining)),
                 )
             except TimeoutError:
+                # No answer in this slice; the loop checks the deadline and waits again.
                 pass
 
         self.auth_state = "error"

@@ -2081,7 +2081,7 @@ async def test_run_imports_existing_clips_with_library_db_enabled(app, tmp_path)
         # rather than waiting for them.
         for t in app._bg_tasks:
             if t.get_name() == "library_reimport":
-                await t
+                _ = await t
         app._running = False
 
     app._poll_cycle = _fake_poll
@@ -2152,7 +2152,7 @@ async def test_run_starts_archive_prune_task_when_library_db_enabled(app, tmp_pa
     async def _fake_poll():
         for t in app._bg_tasks:
             if t.get_name() == "archive_prune":
-                await t
+                _ = await t
         app._running = False
 
     app._poll_cycle = _fake_poll

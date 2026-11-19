@@ -179,7 +179,8 @@ async def test_a_download_can_leave_the_faces_out(api: _Api, tmp_path: Path) -> 
     resp = await api.client.post("/api/backup/create", json={"include_faces": False})
     saved = tmp_path / "downloaded.zip"
     saved.write_bytes(await resp.read())
-    assert "face_enrollments" not in BackupArchive.open(saved).manifest.tables
+    tables = BackupArchive.open(saved).manifest.tables
+    assert "face_enrollments" not in tables
 
 
 @pytest.mark.parametrize("value", ["no", 0, None, [True]])
@@ -718,9 +719,8 @@ async def test_a_second_restore_while_one_runs_is_refused(
         for path in ("inspect", "restore"):
             resp = await api.client.post(f"/api/backup/uploads/{upload_id}/{path}")
             assert resp.status == 409
-        assert (
-            await api.client.delete(f"/api/backup/uploads/{upload_id}")
-        ).status == 409
+        busy = await api.client.delete(f"/api/backup/uploads/{upload_id}")
+        assert busy.status == 409
 
 
 async def test_an_upload_can_be_thrown_away(api: _Api) -> None:
@@ -732,7 +732,8 @@ async def test_an_upload_can_be_thrown_away(api: _Api) -> None:
 
     assert (resp.status, await resp.json()) == (200, {"discarded": True})
     assert not path.exists()
-    assert (await api.client.delete(f"/api/backup/uploads/{upload_id}")).status == 404
+    again = await api.client.delete(f"/api/backup/uploads/{upload_id}")
+    assert again.status == 404
 
 
 async def test_stopping_the_server_throws_away_an_upload_it_still_holds(

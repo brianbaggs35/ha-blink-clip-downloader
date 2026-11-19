@@ -2713,8 +2713,6 @@ async def test_ai_camera_configs_get_returns_is_car_camera_field(
     client: TestClient, db: ClipDatabase, tmp_path: Path
 ) -> None:
     """GET includes is_car_camera=True for cameras saved with that flag."""
-    import json
-
     cfg_file = tmp_path / "camera_configs.json"
     cfg_file.write_text(
         json.dumps(
@@ -2766,8 +2764,6 @@ async def test_ai_camera_configs_put_saves_is_car_camera(
             "auto_analyze": True,
         },
     ]
-    import json
-
     cfg_file = tmp_path / "camera_configs.json"
 
     from unittest.mock import patch
@@ -2800,8 +2796,6 @@ async def test_ai_camera_configs_get_returns_car_zone_field(
     client: TestClient, tmp_path: Path
 ) -> None:
     """GET includes a normalised car_zone dict for cameras that have one."""
-    import json
-
     cfg_file = tmp_path / "camera_configs.json"
     cfg_file.write_text(
         json.dumps(
@@ -2845,8 +2839,6 @@ async def test_ai_camera_configs_get_malformed_car_zone_becomes_none(
     client: TestClient, tmp_path: Path
 ) -> None:
     """A malformed stored car_zone (min >= max) must not be echoed back as-is."""
-    import json
-
     cfg_file = tmp_path / "camera_configs.json"
     cfg_file.write_text(
         json.dumps(
@@ -4530,7 +4522,7 @@ async def test_moondream_run_install_success(
             ),
             patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)),
         ):
-            await captured[0]
+            _ = await captured[0]
         assert ms._moondream_install_state["status"] == "installed"
     finally:
         ms._moondream_install_state = {"status": "idle", "log": ""}
@@ -4578,7 +4570,7 @@ async def test_moondream_run_install_success_leaves_existing_sys_path_alone(
         patch("blink_downloader.media_server.ai._MOONDREAM_PACKAGES_DIR", fake_pkg_dir),
         patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)),
     ):
-        await captured[0]
+        _ = await captured[0]
     assert ms._moondream_install_state["status"] == "installed"
     assert fake_sys_path.count(str(fake_pkg_dir)) == 1
 
@@ -4605,7 +4597,7 @@ async def test_moondream_run_install_failure_nonzero_returncode(
     assert resp.status == 200
 
     with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)):
-        await captured[0]
+        _ = await captured[0]
 
     assert ms._moondream_install_state["status"] == "failed"
     ms._moondream_install_state = {"status": "idle", "log": ""}
@@ -4633,7 +4625,7 @@ async def test_moondream_run_install_timeout(
     mock_proc = MagicMock()
     mock_proc.communicate = MagicMock(side_effect=asyncio.TimeoutError)
     with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)):
-        await captured[0]
+        _ = await captured[0]
 
     assert ms._moondream_install_state["status"] == "failed"
     assert "timed out" in ms._moondream_install_state["log"].lower()
@@ -4661,7 +4653,7 @@ async def test_moondream_run_install_generic_exception(
         "asyncio.create_subprocess_exec",
         AsyncMock(side_effect=RuntimeError("pip3 not found")),
     ):
-        await captured[0]
+        _ = await captured[0]
 
     assert ms._moondream_install_state["status"] == "failed"
     assert "pip3 not found" in ms._moondream_install_state["log"]
@@ -5846,7 +5838,8 @@ async def test_face_ids_out_of_range_are_bad_requests(
     """An id past the INTEGER column's range used to reach asyncpg and come
     back as a bare 500."""
     assert (await client.get(f"/api/ai/faces/thumbs/{bad_id}")).status == 400
-    assert (await client.delete(f"/api/ai/faces/{bad_id}")).status == 400
+    resp = await client.delete(f"/api/ai/faces/{bad_id}")
+    assert resp.status == 400
 
 
 # --- people ----------------------------------------------------------------
@@ -5927,7 +5920,8 @@ async def test_people_patch_requires_a_name_and_a_change(
 async def test_people_requests_reject_a_nul_in_the_name(client: TestClient) -> None:
     body = {"name": "Bri\x00an", "approved": True}
     assert (await client.patch("/api/ai/faces/people", json=body)).status == 400
-    assert (await client.delete("/api/ai/faces/people", json=body)).status == 400
+    resp = await client.delete("/api/ai/faces/people", json=body)
+    assert resp.status == 400
 
 
 async def test_people_patch_bad_json(client: TestClient) -> None:
@@ -8652,7 +8646,7 @@ async def test_gdrive_connect_starts_device_flow(
             return_value=TokenPollResult(status="expired")
         )
         with patch("asyncio.sleep", AsyncMock()):
-            await captured[0]
+            _ = await captured[0]
         assert media_server_storage._gdrive_connect_state["phase"] == "expired"
     finally:
         await tc.close()
@@ -8710,7 +8704,7 @@ async def test_gdrive_connect_poll_success_sets_connected_state(
         with hold_back_task("_poll_for_token") as captured:
             await tc.post("/api/storage/gdrive/connect")
         with patch("asyncio.sleep", AsyncMock()):
-            await captured[0]
+            _ = await captured[0]
         assert media_server_storage._gdrive_connect_state == {
             "phase": "connected",
             "account_email": "me@example.com",
@@ -8744,7 +8738,7 @@ async def test_gdrive_connect_poll_denied_sets_error_state(
         with hold_back_task("_poll_for_token") as captured:
             await tc.post("/api/storage/gdrive/connect")
         with patch("asyncio.sleep", AsyncMock()):
-            await captured[0]
+            _ = await captured[0]
         assert media_server_storage._gdrive_connect_state["phase"] == "error"
     finally:
         await tc.close()
@@ -8775,7 +8769,7 @@ async def test_gdrive_connect_poll_generic_error_sets_error_state(
         with hold_back_task("_poll_for_token") as captured:
             await tc.post("/api/storage/gdrive/connect")
         with patch("asyncio.sleep", AsyncMock()):
-            await captured[0]
+            _ = await captured[0]
         assert media_server_storage._gdrive_connect_state == {
             "phase": "error",
             "message": "invalid_client",
@@ -8814,7 +8808,7 @@ async def test_gdrive_connect_poll_slow_down_then_success(
         with hold_back_task("_poll_for_token") as captured:
             await tc.post("/api/storage/gdrive/connect")
         with patch("asyncio.sleep", AsyncMock()):
-            await captured[0]
+            _ = await captured[0]
         assert gdrive_client.poll_once_for_token.await_count == 2
         assert media_server_storage._gdrive_connect_state["phase"] == "connected"
     finally:
@@ -8853,7 +8847,7 @@ async def test_gdrive_connect_poll_pending_then_success(
         with hold_back_task("_poll_for_token") as captured:
             await tc.post("/api/storage/gdrive/connect")
         with patch("asyncio.sleep", AsyncMock()) as sleep_mock:
-            await captured[0]
+            _ = await captured[0]
         assert gdrive_client.poll_once_for_token.await_count == 3
         # The interval is only backed off by slow_down — pending keeps it flat.
         assert {c.args[0] for c in sleep_mock.await_args_list} == {5}
@@ -8890,7 +8884,7 @@ async def test_gdrive_connect_poll_gives_up_after_deadline_with_no_terminal_resu
         # condition) sees 99999, which is already past it — the loop body
         # (and its asyncio.sleep/poll call) never runs at all.
         with patch("time.monotonic", side_effect=[0, 99999]):
-            await captured[0]
+            _ = await captured[0]
         assert media_server_storage._gdrive_connect_state == {"phase": "expired"}
         gdrive_client.poll_once_for_token.assert_not_awaited()
     finally:
@@ -10826,16 +10820,14 @@ async def test_vehicle_signature_can_be_reset(
     await db.save_vehicle_signature(
         "Driveway", VehicleSignature(box=(0.1, 0.2, 0.5, 0.6), sample_count=6)
     )
-    assert (await (await client.delete("/api/vehicle/signature/Driveway")).json()) == {
-        "reset": True
-    }
+    resp = await client.delete("/api/vehicle/signature/Driveway")
+    assert await resp.json() == {"reset": True}
     assert await db.get_vehicle_signature("Driveway") is None
 
 
 async def test_resetting_an_unlearned_vehicle_signature(client: TestClient) -> None:
-    assert (await (await client.delete("/api/vehicle/signature/Nowhere")).json()) == {
-        "reset": False
-    }
+    resp = await client.delete("/api/vehicle/signature/Nowhere")
+    assert await resp.json() == {"reset": False}
 
 
 async def test_clip_detections_endpoint_returns_normalized_boxes(

@@ -39,7 +39,6 @@ exists.
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING
 
 from .analysis import AnalysisResultsMixin
@@ -65,8 +64,6 @@ from .sql import (
 
 if TYPE_CHECKING:
     from ..analyzer import AnalysisResult
-
-_LOGGER = logging.getLogger(__name__)
 
 
 class ClipDatabase(

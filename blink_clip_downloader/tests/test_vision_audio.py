@@ -821,7 +821,7 @@ async def test_the_budget_expiring_takes_ffmpeg_with_it() -> None:
         await asyncio.sleep(0.05)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
-            await task
+            _ = await task
 
     proc.kill.assert_called_once()
     proc.wait.assert_awaited_once()

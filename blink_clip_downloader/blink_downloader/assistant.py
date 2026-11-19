@@ -31,7 +31,6 @@ Rules worth keeping:
 
 from __future__ import annotations
 
-import logging
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -45,7 +44,6 @@ if TYPE_CHECKING:
     from .analyzer import BaseAnalyzer
     from .database import ClipDatabase
 
-_LOGGER = logging.getLogger(__name__)
 
 # What the person typed, and how much of the conversation is sent back.
 MAX_QUESTION_CHARS = 1000

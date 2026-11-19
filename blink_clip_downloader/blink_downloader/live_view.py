@@ -63,7 +63,8 @@ class _AuthenticatingStream(Protocol):
 
     target_reader: Any
 
-    async def auth(self) -> None: ...
+    async def auth(self) -> None:
+        """Re-authenticate the stream; the shape the patch needs."""
 
 
 def _patch_short_reads(stream: _AuthenticatingStream) -> None:
@@ -594,6 +595,7 @@ class LiveViewManager:
             try:
                 proc.terminate()
             except ProcessLookupError:
+                # ffmpeg already exited, which is what terminating it was for.
                 pass
 
     async def _watch_ffmpeg(self, session: _LiveViewSession) -> None:
@@ -670,6 +672,7 @@ class LiveViewManager:
             try:
                 playlist.write_text(text)
             except OSError:
+                # The playlist is only being marked finished; the session ends either way.
                 pass
 
         await asyncio.to_thread(_append)
@@ -853,4 +856,4 @@ class LiveViewManager:
             return
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
-            await task
+            _ = await task

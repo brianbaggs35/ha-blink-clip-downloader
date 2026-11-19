@@ -47,6 +47,7 @@ class ClipManifest:
                 try:
                     records.append(json.loads(line))
                 except json.JSONDecodeError:
+                    # Skip a damaged line rather than lose the rest of the manifest.
                     pass
         return records
 

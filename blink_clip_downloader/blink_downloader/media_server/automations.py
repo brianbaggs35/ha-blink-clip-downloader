@@ -7,8 +7,6 @@ prove the round trip works from inside the add-on's own UI.
 
 from __future__ import annotations
 
-import logging
-
 from aiohttp import web
 
 from ..ha_config import HAConfigError
@@ -17,8 +15,6 @@ from .support import (
     _NOTIFICATIONS_NOT_CONFIGURED,
     _json_object,
 )
-
-_LOGGER = logging.getLogger(__name__)
 
 
 class AutomationRoutesMixin(_MediaServerBase):

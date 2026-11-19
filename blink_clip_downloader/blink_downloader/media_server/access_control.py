@@ -128,6 +128,7 @@ class AccessControl:
                 }
                 return False
         except FileNotFoundError:
+            # First start: nothing saved yet, so new secrets are made below.
             pass
         except (OSError, ValueError):
             _LOGGER.warning("%s is unreadable; creating new sign-in secrets", path)

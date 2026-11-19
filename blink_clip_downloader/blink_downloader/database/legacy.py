@@ -9,16 +9,12 @@ own module rather than sitting among the live queries.
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 from .core import _DatabaseBase
 from .sql import (
     _qm,
 )
-
-_LOGGER = logging.getLogger(__name__)
-
 
 _LEGACY_CLIPS_INSERT = """
     INSERT INTO clips

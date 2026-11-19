@@ -124,6 +124,7 @@ class StorageManager:
                 try:
                     total += path.stat().st_size
                 except OSError:
+                    # The file vanished or is unreadable; leave it out of the total.
                     pass
         return total
 
@@ -240,4 +241,5 @@ def _cleanup_empty_dirs(root: Path) -> None:
             try:
                 dirpath.rmdir()
             except OSError:
+                # Not empty (or in use): leave the directory alone.
                 pass

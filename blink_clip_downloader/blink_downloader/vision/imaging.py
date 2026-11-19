@@ -14,14 +14,11 @@ zone reference all do — for the same reason
 
 from __future__ import annotations
 
-import logging
 import math
 from typing import Any
 
 from ..security import Box
 from . import runtime
-
-_LOGGER = logging.getLogger(__name__)
 
 
 def _frame_dimensions(frame: bytes) -> tuple[int, int] | None:

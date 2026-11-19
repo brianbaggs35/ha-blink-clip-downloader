@@ -11,7 +11,6 @@ archive filter, and both read the same columns.
 from __future__ import annotations
 
 import json
-import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -27,8 +26,6 @@ from .sql import (
     _qm,
     _row_to_dict,
 )
-
-_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -651,6 +648,7 @@ class ClipLibraryMixin(_DatabaseBase):
             try:
                 all_tags.update(json.loads(r["tags"] or "[]"))
             except json.JSONDecodeError:
+                # A damaged tags value contributes no tags; the rest still count.
                 pass
         return sorted(all_tags)
 
