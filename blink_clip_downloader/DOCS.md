@@ -1086,7 +1086,7 @@ not load and why, and that it is skipped until fixed. A failure waiting cannot f
 restarts. Any other failure is retried after one minute, then two, four and so on up
 to once an hour, rather than on every clip as before, and the log carries one warning
 per distinct reason instead of a traceback per attempt. Object detection, pose
-estimation, depth estimation and face recognition report this so far (the Biometrics tab shows the
+estimation, depth estimation, audio analysis and face recognition report this so far (the Biometrics tab shows the
 face-recognition case too); those waits are judgement calls, not measurements. The `/api/ai/status`
 response lists the stages as `vision_stages`.
 

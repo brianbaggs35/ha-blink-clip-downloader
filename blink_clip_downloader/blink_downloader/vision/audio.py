@@ -347,11 +347,16 @@ class AudioTagger:
         self._lock: asyncio.Lock | None = None
         # The in-flight background load, if any -- see _model_ready.
         self._load_task: asyncio.Task[bool] | None = None
-        # A permanently-missing dependency would otherwise log the same
-        # warning once per clip forever; likewise a camera recording a
-        # silent track, which is every clip it records.
-        self._load_failure_logged = False
+        # How the load went, so a model that will not load is neither retried
+        # nor logged once per clip (see runtime.LoadGuard). A camera
+        # recording a silent track would otherwise warn on every clip it
+        # records, hence the second flag.
+        self._load_guard = runtime.LoadGuard(runtime.STAGE_AUDIO_ANALYSIS)
         self._no_sound_logged = False
+
+    def health(self) -> runtime.StageHealth | None:
+        """Whether the model loaded and, if not, why (``None``: not tried yet)."""
+        return self._load_guard.health()
 
     def _get_lock(self) -> asyncio.Lock:
         if self._lock is None:
@@ -388,55 +393,23 @@ class AudioTagger:
             _LOGGER.info("Audio-classification model ready")
 
     async def ensure_ready(self) -> bool:
-        if self._pipe is not None:
-            return True
-        async with self._get_lock():
-            if self._pipe is not None:
-                return True
-            try:
-                loop = asyncio.get_running_loop()
-                await loop.run_in_executor(None, self._load_sync)
-                return True
-            except ImportError as exc:
-                self._log_load_failure(
-                    "transformers package is not installed, audio analysis "
-                    "unavailable: %s. Install it with: pip install transformers",
-                    exc,
-                )
-                return False
-            except runtime.CPUIncompatibleError as exc:
-                self._log_load_failure("Audio analysis unavailable: %s", exc)
-                return False
-            # Suppressed below because this *is* handled:
-            # _log_load_failure logs it, with the traceback on the branch
-            # that has no more specific message to give.
-            except Exception as exc:  # noqa: BLE001
-                if runtime._is_huggingface_auth_error(exc):
-                    self._log_load_failure(
-                        runtime._HF_AUTH_FAILURE_MESSAGE, "audio-classification"
-                    )
-                else:
-                    self._log_load_failure(
-                        "Failed to load audio-classification model: %s",
-                        exc,
-                        exc_info=True,
-                    )
-                return False
+        """Ensure the model is loaded. Returns True when ready.
 
-    def _log_load_failure(
-        self, message: str, *args: Any, exc_info: bool = False
-    ) -> None:
-        """Say why the model would not load, but only make noise once.
-
-        Retrying per clip is right -- an interrupted download resumes --
-        but the common cause is a dependency that will never appear, and
-        one warning per clip forever would bury everything else in the log.
+        A load that just failed is not attempted again for every clip: see
+        :class:`runtime.LoadGuard`. An interrupted download still resumes,
+        on the next attempt that is due.
         """
-        if self._load_failure_logged:
-            _LOGGER.debug(message, *args, exc_info=exc_info)
-            return
-        self._load_failure_logged = True
-        _LOGGER.warning(message, *args, exc_info=exc_info)
+        return await runtime.load_model(
+            self._load_guard,
+            self._get_lock(),
+            lambda: self._pipe is not None,
+            self._load_sync,
+            _LOGGER,
+            label="audio-classification",
+            package="transformers",
+            install="transformers",
+            huggingface_name="audio-classification",
+        )
 
     def _note_no_sound(self, clip_path: str) -> None:
         """Say once that audio analysis is on but the clips carry no sound.

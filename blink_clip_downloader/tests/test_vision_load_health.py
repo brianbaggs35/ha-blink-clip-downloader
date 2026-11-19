@@ -19,6 +19,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from blink_downloader.vision import (
+    AudioTagger,
     DepthEstimator,
     ObjectDetector,
     PoseEstimator,
@@ -63,6 +64,14 @@ STAGES = [
         "transformers",
         "pipeline",
         runtime.STAGE_DEPTH_ESTIMATION,
+        uses_hub=True,
+    ),
+    _Stage(
+        "audio analysis",
+        AudioTagger,
+        "transformers",
+        "pipeline",
+        runtime.STAGE_AUDIO_ANALYSIS,
         uses_hub=True,
     ),
 ]
