@@ -16,6 +16,8 @@
 
 ### Dependency Updates
 
+- Updated the development and CI Python pin to 3.13.18. The Home Assistant container continues to use Debian Trixie's Python 3.13; its patch release is supplied by the base image's configured Debian packages. CI continues to check Python 3.14 separately.
+
 ### Release Workflow
 
 - Cleared the CodeQL alerts raised on the Playwright setup scripts, the build's gzip step and two frontend files, with no change to what the add-on does. The scripts that wait for the add-on's page in Home Assistant now compare the address as text instead of building a regular expression from the add-on's name, the gzip step reads the asset folder once instead of checking each file and then using it, the navigation tab list moved into its own module (`components/layout/tabs.ts`) so the `?tab=` check in `App.vue` can be followed by static analysis, and the Live View tab reads its unmount flag through a function after the await that a bare read of the variable made look dead.
