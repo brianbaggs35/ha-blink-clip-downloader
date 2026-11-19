@@ -36,7 +36,14 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
-_LOGGER = logging.getLogger(__name__)
+# Private by convention, shared with sibling modules: every vision stage
+# reaches these through the module, never by name import.
+__all__ = [
+    "_CPU_INCOMPATIBLE_MESSAGE",
+    "_YOLO_MODEL_CACHE_DIR",
+    "_native_import_lock",
+]
+
 
 #: The optional stages' names, as they appear in :class:`StageHealth` and on
 #: the tabs. ``pipeline.SOURCE_*`` are the same strings, because the evidence

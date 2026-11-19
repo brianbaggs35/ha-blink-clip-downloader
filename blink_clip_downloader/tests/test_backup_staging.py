@@ -108,8 +108,10 @@ def test_asking_for_an_upload_keeps_it_alive(
 
 async def test_pieces_in_order_build_the_file(held: RestoreStaging) -> None:
     upload = held.begin(10)
-    assert await held.append(upload.upload_id, 0, b"hello") == 5
-    assert await held.append(upload.upload_id, 5, b"world") == 10
+    first = await held.append(upload.upload_id, 0, b"hello")
+    second = await held.append(upload.upload_id, 5, b"world")
+    assert first == 5
+    assert second == 10
     assert upload.path.read_bytes() == b"helloworld"
     assert upload.received == 10
 

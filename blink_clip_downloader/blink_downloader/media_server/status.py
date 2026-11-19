@@ -6,13 +6,9 @@ tag vocabulary, and battery state and history.
 
 from __future__ import annotations
 
-import logging
-
 from aiohttp import web
 
 from .core import _MediaServerBase
-
-_LOGGER = logging.getLogger(__name__)
 
 
 class StatusRoutesMixin(_MediaServerBase):

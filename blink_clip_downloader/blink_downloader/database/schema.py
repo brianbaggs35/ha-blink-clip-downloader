@@ -10,6 +10,13 @@ upgrades rather than failing loudly. See ``_MIGRATIONS``' own comment.
 
 from __future__ import annotations
 
+# Private by convention, shared with sibling modules: the database package
+# builds and migrates the tables from these.
+__all__ = [
+    "_MIGRATIONS",
+    "_SCHEMA",
+]
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS clips (
     id            TEXT    PRIMARY KEY,

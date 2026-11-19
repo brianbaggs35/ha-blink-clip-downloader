@@ -10,7 +10,6 @@ domain and :mod:`.detections` and so lives on the composed class.
 
 from __future__ import annotations
 
-import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -21,8 +20,6 @@ from .sql import (
     _qm,
     _suspicious_clips_where,
 )
-
-_LOGGER = logging.getLogger(__name__)
 
 
 class AnalysisResultsMixin(_DatabaseBase):

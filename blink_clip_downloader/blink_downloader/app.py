@@ -1540,6 +1540,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
                 try:
                     TRIGGER_FILE.unlink()
                 except OSError:
+                    # Already removed by someone else; the poll still goes ahead.
                     pass
                 _LOGGER.info("Manual trigger detected — polling now")
                 return

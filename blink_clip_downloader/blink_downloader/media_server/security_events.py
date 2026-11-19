@@ -7,8 +7,6 @@ event live where they can be tested without a GPU.
 
 from __future__ import annotations
 
-import logging
-
 from aiohttp import web
 
 from ..database import SUSPICIOUS_PERIODS
@@ -16,8 +14,6 @@ from .core import _MediaServerBase
 from .support import (
     _paging,
 )
-
-_LOGGER = logging.getLogger(__name__)
 
 
 class SecurityEventsRoutesMixin(_MediaServerBase):

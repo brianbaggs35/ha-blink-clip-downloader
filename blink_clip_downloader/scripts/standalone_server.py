@@ -49,7 +49,6 @@ from typing import Any
 from PIL import Image
 
 import blink_downloader
-from blink_downloader import media_server
 from blink_downloader.analyzer import ClipAnalyzer
 from blink_downloader.analyzer.chat import ChatReply
 from blink_downloader.archiver import ClipArchiver
@@ -969,11 +968,11 @@ def _asset_frame_jpeg() -> bytes:
 
 
 def _seed_assets() -> None:
-    media_server.MediaServer._ASSET_SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True)
-    media_server.MediaServer._asset_snapshot_path(_CAMERA_FRONT_DOOR).write_bytes(
+    MediaServer._ASSET_SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True)
+    MediaServer._asset_snapshot_path(_CAMERA_FRONT_DOOR).write_bytes(
         _asset_frame_jpeg()
     )
-    media_server.MediaServer._PROTECTED_ASSETS_FILE.write_text(
+    MediaServer._PROTECTED_ASSETS_FILE.write_text(
         json.dumps({"assets": [_SEEDED_ASSET]})
     )
 
@@ -1019,9 +1018,7 @@ async def _main() -> None:
     analyzer.chat = _e2e_chat  # type: ignore[method-assign]
     analyzer.fetch_models = _e2e_chat_models  # type: ignore[method-assign]
     # As app.py does at startup, so the seeded asset is live from the start.
-    analyzer.update_protected_assets(
-        read_assets(media_server.MediaServer._PROTECTED_ASSETS_FILE)
-    )
+    analyzer.update_protected_assets(read_assets(MediaServer._PROTECTED_ASSETS_FILE))
     fake_auth = _FakeBlinkAuth()
     # archive_after_days=5 (not the config.yaml default of 60) — see
     # _PENDING_ARCHIVE_HOURS_AGO's comment above for exactly why 5, not a

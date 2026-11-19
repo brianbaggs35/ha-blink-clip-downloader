@@ -15,6 +15,15 @@ from typing import Any
 
 import asyncpg
 
+# Private by convention, shared with sibling modules: the clip and detection
+# mixins build their queries from these.
+__all__ = [
+    "_SEVERITY_RANK_SQL",
+    "_WHERE_CAMERA",
+    "_WHERE_SINCE",
+    "_WHERE_UNTIL",
+]
+
 # Shared WHERE-clause fragments for the camera/since/until clip filters that
 # get_clips/get_archive_groups/get_archive_clips each build independently.
 _WHERE_CAMERA = "LOWER(camera) = LOWER(?)"

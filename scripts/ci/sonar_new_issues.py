@@ -157,7 +157,6 @@ def wait_for_analysis(
     dropped connection should not fail a job whose scan succeeded.
     """
     deadline = clock() + timeout_seconds
-    last_problem = "no answer yet"
     while True:
         try:
             task = client.get_url(ce_task_url).get("task")

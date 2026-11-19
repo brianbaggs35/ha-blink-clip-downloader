@@ -340,7 +340,8 @@ class TestChats:
         ).status == 404
 
     async def test_deleting_a_missing_chat(self, api: Api) -> None:
-        assert (await api.client.delete("/api/assistant/chats/missing")).status == 404
+        resp = await api.client.delete("/api/assistant/chats/missing")
+        assert resp.status == 404
 
 
 class TestAsk:

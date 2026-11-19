@@ -964,7 +964,7 @@ async def test_upstream_feed_error_ignores_ffmpeg_process_race(
 
     feed_task = asyncio.create_task(_fail_feed())
     with pytest.raises(RuntimeError, match="relay failed"):
-        await feed_task
+        _ = await feed_task
 
     internal_session = mgr._session
     assert internal_session is not None
@@ -1007,7 +1007,7 @@ async def test_upstream_feed_done_preserves_existing_error_and_exited_ffmpeg(
         return None
 
     feed_task = asyncio.create_task(_done_feed())
-    await feed_task
+    _ = await feed_task
     mgr._handle_feed_done(internal_session, feed_task)
 
     assert mgr.get_status().error == "ffmpeg already failed"
@@ -1193,7 +1193,7 @@ async def test_start_exits_on_cancelled_error(manager: LiveViewManager) -> None:
     await asyncio.sleep(0.02)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await task
+        _ = await task
 
 
 async def test_start_logs_and_reraises_cancellation_during_sweep(
@@ -1211,7 +1211,7 @@ async def test_start_logs_and_reraises_cancellation_during_sweep(
         await asyncio.sleep(0.02)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
-            await task
+            _ = await task
 
 
 async def test_start_logs_exception_and_continues(manager: LiveViewManager) -> None:
