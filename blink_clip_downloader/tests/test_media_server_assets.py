@@ -532,3 +532,20 @@ async def test_rename_of_a_camera_with_nothing_marked_writes_nothing(
     await bare_api.server.rename_camera("Porch", "porch")
     assert MediaServer._asset_snapshot_path("porch").exists()
     assert bare_api.stored()[0]["camera"] == "porch"
+
+
+def test_confined_path_refuses_anything_that_leaves_its_directory(
+    tmp_path: Path,
+) -> None:
+    from blink_downloader.media_server.support import confined_path
+
+    base = tmp_path / "frames"
+    base.mkdir()
+    outside = tmp_path / "outside.jpg"
+    outside.write_bytes(b"x")
+    (base / "link.jpg").symlink_to(outside)
+
+    assert confined_path(base, "ok.jpg", "Frame") == base.resolve() / "ok.jpg"
+    for hostile in ("../outside.jpg", "/etc/passwd", "link.jpg", "..", ""):
+        with pytest.raises(ValueError, match="Frame path escapes its directory"):
+            confined_path(base, hostile, "Frame")

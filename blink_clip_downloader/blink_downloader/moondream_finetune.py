@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import re
 from typing import Any
 
 import aiohttp
@@ -29,6 +30,12 @@ _LOGGER = logging.getLogger(__name__)
 _API_TIMEOUT = aiohttp.ClientTimeout(total=120)
 _HEALTH_TIMEOUT = aiohttp.ClientTimeout(total=10)
 _CONTENT_TYPE_JSON = "application/json"
+
+# What a fine-tune id looks like once it is part of a request path. The ids
+# reach the manager from the add-on's own URL (``/api/ai/finetune/{id}``), so
+# anything that could climb out of ``/finetunes/`` -- a dot segment, a slash, a
+# query, an encoded byte -- is turned away before a request is built.
+_FINETUNE_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,128}")
 
 
 class MoondreamFineTuneManager:
@@ -48,6 +55,13 @@ class MoondreamFineTuneManager:
     def __init__(self, api_key: str) -> None:
         self._api_key = api_key
         self._session: aiohttp.ClientSession | None = None
+
+    def _finetune_url(self, finetune_id: str, tail: str = "") -> str | None:
+        """Return the API URL for one fine-tune, or ``None`` for an unusable id."""
+        if not _FINETUNE_ID_RE.fullmatch(finetune_id):
+            _LOGGER.debug("Moondream fine-tune id rejected: not a plain identifier")
+            return None
+        return f"{self._TUNING_BASE_URL}/finetunes/{finetune_id}{tail}"
 
     def _headers(self) -> dict[str, str]:
         return {
@@ -128,10 +142,13 @@ class MoondreamFineTuneManager:
 
     async def get_finetune(self, finetune_id: str) -> dict[str, Any] | None:
         """Return details for a specific fine-tune, or ``None`` if not found."""
+        url = self._finetune_url(finetune_id)
+        if url is None:
+            return None
         try:
             session = self._get_session()
             async with session.get(
-                f"{self._TUNING_BASE_URL}/finetunes/{finetune_id}",
+                url,
                 headers=self._headers(),
                 timeout=_HEALTH_TIMEOUT,
             ) as resp:
@@ -146,10 +163,13 @@ class MoondreamFineTuneManager:
 
     async def delete_finetune(self, finetune_id: str) -> bool:
         """Soft-delete a fine-tune and all its checkpoints."""
+        url = self._finetune_url(finetune_id)
+        if url is None:
+            return False
         try:
             session = self._get_session()
             async with session.delete(
-                f"{self._TUNING_BASE_URL}/finetunes/{finetune_id}",
+                url,
                 headers=self._headers(),
                 timeout=_HEALTH_TIMEOUT,
             ) as resp:
@@ -352,10 +372,13 @@ class MoondreamFineTuneManager:
 
     async def save_checkpoint(self, finetune_id: str) -> bool:
         """Persist the current model state as a named checkpoint."""
+        url = self._finetune_url(finetune_id, "/checkpoints/save")
+        if url is None:
+            return False
         try:
             session = self._get_session()
             async with session.post(
-                f"{self._TUNING_BASE_URL}/finetunes/{finetune_id}/checkpoints/save",
+                url,
                 headers=self._headers(),
                 timeout=_HEALTH_TIMEOUT,
             ) as resp:
@@ -368,13 +391,16 @@ class MoondreamFineTuneManager:
         self, finetune_id: str, limit: int = 20, cursor: str = ""
     ) -> list[dict[str, Any]]:
         """List saved checkpoints for a fine-tune."""
+        url = self._finetune_url(finetune_id, "/checkpoints")
+        if url is None:
+            return []
         params: dict[str, Any] = {"limit": limit}
         if cursor:
             params["cursor"] = cursor
         try:
             session = self._get_session()
             async with session.get(
-                f"{self._TUNING_BASE_URL}/finetunes/{finetune_id}/checkpoints",
+                url,
                 params=params,
                 headers=self._headers(),
                 timeout=_HEALTH_TIMEOUT,
@@ -389,10 +415,13 @@ class MoondreamFineTuneManager:
 
     async def delete_checkpoint(self, finetune_id: str, step: int) -> bool:
         """Delete a specific checkpoint by training step number."""
+        url = self._finetune_url(finetune_id, f"/checkpoints/{int(step)}")
+        if url is None:
+            return False
         try:
             session = self._get_session()
             async with session.delete(
-                f"{self._TUNING_BASE_URL}/finetunes/{finetune_id}/checkpoints/{step}",
+                url,
                 headers=self._headers(),
                 timeout=_HEALTH_TIMEOUT,
             ) as resp:
@@ -405,11 +434,14 @@ class MoondreamFineTuneManager:
         self, finetune_id: str, step: int, metrics: dict[str, float]
     ) -> bool:
         """Record custom evaluation metrics for a given training step."""
+        url = self._finetune_url(finetune_id, "/metrics")
+        if url is None:
+            return False
         payload: dict[str, Any] = {"step": step, "metrics": metrics}
         try:
             session = self._get_session()
             async with session.post(
-                f"{self._TUNING_BASE_URL}/finetunes/{finetune_id}/metrics",
+                url,
                 json=payload,
                 headers=self._headers(),
                 timeout=_HEALTH_TIMEOUT,

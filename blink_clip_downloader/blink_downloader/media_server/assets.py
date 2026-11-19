@@ -23,7 +23,12 @@ from aiohttp import web
 from .. import protected_assets
 from ..database import ClipFilters
 from .core import _MediaServerBase
-from .support import _CLIP_NOT_FOUND, _SETTINGS_WRITE_FAILED, _json_object
+from .support import (
+    _CLIP_NOT_FOUND,
+    _SETTINGS_WRITE_FAILED,
+    _json_object,
+    confined_path,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -313,7 +318,9 @@ class AssetsRoutesMixin(_MediaServerBase):
     def _asset_snapshot_path(cls, camera: str) -> Path:
         slug = re.sub(r"[^a-z0-9]+", "-", camera.lower()).strip("-") or "camera"
         suffix = hashlib.sha256(camera.lower().encode("utf-8")).hexdigest()[:10]
-        return cls._ASSET_SNAPSHOTS_DIR / f"{slug}-{suffix}.jpg"
+        return confined_path(
+            cls._ASSET_SNAPSHOTS_DIR, f"{slug}-{suffix}.jpg", "Asset snapshot"
+        )
 
     def _migrate_protected_assets(self, old_name: str, new_name: str) -> None:
         """Carry every asset, and the camera's frame, across a rename.
