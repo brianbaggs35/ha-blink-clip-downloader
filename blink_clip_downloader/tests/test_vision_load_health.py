@@ -20,6 +20,7 @@ import pytest
 
 from blink_downloader.vision import (
     AudioTagger,
+    ContactSegmenter,
     DepthEstimator,
     ObjectDetector,
     PoseEstimator,
@@ -41,6 +42,13 @@ class _Stage:
     #: Whether its model is downloaded from the Hugging Face Hub, so that a
     #: rejected token is a failure of its own.
     uses_hub: bool = False
+    #: Sets up whatever the stage reads before it calls the loader.
+    prepare: Callable[[MagicMock], None] | None = None
+
+
+def _sam2_config(package: MagicMock) -> None:
+    """The checkpoint config SAM2's loader reads before it loads the model."""
+    package.Sam2VideoConfig.get_config_dict.return_value = ({"model_type": "x"}, {})
 
 
 STAGES = [
@@ -67,6 +75,15 @@ STAGES = [
         uses_hub=True,
     ),
     _Stage(
+        "contact segmentation",
+        ContactSegmenter,
+        "transformers",
+        "Sam2VideoModel.from_pretrained",
+        runtime.STAGE_CONTACT_SEGMENTATION,
+        uses_hub=True,
+        prepare=_sam2_config,
+    ),
+    _Stage(
         "audio analysis",
         AudioTagger,
         "transformers",
@@ -81,9 +98,14 @@ def _failing_package(
     monkeypatch: pytest.MonkeyPatch, stage: _Stage, effect: Any
 ) -> MagicMock:
     package = MagicMock()
-    getattr(package, stage.loader).side_effect = effect
+    if stage.prepare is not None:
+        stage.prepare(package)
+    loader = package
+    for part in stage.loader.split("."):
+        loader = getattr(loader, part)
+    loader.side_effect = effect
     monkeypatch.setitem(sys.modules, stage.package, package)
-    return getattr(package, stage.loader)
+    return loader
 
 
 @pytest.fixture(params=STAGES, ids=lambda stage: stage.name)
