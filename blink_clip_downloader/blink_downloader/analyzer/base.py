@@ -67,6 +67,15 @@ if TYPE_CHECKING:
         VisionPipeline,
     )
 
+# Private by convention, shared with sibling modules: the provider modules
+# reuse these request settings and the vision system prompt.
+__all__ = [
+    "_API_TIMEOUT",
+    "_CONTENT_TYPE_JSON",
+    "_HEALTH_TIMEOUT",
+    "_VISION_SYSTEM_PROMPT",
+]
+
 _LOGGER = logging.getLogger(__name__)
 
 _API_TIMEOUT = aiohttp.ClientTimeout(total=120)

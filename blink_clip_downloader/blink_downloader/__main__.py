@@ -128,6 +128,7 @@ def main() -> None:
     try:
         asyncio.run(app.run())
     except KeyboardInterrupt:
+        # Ctrl-C is a normal way to stop; run() has already shut down.
         pass
 
 

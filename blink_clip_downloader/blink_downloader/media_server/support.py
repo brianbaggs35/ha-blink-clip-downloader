@@ -8,7 +8,6 @@ a route module can import from here without importing another route module.
 
 from __future__ import annotations
 
-import logging
 import os
 import re
 from collections.abc import Callable
@@ -17,7 +16,26 @@ from typing import Any
 
 from aiohttp import web
 
-_LOGGER = logging.getLogger(__name__)
+# Private by convention, shared with sibling modules: every route mixin shares
+# these messages, limits and paths.
+__all__ = [
+    "_AI_FEEDBACK_ROUTE",
+    "_ARCHIVE_CLIPS_PAGE_SIZE",
+    "_ARCHIVE_NOT_FOUND",
+    "_CAMERA_CONFIGS_SAVE_ERROR",
+    "_CLIP_NOT_FOUND",
+    "_FINETUNE_REQUIRES_MOONDREAM_CLOUD",
+    "_GDRIVE_NOT_AVAILABLE",
+    "_INVALID_REQUEST_BODY",
+    "_LIVEVIEW_FILENAME_RE",
+    "_LIVE_VIEW_NOT_AVAILABLE",
+    "_MAX_ARCHIVE_CLIPS_PAGE_SIZE",
+    "_MAX_FINETUNE_TRAIN_BATCH",
+    "_NOTIFICATIONS_NOT_CONFIGURED",
+    "_SETTINGS_WRITE_FAILED",
+    "_STATIC_DIR",
+    "_SYNC_MODULES_NOT_AVAILABLE",
+]
 
 
 def confined_path(base: Path, filename: str, what: str) -> Path:

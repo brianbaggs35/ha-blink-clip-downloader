@@ -21,6 +21,17 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+# Private by convention, shared with sibling modules: the provider modules and
+# the analyzer package facade read these tables.
+__all__ = [
+    "_ANTHROPIC_DATED_SNAPSHOT_RE",
+    "_ANTHROPIC_FALLBACK_MODELS",
+    "_OLLAMA_CLOUD_RECOMMENDED_MODELS",
+    "_OPENAI_DATED_SNAPSHOT_RE",
+    "_OPENAI_FALLBACK_MODELS",
+    "_OPENAI_STRUCTURED_OUTPUT_SCHEMA",
+]
+
 # Ollama model-name fragments that indicate vision capability.
 # Checked case-insensitively as a substring of the full model name.
 _VISION_MODEL_PATTERNS: frozenset[str] = frozenset(

@@ -10,7 +10,6 @@ where neither queue would ever look at it again.
 
 from __future__ import annotations
 
-import logging
 from datetime import UTC, datetime
 from typing import Any
 
@@ -19,8 +18,6 @@ from .sql import (
     _affected,
     _qm,
 )
-
-_LOGGER = logging.getLogger(__name__)
 
 
 class QueuesMixin(_DatabaseBase):

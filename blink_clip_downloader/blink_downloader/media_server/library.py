@@ -256,5 +256,6 @@ class LibraryRoutesMixin(StorageRoutesMixin):
         try:
             _TRIGGER_FILE.touch()
         except OSError:
+            # The trigger file is best effort; the next scheduled poll still runs.
             pass
         return web.json_response({"triggered": True})

@@ -208,6 +208,10 @@ architecture.
     what a clip means, and it imports nothing from `analyzer`. Uses
     `security/geometry.py`'s `point_in_polygon` rather than keeping the
     second, identical copy the analyzer used to carry.
+  - `log_text.py` — `loggable()`, which writes out the line breaks in text from outside
+    (a camera name, clip id, username) before it goes into a log call, so it cannot start a
+    forged line. Stdlib only, so any module can use it; wrap the *outside* arguments of a
+    `_LOGGER` call in it, not the whole message.
   - `ffmpeg_output.py` — reading what ffmpeg wrote: splitting its
     concatenated-JPEG stdout into frames, and condensing its stderr into
     one loggable line. A leaf module (stdlib only) because both

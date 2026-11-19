@@ -15,7 +15,6 @@ tuning may only ever make a camera *less* trigger-happy, never more.
 from __future__ import annotations
 
 import json
-import logging
 from datetime import UTC, datetime
 from typing import Any
 
@@ -24,9 +23,6 @@ from .sql import (
     _affected,
     _qm,
 )
-
-_LOGGER = logging.getLogger(__name__)
-
 
 # Minimum recorded clips before a camera's visual scene baseline is trusted
 # enough to report a deviation score — see get_scene_deviation().

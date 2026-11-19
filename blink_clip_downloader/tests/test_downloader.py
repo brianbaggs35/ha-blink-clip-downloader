@@ -4086,7 +4086,7 @@ async def test_sync_modules_stay_visible_while_the_topology_is_rebuilt(
         assert await dl.set_camera_armed("Front", False) is True
     finally:
         release.set()
-        await rebuild
+        _ = await rebuild
 
     # Once it has landed the fallback is gone again.
     assert dl._topology_fallback_sync is None

@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import logging
 import math
 import unicodedata
 from pathlib import Path
@@ -43,8 +42,6 @@ from ..vision.faces import DetectedFace, match_enrollment
 from ..vision.runtime import STAGE_FACE_RECOGNITION
 from .core import _MediaServerBase
 from .support import _CLIP_NOT_FOUND, _json_object
-
-_LOGGER = logging.getLogger(__name__)
 
 # How far back the Recognition results panel looks.
 _RECOGNITION_RESULTS_DAYS = 30

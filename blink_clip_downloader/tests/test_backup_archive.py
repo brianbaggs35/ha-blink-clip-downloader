@@ -176,7 +176,8 @@ def test_write_archive_puts_the_manifest_first(tmp_path: Path) -> None:
     write_archive(target, manifest, {file_member("camera_configs.json"): source})
     with zipfile.ZipFile(target) as written:
         assert written.namelist() == [MANIFEST_MEMBER, "files/camera_configs.json"]
-    assert BackupArchive.open(target).read_file("camera_configs.json") == b"{}"
+    stored = BackupArchive.open(target).read_file("camera_configs.json")
+    assert stored == b"{}"
 
 
 # ---------------------------------------------------------------------------
