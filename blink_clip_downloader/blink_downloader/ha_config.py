@@ -29,6 +29,8 @@ from typing import Any
 import aiohttp
 import yaml
 
+from .log_text import loggable
+
 _LOGGER = logging.getLogger(__name__)
 
 # Same internal Supervisor route notifier.py uses — see its comment.
@@ -177,7 +179,12 @@ class HAConfigWriter:
         # so asking for a second one would just reload twice.
         await self._post(f"{_HA_API}/config/{domain}/config/{object_id}", body)
         name = created_name(body, object_id)
-        _LOGGER.info("Created %s %r (id %s) in Home Assistant", domain, name, object_id)
+        _LOGGER.info(
+            "Created %s %r (id %s) in Home Assistant",
+            domain,
+            loggable(name),
+            loggable(object_id),
+        )
         return name
 
     async def _post(self, url: str, payload: dict[str, Any]) -> None:

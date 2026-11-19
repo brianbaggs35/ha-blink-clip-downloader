@@ -34,6 +34,7 @@ from urllib.parse import quote
 from aiohttp import web
 from yarl import URL
 
+from ..log_text import loggable
 from .access_control import (
     INGRESS_PROXY_IP,
     SESSION_COOKIE,
@@ -296,7 +297,9 @@ class AccessRoutesMixin(_MediaServerBase):
         if not verdict:
             self._access.record_failure(address)
             _LOGGER.warning(
-                "Failed direct-port sign-in for %r from %s", username, address
+                "Failed direct-port sign-in for %r from %s",
+                loggable(username),
+                loggable(address),
             )
             return self._login_page(
                 request,
@@ -307,7 +310,11 @@ class AccessRoutesMixin(_MediaServerBase):
             )
 
         self._access.record_success(address)
-        _LOGGER.info("Signed in on the direct port: %s from %s", username, address)
+        _LOGGER.info(
+            "Signed in on the direct port: %s from %s",
+            loggable(username),
+            loggable(address),
+        )
         response = _redirect(target)
         response.set_cookie(
             SESSION_COOKIE,
