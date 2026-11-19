@@ -128,6 +128,11 @@ class PoseEstimator:
         self._model_name = model_name
         self._model: Any = None
         self._lock: asyncio.Lock | None = None
+        self._load_guard = runtime.LoadGuard(runtime.STAGE_POSE_ESTIMATION)
+
+    def health(self) -> runtime.StageHealth | None:
+        """Whether the model loaded and, if not, why (``None``: not tried yet)."""
+        return self._load_guard.health()
 
     def _get_lock(self) -> asyncio.Lock:
         if self._lock is None:
@@ -152,29 +157,21 @@ class PoseEstimator:
             _LOGGER.info("YOLO pose model '%s' ready", self._model_name)
 
     async def ensure_ready(self) -> bool:
-        """Ensure the model is loaded. Returns True when ready."""
-        if self._model is not None:
-            return True
-        async with self._get_lock():
-            if self._model is not None:
-                return True
-            try:
-                loop = asyncio.get_running_loop()
-                await loop.run_in_executor(None, self._load_sync)
-                return True
-            except ImportError as exc:
-                _LOGGER.warning(
-                    "ultralytics package is not installed, pose estimation "
-                    "unavailable: %s. Install it with: pip install ultralytics",
-                    exc,
-                )
-                return False
-            except runtime.CPUIncompatibleError as exc:
-                _LOGGER.warning("Pose estimation unavailable: %s", exc)
-                return False
-            except Exception:
-                _LOGGER.exception("Failed to load YOLO pose model")
-                return False
+        """Ensure the model is loaded. Returns True when ready.
+
+        A load that just failed is not attempted again for every clip: see
+        :class:`runtime.LoadGuard`.
+        """
+        return await runtime.load_model(
+            self._load_guard,
+            self._get_lock(),
+            lambda: self._model is not None,
+            self._load_sync,
+            _LOGGER,
+            label="pose-estimation",
+            package="ultralytics",
+            install="ultralytics",
+        )
 
     def _analyze_sync(
         self, frame: bytes, subject_box: Box, asset_box: Box

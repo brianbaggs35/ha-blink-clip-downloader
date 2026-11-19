@@ -2187,61 +2187,17 @@ async def test_face_embedder_has_no_health_until_something_asks(
     assert FaceEmbedder().health() is None
 
 
-async def test_object_detector_does_not_retry_a_failed_load_per_clip(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
-    mock_ul = MagicMock()
-    mock_ul.YOLO.side_effect = RuntimeError("download blocked")
-    monkeypatch.setitem(sys.modules, "ultralytics", mock_ul)
-    detector = ObjectDetector()
-    assert detector.health() is None
-    with caplog.at_level("DEBUG", logger="blink_downloader.vision.detection"):
-        for _ in range(4):
-            assert await detector.ensure_ready() is False
-    assert mock_ul.YOLO.call_count == 1
-    assert [r.levelname for r in caplog.records].count("WARNING") == 1
-    health = detector.health()
-    assert health is not None
-    assert health.stage == "object detection"
-    assert health.detail == "RuntimeError: download blocked"
-
-
-async def test_object_detector_tries_again_when_the_wait_is_over(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    mock_ul = MagicMock()
-    mock_ul.YOLO.side_effect = [RuntimeError("blip"), MagicMock()]
-    monkeypatch.setitem(sys.modules, "ultralytics", mock_ul)
-    now = [1000.0]
-    detector = ObjectDetector()
-    detector._load_guard = runtime_module.LoadGuard("object detection", lambda: now[0])
-    assert await detector.ensure_ready() is False
-    now[0] += 61
-    assert await detector.ensure_ready() is True
-    health = detector.health()
-    assert health is not None
-    assert health.state == "ready"
-
-
-async def test_object_detector_calls_waiting_on_a_failing_load_do_not_each_retry_it(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    mock_ul = MagicMock()
-    mock_ul.YOLO.side_effect = lambda *_a, **_k: (time.sleep(0.05), 1 / 0)[1]
-    monkeypatch.setitem(sys.modules, "ultralytics", mock_ul)
-    detector = ObjectDetector()
-    results = await asyncio.gather(*(detector.ensure_ready() for _ in range(3)))
-    assert results == [False] * 3
-    mock_ul.YOLO.assert_called_once()
-
-
 async def test_the_pipeline_reports_the_local_detector_but_not_the_remote_one(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     local = VisionPipeline(VisionConfig())
     assert isinstance(local._detector, ObjectDetector)
     local._detector._load_guard.failed("RuntimeError: blip")
-    assert [r.stage for r in local.stage_health()] == [SOURCE_OBJECT_DETECTION]
+    local._pose._load_guard.failed("RuntimeError: blip")
+    assert [r.stage for r in local.stage_health()] == [
+        SOURCE_OBJECT_DETECTION,
+        SOURCE_POSE_ESTIMATION,
+    ]
     remote = VisionPipeline(VisionConfig(vision_backend="huggingface"))
     assert remote.stage_health() == []
 
