@@ -19,6 +19,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from blink_downloader.vision import (
+    DepthEstimator,
     ObjectDetector,
     PoseEstimator,
     runtime,
@@ -36,6 +37,9 @@ class _Stage:
     #: The attribute of that package whose call loads the model.
     loader: str
     stage_name: str
+    #: Whether its model is downloaded from the Hugging Face Hub, so that a
+    #: rejected token is a failure of its own.
+    uses_hub: bool = False
 
 
 STAGES = [
@@ -52,6 +56,14 @@ STAGES = [
         "ultralytics",
         "YOLO",
         runtime.STAGE_POSE_ESTIMATION,
+    ),
+    _Stage(
+        "depth estimation",
+        DepthEstimator,
+        "transformers",
+        "pipeline",
+        runtime.STAGE_DEPTH_ESTIMATION,
+        uses_hub=True,
     ),
 ]
 
@@ -141,3 +153,26 @@ async def test_an_incompatible_cpu_is_permanent(
     health = instance.health()
     assert health is not None
     assert health.permanent is True
+
+
+async def test_a_rejected_hugging_face_token_is_permanent_where_the_hub_is_used(
+    stage: _Stage, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    class _Refused(Exception):
+        status_code = 401
+
+    loader = _failing_package(monkeypatch, stage, _Refused("nope"))
+    instance = stage.make()
+    with caplog.at_level("DEBUG", logger="blink_downloader.vision"):
+        for _ in range(2):
+            assert await instance.ensure_ready() is False
+    health = instance.health()
+    assert health is not None
+    assert health.state == "failed"
+    # A stage that does not use the Hub has no token to blame: it is just a
+    # failure, and backs off like one.
+    assert health.permanent is stage.uses_hub
+    if stage.uses_hub:
+        assert loader.call_count == 1
+        assert "token" in health.detail
+        assert any(r.levelname == "ERROR" for r in caplog.records)
