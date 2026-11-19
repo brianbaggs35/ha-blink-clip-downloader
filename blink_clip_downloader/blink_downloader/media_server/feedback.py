@@ -12,6 +12,7 @@ import logging
 
 from aiohttp import web
 
+from ..log_text import loggable
 from ..verdict_feedback import record_verdict_feedback
 from .core import _MediaServerBase
 from .support import (
@@ -80,7 +81,11 @@ class FeedbackRoutesMixin(_MediaServerBase):
             # Mirrors _handle_ai_analyze_now's error handling — an unexpected
             # DB failure here must surface as clean JSON, not aiohttp's
             # generic HTML 500 page.
-            _LOGGER.warning("Feedback submit failed for clip %s: %s", clip_id, exc)
+            _LOGGER.warning(
+                "Feedback submit failed for clip %s: %s",
+                loggable(clip_id),
+                loggable(exc),
+            )
             return web.json_response({"error": str(exc)}, status=500)
         if not saved:
             return web.json_response(

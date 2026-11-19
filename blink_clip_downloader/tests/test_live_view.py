@@ -451,8 +451,11 @@ async def test_start_session_generic_exception_wrapped(
     camera.init_livestream = AsyncMock(side_effect=RuntimeError("boom"))
     camera_registry["Front Door"] = camera
 
-    with pytest.raises(LiveViewError, match="Could not start live view"):
+    with pytest.raises(LiveViewError, match="Could not start live view") as caught:
         await manager.start_session("Front Door")
+    # The kind of failure reaches the browser; the library's own text does not.
+    assert "RuntimeError" in str(caught.value)
+    assert "boom" not in str(caught.value)
 
 
 async def test_start_session_ffmpeg_missing_cleans_up_stream(
@@ -494,8 +497,9 @@ async def test_start_session_relay_failure_releases_the_stream(
     stream.start = AsyncMock(side_effect=RuntimeError("relay refused"))
     camera_registry["Front Door"] = _make_camera(stream)
 
-    with pytest.raises(LiveViewError, match="Could not start live view"):
+    with pytest.raises(LiveViewError, match="Could not start live view") as caught:
         await manager.start_session("Front Door")
+    assert "relay refused" not in str(caught.value)
     assert stream.stopped is True
 
 

@@ -20,6 +20,7 @@ from aiohttp import web
 
 from ..analysis_queue import compute_anomaly_score
 from ..database import SUSPICIOUS_PERIODS
+from ..log_text import loggable
 from ..vision import torch_cpu_compatible
 from .core import _MediaServerBase
 from .support import (
@@ -284,7 +285,11 @@ class AiRoutesMixin(_MediaServerBase):
             # unexpected failure here would surface as aiohttp's generic
             # HTML 500 page instead of the {"error": ...} JSON contract the
             # rest of the AI API uses, breaking the web UI's error display.
-            _LOGGER.warning("AI analyze-now failed for clip %s: %s", clip_id, exc)
+            _LOGGER.warning(
+                "AI analyze-now failed for clip %s: %s",
+                loggable(clip_id),
+                loggable(exc),
+            )
             return web.json_response({"error": str(exc)}, status=500)
 
     async def _handle_ai_test(self, _request: web.Request) -> web.Response:

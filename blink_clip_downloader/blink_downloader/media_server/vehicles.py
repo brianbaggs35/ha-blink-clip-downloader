@@ -17,6 +17,7 @@ from pathlib import Path
 from aiohttp import web
 
 from ..database import ClipFilters
+from ..log_text import loggable
 from .camera_configs import CameraConfigsRoutesMixin
 from .support import (
     _CAMERA_CONFIGS_SAVE_ERROR,
@@ -162,7 +163,9 @@ class VehicleRoutesMixin(CameraConfigsRoutesMixin):
                 )
             except OSError as exc:
                 _LOGGER.warning(
-                    "Could not save vehicle zone snapshot for %s: %s", camera, exc
+                    "Could not save vehicle zone snapshot for %s: %s",
+                    loggable(camera),
+                    loggable(exc),
                 )
 
             # Applied before the write attempt, not after: a failure to persist
@@ -238,7 +241,7 @@ class VehicleRoutesMixin(CameraConfigsRoutesMixin):
             except (FileNotFoundError, ValueError):
                 _LOGGER.warning(
                     "Ignoring vehicle zone thumbnail outside clip storage for %s",
-                    camera,
+                    loggable(camera),
                 )
                 raise web.HTTPNotFound(
                     text="No snapshot saved for this camera"
@@ -252,8 +255,8 @@ class VehicleRoutesMixin(CameraConfigsRoutesMixin):
             except OSError as exc:
                 _LOGGER.warning(
                     "Could not persist fallback vehicle zone snapshot for %s: %s",
-                    camera,
-                    exc,
+                    loggable(camera),
+                    loggable(exc),
                 )
                 return web.FileResponse(fallback, headers={"Cache-Control": "no-cache"})
         # Always revalidate rather than a max-age cache: the filename is

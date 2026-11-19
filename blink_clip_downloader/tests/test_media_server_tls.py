@@ -398,7 +398,7 @@ async def test_https_not_starting_leaves_the_plain_listener_up(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     taken = socket.socket()
-    taken.bind(("0.0.0.0", 0))  # nosec B104
+    taken.bind(("127.0.0.1", 0))
     taken.listen()
     try:
         server = MediaServer(

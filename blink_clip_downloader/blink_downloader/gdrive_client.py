@@ -29,6 +29,8 @@ from typing import Any, Literal
 import aiofiles
 import aiohttp
 
+from .log_text import loggable
+
 _LOGGER = logging.getLogger(__name__)
 
 _DEVICE_CODE_URL = "https://oauth2.googleapis.com/device/code"
@@ -653,13 +655,17 @@ class GDriveClient:
                 if resp.status not in (200, 201):
                     _LOGGER.warning(
                         "Could not create Google Drive folder %r: HTTP %d",
-                        name,
+                        loggable(name),
                         resp.status,
                     )
                     return None
                 data = await resp.json()
         except _JSON_ERRORS as exc:
-            _LOGGER.warning("Could not create Google Drive folder %r: %s", name, exc)
+            _LOGGER.warning(
+                "Could not create Google Drive folder %r: %s",
+                loggable(name),
+                loggable(exc),
+            )
             return None
 
         return DriveFolder(
