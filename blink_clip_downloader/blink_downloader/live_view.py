@@ -31,12 +31,17 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 from .downloader import AUTH_FATAL_EXCEPTIONS
+from .log_text import loggable
 
 if TYPE_CHECKING:
     from blinkpy.camera import BlinkCamera
     from blinkpy.livestream import BlinkLiveStream
 
 _LOGGER = logging.getLogger(__name__)
+
+# What the browser is told when starting a session fails for a reason the add-on
+# does not word itself: the kind of failure, not the library's own text.
+_START_FAILED = "Could not start live view ({kind}). The add-on log has the details."
 
 _HLS_SEGMENT_PATTERN = "seg_%05d.ts"
 _HLS_PLAYLIST_NAME = "stream.m3u8"
@@ -381,9 +386,9 @@ class LiveViewManager:
             raise
         except Exception as exc:
             _LOGGER.exception(
-                "Live view: could not start live view for %r", camera_name
+                "Live view: could not start live view for %r", loggable(camera_name)
             )
-            raise LiveViewError(f"Could not start live view: {exc}") from exc
+            raise LiveViewError(_START_FAILED.format(kind=type(exc).__name__)) from exc
 
         _patch_short_reads(stream)
 
@@ -401,7 +406,12 @@ class LiveViewManager:
                 raise LiveViewError(
                     "Could not open a local port for the live view relay."
                 ) from exc
-            raise LiveViewError(f"Could not start live view: {exc}") from exc
+            _LOGGER.error(
+                "Live view: could not open the relay for %r",
+                loggable(camera_name),
+                exc_info=exc,
+            )
+            raise LiveViewError(_START_FAILED.format(kind=type(exc).__name__)) from exc
 
         hls_dir = Path(tempfile.mkdtemp(prefix="blink-liveview-"))
         try:

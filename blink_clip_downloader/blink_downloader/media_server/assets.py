@@ -22,6 +22,7 @@ from aiohttp import web
 
 from .. import protected_assets
 from ..database import ClipFilters
+from ..log_text import loggable
 from .core import _MediaServerBase
 from .support import (
     _CLIP_NOT_FOUND,
@@ -298,7 +299,11 @@ class AssetsRoutesMixin(_MediaServerBase):
             # camera name contains can reach the filesystem as a separator.
             self._asset_snapshot_path(camera).write_bytes(frame)  # NOSONAR
         except OSError as exc:
-            _LOGGER.warning("Could not save the asset frame for %s: %s", camera, exc)
+            _LOGGER.warning(
+                "Could not save the asset frame for %s: %s",
+                loggable(camera),
+                loggable(exc),
+            )
 
     def _store_assets(self, assets: list[dict[str, Any]]) -> None:
         """Apply *assets* to the live analyzer, then persist them.

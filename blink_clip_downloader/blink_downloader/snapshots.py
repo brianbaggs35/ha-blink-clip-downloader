@@ -24,6 +24,8 @@ from dataclasses import dataclass, field
 
 from PIL import Image
 
+from .log_text import loggable
+
 _LOGGER = logging.getLogger(__name__)
 
 # How many more times Blink is asked for a damaged thumbnail, and how far apart.
@@ -117,7 +119,7 @@ class SnapshotKeeper:
             _LOGGER.warning(
                 "Security Feed: the latest snapshot Blink gave for %r is not a whole "
                 "picture (%s, %d bytes), so it will not be shown",
-                name,
+                loggable(name),
                 defect,
                 len(cached),
             )
@@ -144,13 +146,14 @@ class SnapshotKeeper:
             camera.held = fresh
             camera.tries_left = 0
             _LOGGER.info(
-                "Security Feed: asked Blink again and got a whole snapshot for %r", name
+                "Security Feed: asked Blink again and got a whole snapshot for %r",
+                loggable(name),
             )
         elif camera.tries_left == 0:
             _LOGGER.warning(
                 "Security Feed: Blink still has no whole snapshot for %r after %d "
                 "tries (%s); %s until the camera records something new",
-                name,
+                loggable(name),
                 RECOVERY_ATTEMPTS,
                 defect,
                 "keeping the last whole one"

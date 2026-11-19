@@ -17,6 +17,7 @@ from typing import Any
 
 from aiohttp import web
 
+from ..log_text import loggable
 from .core import _MediaServerBase
 from .support import (
     _ARCHIVE_CLIPS_PAGE_SIZE,
@@ -209,7 +210,11 @@ class StorageRoutesMixin(_MediaServerBase):
             try:
                 zip_path.unlink()
             except OSError as exc:
-                _LOGGER.warning("Could not delete archive file %s: %s", zip_path, exc)
+                _LOGGER.warning(
+                    "Could not delete archive file %s: %s",
+                    loggable(zip_path),
+                    loggable(exc),
+                )
 
         deleted_clips = await self._db.delete_clips_by_archive_path(archive_path)
         return web.json_response(

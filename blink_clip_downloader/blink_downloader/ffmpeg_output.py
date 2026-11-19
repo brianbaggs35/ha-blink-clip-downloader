@@ -21,6 +21,8 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from .log_text import loggable
+
 _LOGGER = logging.getLogger(__name__)
 
 #: Width, in pixels, of the frames clip analysis extracts — and so of the
@@ -113,7 +115,7 @@ async def extract_jpeg_frames(
     try:
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
     except TimeoutError:
-        _LOGGER.warning("ffmpeg timed out extracting frames for %s", label)
+        _LOGGER.warning("ffmpeg timed out extracting frames for %s", loggable(label))
         # A timed-out communicate() leaves the child running; kill and reap it.
         proc.kill()
         await proc.wait()
@@ -122,8 +124,8 @@ async def extract_jpeg_frames(
         _LOGGER.warning(
             "ffmpeg exited %d extracting frames for %s: %s",
             proc.returncode,
-            label,
-            format_ffmpeg_error(stderr),
+            loggable(label),
+            loggable(format_ffmpeg_error(stderr)),
         )
         return []
     return split_jpeg_frames(stdout or b"")

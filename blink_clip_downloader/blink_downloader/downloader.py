@@ -30,6 +30,7 @@ from blinkpy.sync_module import BlinkLotus, BlinkOwl
 
 from .config import AppConfig
 from .database import ClipDatabase
+from .log_text import loggable
 from .snapshots import SnapshotKeeper
 from .storage import StorageManager
 from .tracker import GIVE_UP_AFTER, ClipTracker, as_utc
@@ -697,8 +698,8 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                 "Could not %s %s %r: %s",
                 "arm" if armed else "disarm",
                 noun,
-                name,
-                exc,
+                loggable(name),
+                loggable(exc),
             )
             return False
         if response is None:
@@ -706,7 +707,7 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                 "Could not %s %s %r: Blink gave no answer to the request",
                 "arm" if armed else "disarm",
                 noun,
-                name,
+                loggable(name),
             )
             return False
         return True
