@@ -291,30 +291,23 @@ async def test_index_ingress_path_header_is_used_when_present(
     assert 'window.__HA_INGRESS_ROOT__ = "/api/hassio_ingress/abc"' in body
 
 
-async def test_index_ingress_path_header_escapes_script_breakout(
-    client: TestClient,
+async def test_index_ingress_path_header_that_is_not_a_plain_path_is_ignored(
+    client: TestClient, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """A malicious X-Ingress-Path must not be able to break out of the
-    surrounding JS string literal or close the <script> tag early."""
-    malicious = "</script><script>alert(1)</script>"
-    resp = await client.get("/", headers={"X-Ingress-Path": malicious})
-    body = await resp.text()
-    assert "<script>alert(1)</script>" not in body
-    assert "<\\/script><script>alert(1)<\\/script>" in body
-
-
-async def test_index_ingress_path_header_escapes_quote_breakout(
-    client: TestClient,
-) -> None:
-    # Note: no trailing "/" in the payload - the handler's legitimate
-    # .rstrip("/") normalization (for a real ingress path like "/foo/") would
-    # otherwise strip it and mask what this test is actually checking.
-    malicious = "'; alert(1); x"
-    resp = await client.get("/", headers={"X-Ingress-Path": malicious})
-    body = await resp.text()
-    assert "window.__HA_INGRESS_ROOT__ = '';" not in body
-    assert "alert(1); x" in body  # present, but safely inside a JSON string
-    assert 'window.__HA_INGRESS_ROOT__ = "\'; alert(1); x"' in body
+    """A malicious X-Ingress-Path never reaches the page: not a plain path."""
+    for malicious in (
+        "</script><script>alert(1)</script>",
+        "'; alert(1); x",
+        '/ok"; alert(1); "',
+        "no-leading-slash",
+    ):
+        with caplog.at_level("WARNING"):
+            resp = await client.get("/", headers={"X-Ingress-Path": malicious})
+        body = await resp.text()
+        assert "alert(1)" not in body
+        assert "no-leading-slash" not in body
+        assert 'window.__HA_INGRESS_ROOT__ = ""' in body
+    assert "Ignoring an X-Ingress-Path" in caplog.text
 
 
 # ---------------------------------------------------------------------------
