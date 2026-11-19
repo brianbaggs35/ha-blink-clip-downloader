@@ -7,6 +7,7 @@ __pycache__
 .venv/*
 .vscode/*
 .python-version
+!blink_clip_downloader/.python-version
 .ruff_cache/*
 .mypy_cache/*
 .pytest_cache/*
