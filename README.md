@@ -285,8 +285,8 @@ enroll, such as getting in or out of their own car. It never clears a
 possible impact, a clip with someone it doesn't recognize, or evidence
 strong enough to raise an alert on its own. If the recognition models can't
 be loaded, the Biometrics tab says why and that nothing is being recognized
-until it's fixed; the AI tab does the same for a model (object detection, for
-one) that couldn't be loaded.
+until it's fixed; the AI tab does the same for any optional vision model (object
+detection, depth, pose, contact segmentation, audio) that couldn't be loaded.
 
 Details are in the docs:
 [Vehicles tab](blink_clip_downloader/DOCS.md#vehicles-tab--protected-vehicle-monitoring),

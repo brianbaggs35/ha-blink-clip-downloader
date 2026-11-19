@@ -2195,11 +2195,13 @@ async def test_the_pipeline_reports_the_local_detector_but_not_the_remote_one(
     local._detector._load_guard.failed("RuntimeError: blip")
     local._pose._load_guard.failed("RuntimeError: blip")
     local._depth._load_guard.failed("RuntimeError: blip")
+    local._segmenter._load_guard.failed("RuntimeError: blip")
     local._audio._load_guard.failed("RuntimeError: blip")
     assert [r.stage for r in local.stage_health()] == [
         SOURCE_OBJECT_DETECTION,
         SOURCE_POSE_ESTIMATION,
         SOURCE_DEPTH_ESTIMATION,
+        SOURCE_CONTACT_SEGMENTATION,
         "audio analysis",
     ]
     remote = VisionPipeline(VisionConfig(vision_backend="huggingface"))

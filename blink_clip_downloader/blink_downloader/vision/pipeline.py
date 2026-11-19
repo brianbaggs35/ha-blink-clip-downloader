@@ -301,6 +301,7 @@ class VisionPipeline:
             self._face_embedder.health(),
             self._pose.health(),
             self._depth.health(),
+            self._segmenter.health(),
             self._audio.health(),
         ]
         if isinstance(self._detector, ObjectDetector):
