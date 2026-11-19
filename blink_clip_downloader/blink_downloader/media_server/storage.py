@@ -201,7 +201,10 @@ class StorageRoutesMixin(_MediaServerBase):
                     await self._gdrive_queue.prune_empty_backup_folders(clips)
                 )
 
-        zip_path = Path(archive_path)
+        # The path the library itself recorded for these clips (equal to the
+        # one asked for, since that is what the lookup matched on), never the
+        # query-string text.
+        zip_path = Path(str(clips[0]["archive_path"]))
         if zip_path.exists():
             try:
                 zip_path.unlink()

@@ -9,6 +9,7 @@ a route module can import from here without importing another route module.
 from __future__ import annotations
 
 import logging
+import os
 import re
 from collections.abc import Callable
 from pathlib import Path
@@ -17,6 +18,21 @@ from typing import Any
 from aiohttp import web
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def confined_path(base: Path, filename: str, what: str) -> Path:
+    """Return *filename* inside *base*, resolved; refuse one that lands outside it.
+
+    The check is on the fully resolved path, so a ``..`` segment and a symlink
+    already in *base* that points elsewhere are both caught. *what* names the
+    file in the error (``"Vehicle zone snapshot"``).
+    """
+    root = os.path.realpath(base)
+    candidate = os.path.realpath(os.path.join(root, filename))
+    if not candidate.startswith(root + os.sep):
+        raise ValueError(f"{what} path escapes its directory")
+    return Path(candidate)
+
 
 _CLIP_NOT_FOUND = "Clip not found"
 

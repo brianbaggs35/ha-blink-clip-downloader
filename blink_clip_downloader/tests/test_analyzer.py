@@ -12549,3 +12549,52 @@ def test_uniform_can_miss_a_brief_event_entirely() -> None:
     picked = {frames.index(f) for f in ClipAnalyzer._select_uniform_frames(frames, 5)}
 
     assert not (picked & event_frames)
+
+
+# ------------------------------------------------------------------
+# MoondreamFineTuneManager — a fine-tune id never leaves the id's own path segment
+# ------------------------------------------------------------------
+
+_HOSTILE_FINETUNE_IDS = [
+    "..",
+    "../../v1/other",
+    "ft-1/../../x",
+    "ft-1?admin=1",
+    "ft-1#frag",
+    "ft%2F..%2Fx",
+    "ft 1",
+    "",
+    "a" * 129,
+]
+
+
+@pytest.mark.parametrize("finetune_id", _HOSTILE_FINETUNE_IDS)
+async def test_a_hostile_finetune_id_makes_no_request(finetune_id: str) -> None:
+    session = _mock_session()
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = session
+    assert await m.get_finetune(finetune_id) is None
+    assert await m.delete_finetune(finetune_id) is False
+    assert await m.save_checkpoint(finetune_id) is False
+    assert await m.list_checkpoints(finetune_id) == []
+    assert await m.delete_checkpoint(finetune_id, 5) is False
+    assert await m.log_metrics(finetune_id, 5, {"loss": 0.1}) is False
+    for verb in ("get", "post", "delete"):
+        assert not getattr(session, verb).called
+
+
+async def test_a_plain_finetune_id_is_put_in_the_request_path() -> None:
+    session = _mock_session(
+        delete=MagicMock(return_value=_make_ft_resp(200)),
+        post=MagicMock(return_value=_make_ft_resp(200)),
+    )
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = session
+    assert await m.delete_checkpoint("ft_Ab-9", 50) is True
+    assert await m.log_metrics("ft_Ab-9", 50, {"loss": 0.1}) is True
+    assert session.delete.call_args.args[0] == (
+        "https://api.moondream.ai/v1/tuning/finetunes/ft_Ab-9/checkpoints/50"
+    )
+    assert session.post.call_args.args[0] == (
+        "https://api.moondream.ai/v1/tuning/finetunes/ft_Ab-9/metrics"
+    )

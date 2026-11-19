@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 from aiohttp import web
 
@@ -18,6 +19,10 @@ from .support import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+# What Supervisor's ingress sends: ``/api/hassio_ingress/<url-safe token>``.
+# Anything else in the header is not from Supervisor and is not used.
+_INGRESS_PATH_RE = re.compile(r"/[A-Za-z0-9/_.~-]*")
 
 
 class AppShellMixin(_MediaServerBase):
@@ -55,6 +60,9 @@ class AppShellMixin(_MediaServerBase):
                 )
             )
         ingress_path = request.headers.get("X-Ingress-Path", "").rstrip("/")
+        if ingress_path and not _INGRESS_PATH_RE.fullmatch(ingress_path):
+            _LOGGER.warning("Ignoring an X-Ingress-Path that is not a plain path")
+            ingress_path = ""
         safe_literal = json.dumps(ingress_path).replace("</", "<\\/")
         html = index_file.read_text().replace("'__HAROOT__'", safe_literal)
         return web.Response(text=html, content_type="text/html")

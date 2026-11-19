@@ -300,7 +300,7 @@ def test_resolve_url_relative_uses_base_url(dl):
 def test_resolve_url_fallback_when_no_blink(dl):
     dl._blink = None
     result = dl._resolve_url("/clip.mp4")
-    assert "immedia-semi.com" in result
+    assert result == "https://rest-prod.immedia-semi.com/clip.mp4"
 
 
 def test_resolve_url_fallback_when_blink_has_no_urls(dl):
@@ -310,7 +310,7 @@ def test_resolve_url_fallback_when_blink_has_no_urls(dl):
     mock_blink.urls = None
     dl._blink = mock_blink
     result = dl._resolve_url("/clip.mp4")
-    assert "immedia-semi.com" in result
+    assert result == "https://rest-prod.immedia-semi.com/clip.mp4"
 
 
 def test_resolve_url_fallback_when_base_url_missing(dl):
@@ -319,7 +319,7 @@ def test_resolve_url_fallback_when_base_url_missing(dl):
     mock_blink.urls.base_url = None
     dl._blink = mock_blink
     result = dl._resolve_url("/clip.mp4")
-    assert "immedia-semi.com" in result
+    assert result == "https://rest-prod.immedia-semi.com/clip.mp4"
 
 
 def test_resolve_url_falls_back_when_urls_check_raises_attributeerror(dl):
@@ -338,7 +338,7 @@ def test_resolve_url_falls_back_when_urls_check_raises_attributeerror(dl):
 
     dl._blink = _WeirdBlink()
     result = dl._resolve_url("/clip.mp4")
-    assert "immedia-semi.com" in result
+    assert result == "https://rest-prod.immedia-semi.com/clip.mp4"
 
 
 # ---------------------------------------------------------------------------

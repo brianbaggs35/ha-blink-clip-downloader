@@ -23,6 +23,7 @@ from .support import (
     _CLIP_NOT_FOUND,
     _INVALID_JSON_BODY,
     _SETTINGS_WRITE_FAILED,
+    confined_path,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -273,15 +274,9 @@ class VehicleRoutesMixin(CameraConfigsRoutesMixin):
 
     @classmethod
     def _confined_vehicle_zone_snapshot_path(cls, filename: str) -> Path:
-        snapshot_dir = cls._VEHICLE_ZONE_SNAPSHOTS_DIR
-        path = snapshot_dir / filename
-        try:
-            path.resolve().relative_to(snapshot_dir.resolve())
-        except ValueError as exc:
-            raise ValueError(
-                "Vehicle zone snapshot path escapes its directory"
-            ) from exc
-        return path
+        return confined_path(
+            cls._VEHICLE_ZONE_SNAPSHOTS_DIR, filename, "Vehicle zone snapshot"
+        )
 
     def _migrate_vehicle_zone_snapshot(self, old_name: str, new_name: str) -> None:
         old_snapshot = self._vehicle_zone_snapshot_path(old_name)
