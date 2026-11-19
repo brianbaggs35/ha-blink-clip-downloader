@@ -62,7 +62,7 @@ FROM ghcr.io/home-assistant/base-debian:trixie
 # "*-base-debian" images ship no interpreter at all (unlike the old
 # "*-base-python" Alpine images), so Python itself is installed explicitly
 # below. Trixie (Debian 13) ships Python 3.13 by default, satisfying this
-# project's requires-python = ">=3.12".
+# project's requires-python = ">=3.13".
 #
 # PIP_BREAK_SYSTEM_PACKAGES: Debian's system pip refuses "externally managed
 # environment" installs (PEP 668) by default. This container is single

@@ -27,7 +27,7 @@ permissions:
   contents: read
 
 env:
-  PYTHON_VERSION: "3.13"
+  PYTHON_VERSION: "3.13.18"
 
 jobs:
   frontend-e2e-signed-in:
