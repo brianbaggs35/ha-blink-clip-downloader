@@ -36,9 +36,16 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
-# Private by convention, shared with sibling modules: every vision stage
-# reaches these through the module, never by name import.
+# Names the sibling modules import (private by convention, or shared
+# constants): every vision stage reaches these through the module, never by
+# name import.
 __all__ = [
+    "STAGE_AUDIO_ANALYSIS",
+    "STAGE_CONTACT_SEGMENTATION",
+    "STAGE_DEPTH_ESTIMATION",
+    "STAGE_FACE_RECOGNITION",
+    "STAGE_OBJECT_DETECTION",
+    "STAGE_POSE_ESTIMATION",
     "_CPU_INCOMPATIBLE_MESSAGE",
     "_YOLO_MODEL_CACHE_DIR",
     "_native_import_lock",

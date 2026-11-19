@@ -15,9 +15,10 @@ from typing import Any
 
 import asyncpg
 
-# Private by convention, shared with sibling modules: the clip and detection
-# mixins build their queries from these.
+# Names the sibling modules import (private by convention, or shared
+# constants): the clip and detection mixins build their queries from these.
 __all__ = [
+    "SUSPICIOUS_PERIODS",
     "_SEVERITY_RANK_SQL",
     "_WHERE_CAMERA",
     "_WHERE_SINCE",
