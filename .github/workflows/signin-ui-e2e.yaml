@@ -42,7 +42,7 @@ jobs:
         image: postgres:17
         env:
           POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
+          POSTGRES_PASSWORD: postgres  # NOSONAR disposable credential for this isolated test service
           POSTGRES_DB: blink_clips_e2e
         ports:
           - 5432:5432
@@ -66,8 +66,9 @@ jobs:
 
       - name: Install project with test dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -e "blink_clip_downloader[test]"
+          python -m pip install --only-binary :all: pip==26.3
+          # CI deliberately tests the latest versions allowed by pyproject ranges.
+          pip install --only-binary :all: -e "blink_clip_downloader[test]" # NOSONAR
 
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
@@ -77,15 +78,15 @@ jobs:
           cache-dependency-path: blink_clip_downloader/frontend/package-lock.json
 
       - name: Update npm
-        run: npm install -g npm@12.2.3  # zizmor: ignore[adhoc-packages] pinned to the Dockerfile's npm
+        run: npm install -g npm@12.2.3 --ignore-scripts  # zizmor: ignore[adhoc-packages] pinned to the Dockerfile's npm
 
       - name: Install frontend dependencies
         working-directory: blink_clip_downloader/frontend
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Install Playwright browsers
         working-directory: blink_clip_downloader/frontend
-        run: npx playwright install --with-deps chromium
+        run: ./node_modules/.bin/playwright install --with-deps chromium
 
       # standalone_server.py's seeding shells out to ffmpeg for a real short
       # video (see ci.yaml's frontend-e2e job for what depends on it).
