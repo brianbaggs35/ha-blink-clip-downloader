@@ -31,12 +31,18 @@ env:
 
 jobs:
   lint:
-    name: Lint & Quality Checks
+    name: Lint & Quality Checks (${{ matrix.label }})
     runs-on: ubuntu-latest
 
     strategy:
       matrix:
+        # Keep the check label stable if the exact Python patch version changes.
         python-version: ["3.13.18", "3.14"]
+        include:
+          - python-version: "3.13.18"
+            label: "3.13"
+          - python-version: "3.14"
+            label: "3.14"
 
     env:
       PYTHON_VERSION: ${{ matrix.python-version }}
@@ -126,12 +132,18 @@ jobs:
         run: npm run lint
 
   test:
-    name: Tests
+    name: Tests (${{ matrix.label }})
     runs-on: ubuntu-latest
 
     strategy:
       matrix:
+        # Keep the check label stable if the exact Python patch version changes.
         python-version: ["3.13.18", "3.14"]
+        include:
+          - python-version: "3.13.18"
+            label: "3.13"
+          - python-version: "3.14"
+            label: "3.14"
 
     env:
       PYTHON_VERSION: ${{ matrix.python-version }}
@@ -205,14 +217,14 @@ jobs:
         # causing "Invalid token specified: missing part #2"). `act` sets
         # ACT=true for every job, so skip this step there — the artifact
         # isn't needed for a local `act` run anyway.
-        if: ${{ !env.ACT && matrix.python-version == '3.13.18' }}
+        if: ${{ !env.ACT && matrix.label == '3.13' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: coverage-report
           path: coverage.xml
 
       - name: Upload coverage reports to Codecov
-        if: ${{ !env.ACT && matrix.python-version == '3.13.18' }}
+        if: ${{ !env.ACT && matrix.label == '3.13' }}
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5  # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -239,7 +251,7 @@ jobs:
         run: npm run test:coverage
 
       - name: Upload Vitest coverage to Codecov
-        if: ${{ !env.ACT && matrix.python-version == '3.13.18' }}
+        if: ${{ !env.ACT && matrix.label == '3.13' }}
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5  # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -248,7 +260,7 @@ jobs:
           fail_ci_if_error: false
 
       - name: Upload frontend coverage artifact
-        if: ${{ !env.ACT && matrix.python-version == '3.13.18' }}
+        if: ${{ !env.ACT && matrix.label == '3.13' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: frontend-coverage-report
