@@ -1040,8 +1040,8 @@ npm run test:e2e:coverage # same, instrumented -> coverage-e2e/ (slower: full re
 ```
 
 CI folds the first six into the existing Python `lint`/`test` jobs
-(`.github/workflows/ci.yaml`), gated to run once (the `python-version ==
-"3.13"` matrix leg) rather than as a separate job. `test:e2e:coverage`
+(`.github/workflows/ci.yaml`), gated to run once (the `label == "3.13"`
+matrix entry) rather than as a separate job. `test:e2e:coverage`
 runs in its own `frontend-e2e` job instead (own Postgres service, not
 matrixed).
 
