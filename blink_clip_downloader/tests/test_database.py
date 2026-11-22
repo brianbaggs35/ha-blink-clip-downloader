@@ -1297,7 +1297,7 @@ def test_a_table_is_either_relabelled_or_kept_with_its_clip() -> None:
     relabelled = set(cameras_module._RELABELLED_TABLES)
     kept = set(CLIP_HISTORY_TABLES)
     assert not relabelled & kept
-    assert {"analysis_feedback", "face_enrollments", "battery_history"} == relabelled
+    assert relabelled == {"analysis_feedback", "face_enrollments", "battery_history"}
     assert {"clips", "analysis_results", "security_events"} <= kept
 
 
