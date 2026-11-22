@@ -1,4 +1,4 @@
-import { test, expect } from './coverage-fixtures'
+import { appApiUrl, test, expect } from './coverage-fixtures'
 import type { Page } from '@playwright/test'
 
 // Which face-recognition backend runs (ai_face_recognition_backend), as the
@@ -26,7 +26,7 @@ async function openBiometrics(page: Page, change: (body: Body) => Body) {
 }
 
 test('the real server runs FaceNet and counts every seeded photo as in use', async ({ page }) => {
-  const body = await (await page.request.get('/api/ai/faces')).json()
+  const body = await (await page.request.get(appApiUrl('/api/ai/faces'))).json()
   expect(body.backend).toBe('facenet')
   expect(body.backend_measured).toBe(true)
   expect(body.faces.length).toBeGreaterThan(0)
