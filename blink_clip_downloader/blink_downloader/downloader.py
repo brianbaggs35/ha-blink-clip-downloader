@@ -1793,8 +1793,9 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                     base = getattr(blink_urls, "base_url", None)
                     if base:
                         return f"{base}{url}"
-            except AttributeError:
-                # A client without the expected URL attributes: use the default host.
+            except (AttributeError, TypeError):
+                # A client without the expected URL attributes, or one whose
+                # value cannot even be tested: use the default host.
                 pass
         return f"https://rest-prod.immedia-semi.com{url}"
 

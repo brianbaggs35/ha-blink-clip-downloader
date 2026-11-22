@@ -327,7 +327,10 @@ class AccessRoutesMixin(_MediaServerBase):
         )
         return response
 
-    async def _handle_logout(self, _request: web.Request) -> web.Response:  # NOSONAR
+    async def _handle_logout(self, request: web.Request) -> web.Response:  # NOSONAR
+        cookie = request.cookies.get(SESSION_COOKIE)
+        if cookie:
+            self._access.revoke_session(cookie)
         response = web.json_response({"signed_out": True})
         response.del_cookie(SESSION_COOKIE, path="/")
         return response

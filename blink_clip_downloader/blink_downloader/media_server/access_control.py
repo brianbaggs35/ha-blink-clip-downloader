@@ -10,8 +10,9 @@ This module holds the state and rules for the second door, with no aiohttp
 routing in it (that is :mod:`.access`), so each rule can be tested on its
 own:
 
-* a signed-in browser carries a session cookie, signed with a secret that
-  never leaves ``/data``;
+* a signed-in browser carries a session cookie: a random token with nothing
+  in it, which this module looks up in the sessions it keeps in ``/data``
+  (as a hash, so the file is not a way back in);
 * Home Assistant's own server-side calls — the Generic Camera snapshot URL
   and the ``rest_command`` scripts the Automations tab generates — carry an
   access token instead, which opens only those endpoints
@@ -24,7 +25,6 @@ own:
 
 from __future__ import annotations
 
-import base64
 import hashlib
 import hmac
 import json
@@ -45,13 +45,18 @@ _LOGGER = logging.getLogger(__name__)
 #: ingress add-on should accept — not a deployment detail to configure.
 INGRESS_PROXY_IP = "172.30.32.2"  # NOSONAR
 
-#: The session-signing secret and the access token, created on first use.
+#: The access token and the signed-in sessions, created on first use.
 ACCESS_FILE = Path("/data/web_access.json")
 
 SESSION_COOKIE = "blink_session"
 #: How long a sign-in lasts: long enough that a wall tablet's kiosk card is
 #: not asking every week, short enough that a lost phone expires.
 SESSION_LIFETIME_SECONDS = 30 * 24 * 3600
+#: Sessions kept at once. Signing in is rare and each one lasts a month, so
+#: this is far more than a household uses; it only stops a script that signs
+#: in over and over from growing the file without limit. The one closest to
+#: expiring is dropped first.
+MAX_SESSIONS = 200
 
 #: Failed sign-ins one address may make inside the lockout window before it
 #: is refused outright until the oldest failure ages out.
@@ -78,12 +83,29 @@ _SUPERVISOR_AUTH_URL = "http://supervisor/auth"  # NOSONAR
 _AUTH_TIMEOUT = aiohttp.ClientTimeout(total=15)
 
 
-def _b64(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).decode().rstrip("=")
+def _digest(cookie: str) -> str:
+    """What is stored in place of a session cookie."""
+    return hashlib.sha256(cookie.encode()).hexdigest()
 
 
-def _unb64(text: str) -> bytes:
-    return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
+def _stored_sessions(raw: object) -> dict[str, tuple[str, int]]:
+    """The sessions read back from the file, leaving out anything malformed."""
+    sessions: dict[str, tuple[str, int]] = {}
+    if not isinstance(raw, dict):
+        return sessions
+    now = time.time()
+    for key, entry in raw.items():
+        if not (isinstance(key, str) and isinstance(entry, dict)):
+            continue
+        user, expires = entry.get("user"), entry.get("expires")
+        if (
+            isinstance(user, str)
+            and isinstance(expires, int)
+            and not isinstance(expires, bool)
+            and expires > now
+        ):
+            sessions[key] = (user, expires)
+    return sessions
 
 
 class AccessControl:
@@ -95,6 +117,8 @@ class AccessControl:
         self.enabled = enabled
         self._supervisor_token = supervisor_token
         self._secrets: dict[str, str] | None = None
+        #: Signed-in sessions: ``_digest(cookie)`` -> (username, expiry time).
+        self._sessions: dict[str, tuple[str, int]] = {}
         self._failures: dict[str, list[float]] = {}
 
     # ------------------------------------------------------------------
@@ -102,7 +126,7 @@ class AccessControl:
     # ------------------------------------------------------------------
 
     def load_or_create(self) -> bool:
-        """Load the stored secrets, creating them if there are none yet.
+        """Load the stored token and sessions, creating the token if needed.
 
         Returns True when they were created by this call — the first start
         with sign-in available, which is when app.py tells an existing
@@ -117,30 +141,24 @@ class AccessControl:
             stored = json.loads(path.read_text())
             if (
                 isinstance(stored, dict)
-                and isinstance(stored.get("session_secret"), str)
                 and isinstance(stored.get("access_token"), str)
-                and stored["session_secret"]
                 and stored["access_token"]
             ):
-                self._secrets = {
-                    "session_secret": stored["session_secret"],
-                    "access_token": stored["access_token"],
-                }
+                self._secrets = {"access_token": stored["access_token"]}
+                self._sessions = _stored_sessions(stored.get("sessions"))
                 return False
         except FileNotFoundError:
             # First start: nothing saved yet, so new secrets are made below.
             pass
         except (OSError, ValueError):
             _LOGGER.warning("%s is unreadable; creating new sign-in secrets", path)
-        self._secrets = {
-            "session_secret": secrets.token_urlsafe(32),
-            "access_token": secrets.token_urlsafe(24),
-        }
+        self._secrets = {"access_token": secrets.token_urlsafe(24)}
+        self._sessions = {}
         self._save()
         return True
 
     def _save(self) -> None:
-        """Write the secrets atomically, readable by this process only."""
+        """Write the token and sessions atomically, readable by this process only."""
         assert self._secrets is not None
         path = ACCESS_FILE
         tmp = path.with_name(path.name + ".tmp")
@@ -148,13 +166,22 @@ class AccessControl:
             path.parent.mkdir(parents=True, exist_ok=True)
             fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
             with os.fdopen(fd, "w") as fh:
-                json.dump(self._secrets, fh)
+                json.dump(
+                    {
+                        **self._secrets,
+                        "sessions": {
+                            key: {"user": user, "expires": expires}
+                            for key, (user, expires) in self._sessions.items()
+                        },
+                    },
+                    fh,
+                )
                 fh.flush()
                 os.fsync(fh.fileno())
             os.replace(tmp, path)
         except OSError as exc:
             _LOGGER.warning(
-                "Could not save sign-in secrets to %s (%s); sign-ins will "
+                "Could not save sign-in details to %s (%s); sign-ins will "
                 "not survive a restart",
                 path,
                 exc,
@@ -188,37 +215,47 @@ class AccessControl:
     # Sessions
     # ------------------------------------------------------------------
 
-    def _signature(self, payload: str) -> str:
-        key = self._secret("session_secret").encode()
-        return hmac.new(key, payload.encode(), hashlib.sha256).hexdigest()
+    def _forget_expired(self, now: float) -> None:
+        self._sessions = {
+            key: session for key, session in self._sessions.items() if session[1] > now
+        }
 
     def issue_session(self, username: str, now: float | None = None) -> str:
-        """A signed cookie value naming *username*, valid for the lifetime."""
-        expires = int((time.time() if now is None else now) + SESSION_LIFETIME_SECONDS)
-        payload = f"{_b64(username.encode())}.{expires}"
-        return f"{payload}.{self._signature(payload)}"
+        """A new session cookie for *username*, valid for the lifetime.
+
+        The cookie is random: it names nobody, and nothing the browser sent
+        is in it. Who it belongs to is kept here, so that it can also be
+        taken back (:meth:`revoke_session`).
+        """
+        self.load_or_create()
+        now = time.time() if now is None else now
+        self._forget_expired(now)
+        while len(self._sessions) >= MAX_SESSIONS:
+            del self._sessions[min(self._sessions, key=lambda k: self._sessions[k][1])]
+        cookie = secrets.token_urlsafe(32)
+        self._sessions[_digest(cookie)] = (
+            username,
+            int(now + SESSION_LIFETIME_SECONDS),
+        )
+        self._save()
+        return cookie
 
     def session_user(self, cookie: str, now: float | None = None) -> str | None:
-        """The username a valid, unexpired session cookie names, else None."""
-        parts = cookie.split(".")
-        if len(parts) != 3:
+        """The username a live session cookie belongs to, else None."""
+        self.load_or_create()
+        session = self._sessions.get(_digest(cookie))
+        if session is None:
             return None
-        user_part, expires_part, signature = parts
-        payload = f"{user_part}.{expires_part}"
-        # Compared as bytes: a cookie is whatever the client sent, and
-        # compare_digest raises on a str holding anything but ASCII.
-        if not hmac.compare_digest(
-            signature.encode(), self._signature(payload).encode()
-        ):
-            return None
-        try:
-            expires = int(expires_part)
-            username = _unb64(user_part).decode()
-        except ValueError:  # binascii.Error and UnicodeDecodeError included
-            return None
+        username, expires = session
         if expires <= (time.time() if now is None else now):
             return None
         return username
+
+    def revoke_session(self, cookie: str) -> None:
+        """End the session *cookie* belongs to, so it opens nothing again."""
+        self.load_or_create()
+        if self._sessions.pop(_digest(cookie), None) is not None:
+            self._save()
 
     # ------------------------------------------------------------------
     # Sign-in

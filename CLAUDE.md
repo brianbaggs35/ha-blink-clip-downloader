@@ -413,8 +413,11 @@ architecture.
       middleware lets through requests from Supervisor's ingress proxy
       (`172.30.32.2`, matched on the TCP peer, never a header), `/health`,
       `/login` and the favicon; a browser with a valid session cookie
-      (signed with a secret in `/data/web_access.json`; its writes must pass
-      a `Sec-Fetch-Site`/`Origin` same-origin check); and a request carrying
+      (a random token with nothing from the request in it, looked up as a
+      SHA-256 hash among the sessions kept in `/data/web_access.json`, capped
+      at `MAX_SESSIONS` and ended by sign-out — never a value built from the
+      username, which is what CodeQL's cookie-injection rule is about; its
+      writes must pass a `Sec-Fetch-Site`/`Origin` same-origin check); and a request carrying
       the access token, but **only** to `access_control.TOKEN_ROUTES` — the
       endpoints the Automations tab's generated YAML has Home Assistant
       call. A new endpoint that Home Assistant itself must reach has to be

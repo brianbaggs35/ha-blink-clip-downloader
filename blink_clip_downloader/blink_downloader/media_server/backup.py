@@ -25,6 +25,7 @@ rather than queued: it would be working from a library the first is changing.
 from __future__ import annotations
 
 import asyncio
+import errno
 import functools
 import logging
 import os
@@ -93,6 +94,19 @@ def _reports_upload_errors(handler: _Handler) -> _Handler:
     return wrapped
 
 
+#: The operating-system reasons a person can act on, worded by this add-on:
+#: what the system itself says can carry a path or a library's own text, so
+#: it is looked up here and never passed on.
+_OS_REASONS: dict[int, str] = {
+    errno.ENOSPC: "No space left on device",
+    errno.EDQUOT: "Disk quota exceeded",
+    errno.EACCES: "Permission denied",
+    errno.EPERM: "Operation not permitted",
+    errno.EROFS: "Read-only file system",
+    errno.ENOENT: "No such file or directory",
+}
+
+
 def _failure(
     exc: Exception, doing: str, *, unchanged: bool = False
 ) -> web.HTTPException:
@@ -100,7 +114,8 @@ def _failure(
 
     A :class:`BackupError` already says what is wrong with the file. Anything
     else is logged in full and answered with the part a person can act on:
-    the operating system's reason when it was one, else a pointer to the log.
+    the operating system's reason when it was one this add-on has words for
+    (never the system's own text or a file name), else a pointer to the log.
     *unchanged* adds that nothing was changed, for the restore's database
     half, which rolls back.
     """
@@ -108,10 +123,10 @@ def _failure(
         text = str(exc) + (" Nothing was changed." if unchanged else "")
         return web.HTTPUnprocessableEntity(text=text)
     _LOGGER.error("%s failed", doing, exc_info=exc)
-    if isinstance(exc, OSError):
-        reason = exc.strerror or str(exc)
-        if isinstance(exc.filename, str):
-            reason += f" ({Path(exc.filename).name})"
+    reason = None
+    if isinstance(exc, OSError) and exc.errno is not None:
+        reason = _OS_REASONS.get(exc.errno)
+    if reason is not None:
         text = f"{doing} failed: {reason}."
     else:
         text = f"{doing} failed. The add-on logs have the reason."

@@ -8,9 +8,12 @@ come from the add-on's own page; and with it off, nothing changes at all.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import os
 import stat
+import time
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -25,6 +28,7 @@ from blink_downloader.media_server import access as access_module
 from blink_downloader.media_server.access_control import (
     LOCKOUT_SECONDS,
     MAX_FAILED_SIGN_INS,
+    MAX_SESSIONS,
     SESSION_COOKIE,
     SESSION_LIFETIME_SECONDS,
     TOKEN_ROUTES,
@@ -43,15 +47,16 @@ def test_secrets_are_created_once_and_kept_private() -> None:
     path = access_control.ACCESS_FILE
     assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
 
+    cookie = first.issue_session("brian")
     second = AccessControl(enabled=True)
     assert second.load_or_create() is False  # read back from disk
     assert second.access_token == first.access_token
-    assert second.session_user(first.issue_session("brian")) == "brian"
+    assert second.session_user(cookie) == "brian"  # a restart keeps people in
 
 
 @pytest.mark.parametrize(
     "content",
-    ["not json", "[]", '{"session_secret": "", "access_token": "x"}', "{}"],
+    ["not json", "[]", '{"access_token": ""}', '{"access_token": 5}', "{}"],
 )
 def test_unusable_secrets_file_is_replaced(content: str) -> None:
     access_control.ACCESS_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -105,29 +110,119 @@ def test_session_names_with_dots_and_unicode_survive() -> None:
     assert control.session_user(control.issue_session("a.b-ç")) == "a.b-ç"
 
 
-def test_tampered_sessions_are_rejected() -> None:
+def test_a_session_cookie_holds_nothing_from_the_request() -> None:
+    """The cookie is random: the username the browser sent is not in it, in
+    any encoding, so nothing a person typed ever reaches the Set-Cookie."""
     control = AccessControl(enabled=True)
-    user, expires, signature = control.issue_session("brian").split(".")
-    forged_user = access_control._b64(b"admin")
-    assert control.session_user(f"{forged_user}.{expires}.{signature}") is None
-    assert control.session_user(f"{user}.99999999999.{signature}") is None
-    assert control.session_user("only.two") is None
-    assert control.session_user("garbage") is None
-    # Not ASCII: refused, rather than compare_digest raising a 500.
-    assert control.session_user(f"{user}.{expires}.\u00e9{signature[1:]}") is None
+    cookie = control.issue_session("brian")
+    assert "brian" not in cookie
+    assert base64.urlsafe_b64encode(b"brian").decode().rstrip("=") not in cookie
+    assert cookie != control.issue_session("brian")
 
 
-def test_well_signed_but_malformed_sessions_are_rejected() -> None:
-    """A payload the signature covers can still fail to parse."""
+def test_unknown_and_forged_sessions_are_rejected() -> None:
     control = AccessControl(enabled=True)
-    for payload in ("!!!.123", f"{access_control._b64(b'x')}.soon"):
-        cookie = f"{payload}.{control._signature(payload)}"
-        assert control.session_user(cookie) is None
-    bad_utf8 = f"{access_control._b64(bytes([0xFF]))}.99999999999"
-    assert control.session_user(f"{bad_utf8}.{control._signature(bad_utf8)}") is None
+    cookie = control.issue_session("brian")
+    for forged in ("", "garbage", "only.two", cookie[:-1], cookie + "x", "\u00e9"):
+        assert control.session_user(forged) is None
+    assert control.session_user(cookie) == "brian"
 
 
-def test_sessions_do_not_survive_a_new_secret() -> None:
+def test_the_file_keeps_sessions_as_hashes_not_cookies() -> None:
+    control = AccessControl(enabled=True)
+    cookie = control.issue_session("brian")
+    text = access_control.ACCESS_FILE.read_text()
+    assert cookie not in text
+    assert hashlib.sha256(cookie.encode()).hexdigest() in text
+
+
+def test_a_revoked_session_opens_nothing_again() -> None:
+    control = AccessControl(enabled=True)
+    keep = control.issue_session("amy")
+    gone = control.issue_session("brian")
+    control.revoke_session(gone)
+    control.revoke_session(gone)  # already gone: nothing to do, nothing raised
+    control.revoke_session("never-issued")
+    assert control.session_user(gone) is None
+    assert AccessControl(enabled=True).session_user(gone) is None  # on disk too
+    assert AccessControl(enabled=True).session_user(keep) == "amy"
+
+
+def test_expired_sessions_are_forgotten_when_the_next_is_issued() -> None:
+    control = AccessControl(enabled=True)
+    old = control.issue_session("amy", now=1000.0)
+    control.issue_session("brian", now=1000.0 + SESSION_LIFETIME_SECONDS + 1)
+    assert len(control._sessions) == 1
+    assert control.session_user(old, now=1000.0) is None
+
+
+def test_sessions_are_capped_dropping_the_one_closest_to_expiring() -> None:
+    control = AccessControl(enabled=True)
+    first = control.issue_session("first", now=1000.0)
+    others = [
+        control.issue_session(f"user{i}", now=1001.0 + i)
+        for i in range(MAX_SESSIONS - 1)
+    ]
+    assert len(control._sessions) == MAX_SESSIONS
+    assert control.session_user(first, now=1000.0) == "first"
+    newest = control.issue_session("newest", now=5000.0)
+    assert len(control._sessions) == MAX_SESSIONS
+    assert control.session_user(first, now=1000.0) is None
+    assert control.session_user(others[0], now=1001.0) == "user0"
+    assert control.session_user(newest, now=5000.0) == "newest"
+
+
+def test_malformed_stored_sessions_are_left_out() -> None:
+    now = time.time()
+    access_control.ACCESS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    access_control.ACCESS_FILE.write_text(
+        json.dumps(
+            {
+                "access_token": "tok",
+                "sessions": {
+                    "good": {"user": "brian", "expires": int(now) + 1000},
+                    "expired": {"user": "amy", "expires": int(now) - 1},
+                    "no-user": {"expires": int(now) + 1000},
+                    "bad-expiry": {"user": "x", "expires": "soon"},
+                    "bool-expiry": {"user": "x", "expires": True},
+                    "not-a-dict": "brian",
+                    "5": 5,
+                },
+            }
+        )
+    )
+    control = AccessControl(enabled=True)
+    assert control.load_or_create() is False
+    assert list(control._sessions) == ["good"]
+
+
+def test_a_sessions_entry_that_is_not_a_mapping_is_ignored() -> None:
+    access_control.ACCESS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    access_control.ACCESS_FILE.write_text(
+        json.dumps({"access_token": "tok", "sessions": ["brian"]})
+    )
+    control = AccessControl(enabled=True)
+    assert control.load_or_create() is False
+    assert control.access_token == "tok"
+    assert control._sessions == {}
+
+
+def test_a_file_from_before_sessions_were_stored_keeps_its_token() -> None:
+    """Upgrading keeps the access token Home Assistant's YAML already carries;
+    only the old signed cookies stop working, so each person signs in once."""
+    access_control.ACCESS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    access_control.ACCESS_FILE.write_text(
+        json.dumps({"session_secret": "old", "access_token": "tok"})
+    )
+    control = AccessControl(enabled=True)
+    assert control.load_or_create() is False
+    assert control.access_token == "tok"
+    assert control.session_user("brian.9999999999.deadbeef") is None
+    control.issue_session("brian")
+    assert "session_secret" not in json.loads(access_control.ACCESS_FILE.read_text())
+
+
+def test_sessions_do_not_survive_the_file_being_deleted() -> None:
     cookie = AccessControl(enabled=True).issue_session("brian")
     access_control.ACCESS_FILE.unlink()
     assert AccessControl(enabled=True).session_user(cookie) is None
@@ -641,6 +736,29 @@ async def test_signing_out_clears_the_cookie(make_client: Any) -> None:
     assert await resp.json() == {"signed_out": True}
     assert resp.cookies[SESSION_COOKIE].value == ""
     assert (await client.get("/api/access")).status == 401
+
+
+async def test_logging_out_ends_the_session_for_a_copy_of_the_cookie(
+    make_client: Any,
+) -> None:
+    """Taking the cookie out of the browser is not enough: the session itself
+    is ended, so a copy of the cookie opens nothing."""
+    server = _server()
+    server._access.verify_credentials = AsyncMock(return_value=True)  # type: ignore[method-assign]
+    client = await make_client(server)
+    await client.post("/login", data={"username": "brian", "password": "pw"})
+    cookie = client.session.cookie_jar.filter_cookies(client.make_url("/"))[
+        SESSION_COOKIE
+    ].value
+    await client.post("/logout")
+    assert server._access.session_user(cookie) is None
+
+
+async def test_logging_out_without_a_session_is_harmless(make_client: Any) -> None:
+    server = _server(enabled=False)
+    client = await make_client(server)
+    resp = await client.post("/logout")
+    assert await resp.json() == {"signed_out": True}
 
 
 # ---------------------------------------------------------------------------

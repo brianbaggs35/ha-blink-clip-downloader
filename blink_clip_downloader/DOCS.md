@@ -2972,7 +2972,7 @@ Downloaded clips are saved under the `share` folder, accessible via:
 | `/data/model_cache/` | Downloaded computer-vision models (YOLO, Depth Anything V2, SAM2, facenet-pytorch) — see **Disk Space** above |
 | `/data/google_drive_settings.json` | Google OAuth client ID/secret and backup policy, set via the Storage tab |
 | `/data/google_drive_credentials.json` | Cached Google Drive OAuth token, selected backup folder, and whether Google has rejected the sign-in (do not edit) |
-| `/data/web_access.json` | The secret that signs direct-port sign-ins, and the access token Home Assistant's own calls carry (do not edit; delete it to sign every browser out and replace the token) |
+| `/data/web_access.json` | The direct-port sign-ins that are in force (kept as hashes, so the file cannot be used to sign in), and the access token Home Assistant's own calls carry (do not edit; delete it to sign every browser out and replace the token) |
 
 > All `/data/` files are stored inside the add-on's private data directory and are
 > automatically removed by the supervisor when the add-on is uninstalled. The
