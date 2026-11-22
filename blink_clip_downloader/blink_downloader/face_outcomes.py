@@ -31,19 +31,24 @@ class RecognitionOutcome(Protocol):
     """
 
     @property
-    def approved_names(self) -> list[str]: ...
+    def approved_names(self) -> list[str]:
+        """The approved household members recognized in the clip."""
 
     @property
-    def other_names(self) -> list[str]: ...
+    def other_names(self) -> list[str]:
+        """Recognized people who are not approved for the bypass."""
 
     @property
-    def unrecognized_present(self) -> bool: ...
+    def unrecognized_present(self) -> bool:
+        """Whether a face matched nobody, or a frame was not examined."""
 
     @property
-    def unclear_faces(self) -> int: ...
+    def unclear_faces(self) -> int:
+        """How many unmatched faces were set aside as too unclear to judge."""
 
     @property
-    def tally(self) -> FaceTally | None: ...
+    def tally(self) -> FaceTally | None:
+        """The per-clip counts, or ``None`` when nothing was examined."""
 
 
 @dataclass(frozen=True)
