@@ -12,9 +12,11 @@ doesn't itself need the mocked library.
 from __future__ import annotations
 
 import asyncio
+import builtins
 import io
 import random
 import sys
+import threading
 import time
 import types
 from collections.abc import Mapping, Sequence
@@ -3562,7 +3564,16 @@ async def test_vision_pipeline_enhanced_detection_all_deps_missing(
     unchanged frames behind."""
     monkeypatch.delitem(sys.modules, "cv2", raising=False)
     monkeypatch.delitem(sys.modules, "ultralytics", raising=False)
-    with patch("builtins.__import__", side_effect=ImportError):
+    real_import = builtins.__import__
+
+    def _without_the_cv_packages(name: str, *args: Any, **kwargs: Any) -> Any:
+        # Only the optional packages are missing; the standard library (which
+        # the thread pool imports lazily) is not what this test is about.
+        if name.split(".")[0] in {"cv2", "ultralytics", "torch", "transformers"}:
+            raise ImportError(name)
+        return real_import(name, *args, **kwargs)
+
+    with patch("builtins.__import__", side_effect=_without_the_cv_packages):
         pipeline = VisionPipeline(VisionConfig(enhanced_detection_enabled=True))
         hints = await pipeline.process_clip([b"frame"], car_description="Silver Kia")
         # opencv unavailable -> enhance() returns frames unchanged, but the
@@ -5390,6 +5401,29 @@ async def test_pipeline_enhances_only_the_prompt_frames(
     pipeline = VisionPipeline(VisionConfig(enhanced_detection_enabled=True))
     await pipeline.process_clip([_real_jpeg_bytes(size=(200, 200))])
     assert calls == 1
+
+
+async def test_pipeline_enhances_off_the_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Denoising is seconds of CPU on the add-on's target boards; run on the
+    loop's own thread it would stall every request the server is handling."""
+    _yolo_env(
+        monkeypatch,
+        _FakeBoxes(cls=[0], conf=[0.9], xyxy=[(10.0, 10.0, 30.0, 90.0)], ids=[1]),
+        {0: "person"},
+    )
+    threads: list[int] = []
+
+    def _record(frames: list[bytes]) -> list[bytes]:
+        threads.append(threading.get_ident())
+        return frames
+
+    monkeypatch.setattr(FrameEnhancer, "enhance", staticmethod(_record))
+    pipeline = VisionPipeline(VisionConfig(enhanced_detection_enabled=True))
+    await pipeline.process_clip([_real_jpeg_bytes(size=(200, 200))])
+    assert threads
+    assert threading.get_ident() not in threads
 
 
 async def test_pipeline_never_enhances_the_frames_the_detector_scans(
