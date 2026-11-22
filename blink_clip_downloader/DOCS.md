@@ -2331,6 +2331,14 @@ Under the sync modules, the **Schedules** card arms or disarms on set days and t
 - A switch only says **armed** or **disarmed** once Blink has accepted the
   command. If Blink could not be reached, you get an error toast and the
   tab reloads what the add-on knows instead.
+- Renaming a camera in the Blink app: from 6.2.3 on, clips recorded before the
+  rename keep the name the camera had then (the Library's camera list still
+  shows it for those clips), while settings, battery history, enrolled faces and
+  what the add-on has learned about the camera (your ratings, corrections and
+  its normal-activity baseline) move to the new name, including when you rate or
+  re-analyze an old clip. Renames made by earlier versions had already merged
+  the history under one name and are not undone. Changing only the capitals
+  (`Front door` to `Front Door`) renames everything, since it is the same name.
 - Renaming a camera or sync module in the Blink app does not stop its
   switch working in a tab that has not refreshed yet: the tab arms by
   Blink's own id for it, not by the name. Two sync modules can each have a

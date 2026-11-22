@@ -142,6 +142,51 @@ async def test_camera_rename_updates_ai_filters_and_event_watcher(app, tmp_path)
     app._event_watcher.rename_camera.assert_called_once_with("Front Door", "Entryway")
 
 
+async def test_camera_rename_updates_the_alias_before_the_database_is_touched(
+    app, tmp_path
+):
+    """What a camera learns is filed by its current name, so the alias has to
+    be in place before any row moves, or an analysis running meanwhile files
+    under the old one."""
+    seen: dict[str, str] = {}
+
+    async def rename(old, new):
+        seen["name"] = app._current_camera_name(old)
+
+    app._db.rename_camera = AsyncMock(side_effect=rename)
+    app._media_server.rename_camera = AsyncMock()
+    app._analyzer = None
+    app._downloader = MagicMock()
+    app._downloader.list_camera_names = MagicMock(return_value=["Entryway"])
+    app._event_watcher.rename_camera = MagicMock()
+
+    with patch(
+        "blink_downloader.app.CAMERA_NAME_ALIASES_FILE",
+        tmp_path / "camera_name_aliases.json",
+    ):
+        await app._handle_camera_renamed("Front Door", "Entryway")
+
+    assert seen["name"] == "Entryway"
+
+
+def test_current_camera_name_follows_a_rename_until_a_live_name(app):
+    app._camera_name_aliases = {"Front Door": "Entryway", "Entryway": "Porch"}
+    app._downloader = MagicMock()
+    app._downloader.list_camera_names = MagicMock(return_value=["Entryway", "Garage"])
+    assert app._current_camera_name("front door") == "Entryway"
+    assert app._current_camera_name("Garage") == "Garage"
+    app._downloader.list_camera_names = MagicMock(return_value=["Porch"])
+    assert app._current_camera_name("Front Door") == "Porch"
+
+
+def test_current_camera_name_before_a_downloader_exists(app):
+    """Start-up: nothing is live yet, so every alias applies."""
+    app._camera_name_aliases = {"Front Door": "Entryway"}
+    app._downloader = None
+    assert app._current_camera_name("Front Door") == "Entryway"
+    assert app._current_camera_name("Other") == "Other"
+
+
 async def test_camera_rename_drops_a_stale_alias_for_the_name_it_takes(app, tmp_path):
     """A camera renamed into a name an older rename once left behind must not
     stay shadowed by that alias.

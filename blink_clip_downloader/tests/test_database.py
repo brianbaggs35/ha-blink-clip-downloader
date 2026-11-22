@@ -22,6 +22,8 @@ from blink_downloader.database import (
     _row_to_dict,
     _severities_at_or_above,
 )
+from blink_downloader.database import cameras as cameras_module
+from blink_downloader.database.cameras import CLIP_HISTORY_TABLES
 from blink_downloader.security import (
     SecurityEvent,
     SecurityEventType,
@@ -1118,9 +1120,12 @@ async def test_get_camera_stats_merges_case_insensitively(db: ClipDatabase) -> N
     assert cam_stats[0]["total"] == 3
 
 
-async def test_rename_camera_migrates_library_and_battery_state(
+async def test_rename_camera_migrates_what_the_camera_is_and_keeps_what_it_recorded(
     db: ClipDatabase,
 ) -> None:
+    """A renamed camera's old clips stay under its old name -- so searching
+    and filtering the library still means what it meant then -- while its
+    battery, baselines and learning follow it to the new one."""
     await db.record_clip_baseline("Front Door", 8, 10.0)
     await db.record_scene_baseline("Front Door", [0.1, 0.2])
     await db.add_clip(_make_clip("rename-1", camera="Front Door"))
@@ -1129,13 +1134,14 @@ async def test_rename_camera_migrates_library_and_battery_state(
 
     assert await db.rename_camera("Front Door", "Entryway") is True
 
-    clips = await db.get_clips(ClipFilters(camera="Entryway"))
+    clips = await db.get_clips(ClipFilters(camera="Front Door"))
     assert [clip["id"] for clip in clips] == ["rename-1"]
-    assert await db.get_clips(ClipFilters(camera="Front Door")) == []
+    assert await db.get_clips(ClipFilters(camera="Entryway")) == []
     battery = await db.get_latest_battery_state()
     assert [row["camera"] for row in battery] == ["Entryway"]
+    # A queued clip is still the same clip, so it keeps its name with it.
     queue = await db.get_pending_analysis()
-    assert queue[0]["camera"] == "Entryway"
+    assert queue[0]["camera"] == "Front Door"
     assert db._pool is not None
     assert (
         await db._pool.fetchval(
@@ -1272,11 +1278,37 @@ async def test_rename_camera_touches_every_table_keyed_by_camera(
     assert len(keyed_by_camera) >= 13
 
     source = _rename_sources()
-    missing = {table for table in keyed_by_camera if not _mentions(source, table)}
+    decided = {*cameras_module._RELABELLED_TABLES, *CLIP_HISTORY_TABLES}
+    missing = {
+        table
+        for table in keyed_by_camera
+        if table not in decided and not _mentions(source, table)
+    }
     assert not missing, (
         f"rename_camera does not touch {sorted(missing)} — a camera renamed "
-        "in Blink would leave those rows under the old name"
+        "in Blink would leave those rows under the old name. Say whether each "
+        "one names the camera (relabel it) or describes one clip (keep it)."
     )
+
+
+def test_a_table_is_either_relabelled_or_kept_with_its_clip() -> None:
+    """Both lists are decisions, so no table may be on both -- and none may
+    be named that does not exist."""
+    relabelled = set(cameras_module._RELABELLED_TABLES)
+    kept = set(CLIP_HISTORY_TABLES)
+    assert not relabelled & kept
+    assert {"analysis_feedback", "face_enrollments", "battery_history"} == relabelled
+    assert {"clips", "analysis_results", "security_events"} <= kept
+
+
+async def test_every_listed_table_has_a_camera_column(db: ClipDatabase) -> None:
+    assert db._pool is not None
+    for table in (*cameras_module._RELABELLED_TABLES, *CLIP_HISTORY_TABLES):
+        assert await db._pool.fetchval(
+            "SELECT COUNT(*) FROM information_schema.columns "
+            "WHERE table_name = $1 AND column_name = 'camera'",
+            table,
+        ), table
 
 
 @pytest.mark.parametrize("tz_name", [_WEST_OF_UTC_TZ, _EAST_OF_UTC_TZ])
@@ -3918,6 +3950,110 @@ async def test_add_feedback_without_init_is_noop() -> None:
     )  # should not raise
 
 
+# ----------------------------------------------------------------------
+# After a rename a clip keeps its old camera name, but what a camera learns is
+# kept under its current one. The methods keyed that way take a clip's name and
+# resolve it themselves, so neither a rating nor an analysis of an old clip can
+# start a second, ghost camera.
+# ----------------------------------------------------------------------
+
+
+@pytest.fixture
+def renamed(db: ClipDatabase) -> ClipDatabase:
+    """A database where the camera called Front Door is now Porch."""
+    db.set_camera_resolver(
+        lambda name: "Porch" if name.lower() == "front door" else name
+    )
+    return db
+
+
+def test_without_a_resolver_a_name_is_itself(db: ClipDatabase) -> None:
+    assert db.current_camera_name("Front Door") == "Front Door"
+
+
+def test_a_resolver_can_be_set_and_cleared(db: ClipDatabase) -> None:
+    db.set_camera_resolver(lambda name: name.upper())
+    assert db.current_camera_name("Front Door") == "FRONT DOOR"
+    db.set_camera_resolver(None)
+    assert db.current_camera_name("Front Door") == "Front Door"
+
+
+async def _rate(db: ClipDatabase, clip_id: str, camera: str, note: str = "") -> None:
+    await db.add_clip(_make_clip(clip_id))
+    await db.add_feedback(
+        clip_id=clip_id,
+        camera=camera,
+        analysis_result_id=None,
+        original_suspicious=True,
+        original_confidence=0.8,
+        correct=False,
+        correction_note=note,
+    )
+
+
+async def test_rating_an_old_clip_teaches_the_camera_under_its_current_name(
+    renamed: ClipDatabase,
+) -> None:
+    await _rate(renamed, "old", "Front Door", "a delivery")
+    (row,) = await renamed.get_recent_feedback("Porch")
+    assert row["camera"] == "Porch"
+    assert await renamed.get_recent_feedback("Front Door") == (
+        await renamed.get_recent_feedback("Porch")
+    )
+    stats = await renamed.get_feedback_stats("Front Door")
+    assert stats["total"] == 1
+    assert [
+        c["correction_note"] for c in await renamed.get_prompt_corrections("Front Door")
+    ] == ["a delivery"]
+
+
+async def test_feedback_from_before_and_after_a_rename_tunes_one_camera(
+    renamed: ClipDatabase,
+) -> None:
+    await _rate(renamed, "after", "Porch", "second")
+    await _rate(renamed, "before", "Front Door", "first")
+    assert {r["clip_id"] for r in await renamed.get_recent_feedback("Porch")} == {
+        "after",
+        "before",
+    }
+    assert (await renamed.get_feedback_stats("Porch"))["total"] == 2
+    assert (await renamed.get_feedback_stats())["total"] == 2
+
+
+async def test_the_threshold_for_an_old_clip_is_the_cameras_current_one(
+    renamed: ClipDatabase,
+) -> None:
+    for n in range(12):
+        await _rate(renamed, f"c{n}", "Porch")
+    old = await renamed.get_effective_confidence_threshold("Front Door", 0.5)
+    new = await renamed.get_effective_confidence_threshold("Porch", 0.5)
+    assert old == new
+    assert new > 0.5
+
+
+async def test_anomaly_scoring_of_an_old_clip_uses_the_cameras_baseline(
+    renamed: ClipDatabase,
+) -> None:
+    for _ in range(40):
+        await renamed.record_clip_baseline("Porch", 8, 10.0)
+    assert await renamed.get_anomaly_score("Front Door", 3, 10.0) == (
+        await renamed.get_anomaly_score("Porch", 3, 10.0)
+    )
+    assert await renamed.get_anomaly_score("Front Door", 3, 10.0) > 0
+
+
+async def test_recording_a_baseline_under_an_old_name_does_not_start_a_ghost_camera(
+    renamed: ClipDatabase,
+) -> None:
+    await renamed.record_clip_baseline("Front Door", 8, 10.0)
+    assert renamed._pool is not None
+    names = {
+        r["camera"]
+        for r in await renamed._pool.fetch("SELECT camera FROM camera_baselines")
+    }
+    assert names == {"Porch"}
+
+
 async def test_add_feedback_resubmission_replaces_previous(db: ClipDatabase) -> None:
     """One feedback row per clip — resubmitting replaces, not accumulates."""
     await db.add_clip(_make_clip("c1"))
@@ -4411,6 +4547,27 @@ async def test_face_enrollments_record_which_model_made_them(
     only_default = await db.list_face_enrollments(DEFAULT_FACE_MODEL)
     assert [e["embedding"] for e in only_default] == [[0.1, 0.2]]
     assert await db.list_face_enrollments("some-other-model") == []
+
+
+async def test_a_rename_of_only_clips_changes_nothing(db: ClipDatabase) -> None:
+    """With nothing but recorded clips under the old name there is nothing that
+    belongs to the camera as it is today, so there is nothing to report."""
+    await db.add_clip(_make_clip("c1", camera="Front Door"))
+    assert await db.rename_camera("Front Door", "Porch") is False
+    assert [c["camera"] for c in await db.get_clips()] == ["Front Door"]
+
+
+async def test_a_change_of_capitals_relabels_everything(db: ClipDatabase) -> None:
+    """ "Front door" and "Front Door" are one name, so respelling it is not a
+    rename: the clips follow, or one camera would list under two spellings."""
+    await db.add_clip(_make_clip("c1", camera="Front door"))
+    await db.save_security_events("c1", "Front door", [_event()])
+    await db.enqueue_for_analysis("c1", "Front door", "/clips/c1.mp4")
+    assert await db.rename_camera("Front door", "Front Door") is True
+    assert [c["camera"] for c in await db.get_clips()] == ["Front Door"]
+    (stored,) = await db.get_security_events("c1")
+    assert stored["camera"] == "Front Door"
+    assert (await db.get_pending_analysis())[0]["camera"] == "Front Door"
 
 
 async def test_rename_camera_carries_face_enrollments(db: ClipDatabase) -> None:
@@ -5137,15 +5294,20 @@ async def test_save_analysis_records_the_detection_timing_and_frame_size(
 # ======================================================================
 
 
-async def test_rename_camera_moves_security_events(db: ClipDatabase) -> None:
-    """A renamed camera's events must follow it, or the Security tab's
-    camera filter silently loses everything recorded before the rename."""
+async def test_a_rename_leaves_security_events_with_the_clips_they_describe(
+    db: ClipDatabase,
+) -> None:
+    """The Security tab's camera filter, like the Library's, finds what was
+    recorded under the name it was recorded under, and a clip and its events
+    never disagree about which camera they are from."""
     await db.add_clip(_make_clip("c1", camera="Front Door"))
     await db.save_security_events("c1", "Front Door", [_event()])
+    await db.add_battery_reading("Front Door", "ok", 3, 165)
     assert await db.rename_camera("Front Door", "Porch") is True
     (stored,) = await db.get_security_events("c1")
-    assert stored["camera"] == "Porch"
-    assert (await db.get_security_timeline(camera="Porch"))["total"] == 1
+    assert stored["camera"] == "Front Door"
+    assert (await db.get_security_timeline(camera="Front Door"))["total"] == 1
+    assert (await db.get_security_timeline(camera="Porch"))["total"] == 0
 
 
 async def test_rename_camera_carries_the_learned_vehicle_signature(
@@ -5176,7 +5338,7 @@ async def test_rename_camera_keeps_the_better_established_signature(
 async def test_rename_camera_without_a_signature_is_still_fine(
     db: ClipDatabase,
 ) -> None:
-    await db.add_clip(_make_clip("c1", camera="Front Door"))
+    await db.add_battery_reading("Front Door", "ok", 3, 165)
     assert await db.rename_camera("Front Door", "Porch") is True
     assert await db.get_vehicle_signature("Porch") is None
 
