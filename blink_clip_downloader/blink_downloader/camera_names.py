@@ -34,12 +34,12 @@ def current_camera_name(
     live_names = {str(n).lower() for n in live}
     current = name
     seen: set[str] = set()
-    while True:
-        key = current.lower()
-        if key in live_names or key in seen:
-            return current
+    key = current.lower()
+    while key not in live_names and key not in seen:
         seen.add(key)
         target = lookup.get(key)
         if target is None:
-            return current
+            break
         current = target
+        key = current.lower()
+    return current
