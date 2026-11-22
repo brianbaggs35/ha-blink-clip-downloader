@@ -484,14 +484,15 @@ configuration:
     name: Object Detection Model
     description: >-
       Ultralytics model file the detection stage above runs. YOLO26
-      (yolo26n/s/m/l/x.pt) is the current generation — end-to-end
-      inference, lighter and more accurate than YOLO11 at every size —
-      and is the recommended default; yolo11n/s/m/l/x.pt remain
-      selectable for compatibility with existing configurations. "n"
+      (yolo26n/s/m/l/x.pt) is the current generation — end-to-end inference,
+      lighter and more accurate than YOLO11 at every size — and is the
+      recommended default; YOLO11 (yolo11n/s/m/l/x.pt) is deprecated: it
+      still works, so existing configurations keep running, but it will be
+      removed in a later release and a warning is logged at start-up while
+      it is selected. YOLO27 will be added once Ultralytics releases it. "n"
       (nano) is fastest/lightest, recommended on CPU-only hardware;
-      "s"/"m"/"l"/"x" trade speed for accuracy, with "x" (extra-large)
-      the most accurate and much slower. Downloaded automatically on
-      first use.
+      "s"/"m"/"l"/"x" trade speed for accuracy, with "x" (extra-large) the
+      most accurate and much slower. Downloaded automatically on first use.
   ai_depth_estimation_model:
     name: Depth Estimation Model
     description: >-
@@ -565,11 +566,17 @@ configuration:
   ai_pose_model:
     name: Pose Model
     description: >-
-      Which Ultralytics pose checkpoint the stage above runs. YOLO26-pose is
-      the current generation and matches the object detector's own default;
-      the YOLO11 pose models remain selectable. "n" (nano) is
-      fastest and lightest, and the recommended starting point on CPU-only
-      hardware; larger sizes are more accurate and much slower.
+      YOLO26-pose (yolo26n/s/m/l/x-pose.pt) is the current generation and
+      matches the object detector's own default. YOLO11
+      (yolo11n/s/m/l/x-pose.pt) is deprecated: it still works, so existing
+      configurations keep running, but it will be removed in a later release
+      and a warning is logged at start-up while it is selected. YOLO27 will
+      be added once Ultralytics releases it. Which Ultralytics pose
+      checkpoint the stage above runs. YOLO26-pose is the current generation
+      and matches the object detector's own default; the YOLO11 pose models
+      remain selectable. "n" (nano) is fastest and lightest, and the
+      recommended starting point on CPU-only hardware; larger sizes are more
+      accurate and much slower.
   ai_audio_analysis_enabled:
     name: Enable Audio Analysis
     description: >-

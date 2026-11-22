@@ -49,6 +49,7 @@ from .live_view import LiveViewManager
 from .manifest import ClipManifest
 from .media_server import MediaServer
 from .media_server.tls import TlsConfigError, load_ssl_context
+from .model_catalog import yolo_deprecation_notice
 from .notification_channels import NotificationDispatcher
 from .notifier import HANotifier
 from .protected_assets import read_assets
@@ -112,6 +113,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         # Decided (and announced) once, here, so the media server and the
         # log agree on whether frames leave the device.
         self._remote_vision = self._remote_vision_active(config)
+        self._warn_deprecated_yolo(config)
 
         self._storage = StorageManager(
             base_path=config.download_path,
@@ -707,6 +709,28 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
                 ", ".join(missing),
             )
         return not missing
+
+    @staticmethod
+    def _warn_deprecated_yolo(config: AppConfig) -> None:
+        """Say once, at start-up, when a YOLO checkpoint of a deprecated
+        generation is about to be used.
+
+        Only for a stage that will actually load it: detection is local only
+        with Enhanced Detection on and the local backend, and pose needs its
+        own switch on top. A notice only -- see
+        :func:`~blink_downloader.model_catalog.yolo_deprecation_notice`.
+        """
+        if not (
+            config.ai_enhanced_detection_enabled and config.ai_vision_backend == "local"
+        ):
+            return
+        stages = [("ai_object_detection_model", config.ai_object_detection_model)]
+        if config.ai_pose_estimation_enabled:
+            stages.append(("ai_pose_model", config.ai_pose_model))
+        for option, model in stages:
+            notice = yolo_deprecation_notice(option, model)
+            if notice:
+                _LOGGER.warning("%s", notice)
 
     @staticmethod
     def _remote_vision_active(config: AppConfig) -> bool:

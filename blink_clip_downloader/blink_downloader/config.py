@@ -368,8 +368,9 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     ai_enhanced_detection_enabled: bool = False
     # Which Ultralytics YOLO model the object-detection stage above runs.
     # YOLO26 (yolo26n/s/m/l/x.pt) is the current generation and the
-    # default; yolo11n/s/m/l/x.pt remain selectable for compatibility with
-    # existing configurations. "n" (nano) models are the fastest/lightest
+    # default; yolo11n/s/m/l/x.pt are deprecated (still work, warned about at
+    # start-up by the app, to be removed later -- see
+    # model_catalog.YOLO_DEPRECATED_GENERATIONS). "n" (nano) models are the fastest/lightest
     # and the recommended starting point on CPU-only hardware; larger
     # models (s/m/l/x) are more accurate but much slower.
     ai_object_detection_model: str = "yolo26n.pt"
@@ -434,8 +435,8 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     # from a bounding box, and obvious from a skeleton. Off by default.
     ai_pose_estimation_enabled: bool = False
     # YOLO26-pose, matching ai_object_detection_model's own generation;
-    # yolo11n/s/m/l/x-pose.pt remain selectable for anyone who has already
-    # downloaded them. Same "n is the CPU-friendly starting point" advice.
+    # yolo11n/s/m/l/x-pose.pt are deprecated the same way. Same "n is the
+    # CPU-friendly starting point" advice.
     ai_pose_model: str = "yolo26n-pose.pt"
     # Sound-event classification of the clip's own audio track. The only
     # stage that looks at anything other than pixels, and worth its own

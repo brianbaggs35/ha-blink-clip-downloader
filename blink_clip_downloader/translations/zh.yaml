@@ -411,13 +411,15 @@ configuration:
       （默认）和 facebook/detr-resnet-101。留空则使用默认值。"
   ai_object_detection_model:
     name: 物体检测模型
-    description: >-
-      上方检测阶段所使用的 Ultralytics 模型文件。YOLO26
-      （yolo26n/s/m/l/x.pt）是当前代际——端到端推理，在每个尺寸上都比 YOLO11
-      更轻量、更精确——是推荐的默认选项；yolo11n/s/m/l/x.pt
-      仍可选择，以兼容现有配置。"n"（nano）最快/最轻量，推荐作为纯 CPU
-      硬件的起点；"s"/"m"/"l"/"x"
-      以速度换取精度，其中"x"（extra-large）最精确但速度慢得多。首次使用时会自动下载。
+    description: "上方检测阶段所使用的 Ultralytics 模型文件。YOLO26 （\
+      yolo26n/s/m/l/x.pt）是当前代际——端到端推理，在每个尺\
+      寸上都比 YOLO11 更轻量、更精确——是推荐的默认选项；YOLO11\
+      （yolo11n/s/m/l/x.pt）已弃用：它仍可使用，现有配置不受\
+      影响，但将在以后的版本中移除，选中它时启动时会记录一条警告。Ultral\
+      ytics 发布 YOLO27 后将予以支持。\"n\"（nano）最快\
+      /最轻量，推荐作为纯 CPU 硬件的起点；\"s\"/\"m\"/\"l\
+      \"/\"x\" 以速度换取精度，其中\"x\"（extra-large\
+      ）最精确但速度慢得多。首次使用时会自动下载。"
   ai_depth_estimation_model:
     name: 深度估计模型
     description: >-
@@ -471,9 +473,13 @@ configuration:
       手臂，以及蹲伏或弯腰的姿态。需要启用增强检测。
   ai_pose_model:
     name: 姿态模型
-    description: >-
-      运行哪个 Ultralytics 姿态检查点。"n"（nano）最快最轻，是纯 CPU 硬件的
-      推荐起点；更大的模型更准确但慢得多。
+    description: "YOLO26-pose（yolo26n/s/m/l/x-pose.pt）\
+      是当前代际，与目标检测器的默认值一致。YOLO11（yolo11n/s/\
+      m/l/x-pose.pt）已弃用：它仍可使用，现有配置不受影响，但将在\
+      以后的版本中移除，选中它时启动时会记录一条警告。Ultralytics \
+      发布 YOLO27 后将予以支持。运行哪个 Ultralytics 姿态\
+      检查点。\"n\"（nano）最快最轻，是纯 CPU 硬件的 推荐起点；\
+      更大的模型更准确但慢得多。"
   ai_audio_analysis_enabled:
     name: 启用音频分析
     description: >-

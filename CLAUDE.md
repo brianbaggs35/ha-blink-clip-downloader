@@ -204,6 +204,18 @@ architecture.
     contains `o1` and was priced as OpenAI o1 ($15/$60 per 1M) until 6.1.2.
     Replicate's official model ids are the one exception, matched exactly
     (case-insensitively) in `_REPLICATE_MODEL_PRICING` before that rule.
+    It also holds the **YOLO generation bookkeeping** (6.2.3, BCD-4):
+    `YOLO_CURRENT_GENERATIONS` (26) and `YOLO_DEPRECATED_GENERATIONS` (11),
+    `yolo_generation()` and `yolo_deprecation_notice()`, used by
+    `app._warn_deprecated_yolo` for a start-up warning. YOLO11 stays in the
+    two options' `list(...)` schemas **on purpose** (Supervisor rejects a saved
+    value its schema does not list, so removing it would stop the add-on
+    starting) and is never auto-swapped (a different model detects
+    differently). YOLO27 is *not* offered yet -- ultralytics 8.4.216 says its
+    models are not available and lists no `yolo27` asset -- and adding it is
+    one tuple entry plus the two schemas plus the translations;
+    `tests/test_yolo_generations.py` fails if the schemas and the tuples
+    disagree.
   - `prompt_segments.py` — the individual blocks a clip-analysis prompt is
     assembled from (time of day, anomaly alert, scene baseline, motion
     trajectory, recent corrections, zone motion, vision hints, output
