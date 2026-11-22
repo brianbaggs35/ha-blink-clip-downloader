@@ -605,6 +605,16 @@ configuration:
       un coste moderado de CPU. Tras cambiarlo, vuelve a escanear un clip
       en la pestaña Biometría: los rostros coinciden mejor con fotos
       registradas a la misma resolución.
+  ai_face_recognition_backend:
+    name: Motor de reconocimiento facial
+    description: >-
+      Qué modelos encuentran y comparan los rostros. "facenet" (predeterminado)
+      es con lo que se hicieron todos los registros hasta ahora. "opencv"
+      usa YuNet y SFace mediante OpenCV, sin necesitar PyTorch, pero es
+      experimental: sus umbrales no se han medido con imágenes de cámaras,
+      por lo que nunca deja de lado un rostro poco claro. No se pueden
+      comparar entre sí, así que hay que volver a registrar a todos tras
+      cambiarlo. Lee la documentación antes de cambiarlo.
   hf_token:
     name: Token de Hugging Face
     description: >-

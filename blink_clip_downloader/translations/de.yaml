@@ -616,6 +616,16 @@ configuration:
       der Kamera, bei etwas höherer CPU-Last. Scanne nach einer Änderung
       einen Clip im Biometrie-Tab erneut — Gesichter werden am besten
       mit Fotos derselben Auflösung abgeglichen.
+  ai_face_recognition_backend:
+    name: Backend der Gesichtserkennung
+    description: >-
+      Welche Modelle Gesichter finden und vergleichen. „facenet“ (Standard) ist
+      das, womit bisher alle Personen angelernt wurden. „opencv“ nutzt stattdessen
+      YuNet und SFace über OpenCV, ganz ohne PyTorch, ist aber experimentell:
+      Die Schwellenwerte wurden nicht an Kameraaufnahmen gemessen, daher wird
+      nie ein unklares Gesicht beiseitegelassen. Beide lassen sich nicht
+      miteinander vergleichen, nach einem Wechsel müssen alle neu angelernt
+      werden. Vor einer Änderung die Dokumentation lesen.
   hf_token:
     name: Hugging Face-Token
     description: >-

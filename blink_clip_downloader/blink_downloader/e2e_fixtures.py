@@ -199,7 +199,7 @@ class E2EFixtures:
     def enable_face_recognition(self, server: MediaServer) -> None:
         from .media_server import faces as faces_routes
 
-        faces_routes.is_face_recognition_available = lambda: True
+        faces_routes.is_face_recognition_available = lambda _backend="facenet": True
         server._face_embedder = self.face_embedder
 
 

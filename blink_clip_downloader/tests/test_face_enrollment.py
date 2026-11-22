@@ -15,6 +15,7 @@ from blink_downloader.face_enrollment import (
     review_enrollments,
     suppress_near_duplicates,
 )
+from blink_downloader.vision.face_models import FACENET, OPENCV_SFACE
 from blink_downloader.vision.faces import match_enrollment
 
 
@@ -325,3 +326,59 @@ def test_review_skips_rows_that_cannot_be_compared() -> None:
         {"id": 3, "name": "Amy", "embedding": []},
     ]
     assert review_enrollments(enrollments) == {}
+
+
+# --- another model's bars ----------------------------------------------------
+# Cosine similarity means something different for each model's embeddings, so
+# every bar the enrollment logic applies is the model's own. Angles stand in
+# for similarity: cos(45 degrees) = 0.707 is above SFace's match bar (0.50) and
+# group bar (0.50) and below FaceNet's (0.75 and 0.72).
+
+
+def test_the_default_model_is_facenet() -> None:
+    faces = [_candidate("a", 0), _candidate("b", 45)]
+    assert group_candidates(faces) == group_candidates(faces, FACENET)
+    assert len(group_candidates(faces)) == 2
+
+
+def test_a_looser_model_groups_faces_facenet_keeps_apart() -> None:
+    faces = [_candidate("a", 0, 0.9), _candidate("b", 45, 0.5)]
+    assert len(group_candidates(faces, FACENET)) == 2
+    assert group_candidates(faces, OPENCV_SFACE) == [["a", "b"]]
+
+
+def test_the_models_near_duplicate_bar_is_the_one_used() -> None:
+    near = [_unit(0), _unit(10)]  # cos 10 degrees = 0.985
+    assert suppress_near_duplicates(near, [0.9, 0.5], FACENET) == [0]
+    assert suppress_near_duplicates(near, [0.9, 0.5]) == [0]
+    far = [_unit(0), _unit(30)]  # 0.866
+    assert suppress_near_duplicates(far, [0.9, 0.5], OPENCV_SFACE) == [0, 1]
+
+
+def test_match_candidates_uses_the_models_match_bar() -> None:
+    faces = [_candidate("a", 45)]
+    enrollments = [{"name": "Amy", "embedding": _unit(0)}]
+    assert match_candidates(faces, enrollments) == {"a": None}
+    assert match_candidates(faces, enrollments, FACENET) == {"a": None}
+    matched = match_candidates(faces, enrollments, OPENCV_SFACE)["a"]
+    assert matched is not None
+    assert matched["name"] == "Amy"
+
+
+def test_review_uses_the_models_bars() -> None:
+    enrollments = [
+        {"id": 1, "name": "Amy", "embedding": _unit(0)},
+        {"id": 2, "name": "Amy", "embedding": _unit(60)},  # cos 0.5 to the other
+        {"id": 3, "name": "Brian", "embedding": _unit(170)},
+    ]
+    # FaceNet: 0.5 is under its 0.55 outlier bar, so both of Amy's photos are
+    # "unlike the others". SFace's bar is 0.40, so they are alike.
+    assert review_enrollments(enrollments, FACENET)[1]["unlike_others"] is True
+    assert review_enrollments(enrollments, OPENCV_SFACE) == {}
+    # And a different person above SFace's match bar is reported by it only.
+    close = [
+        {"id": 1, "name": "Amy", "embedding": _unit(0)},
+        {"id": 2, "name": "Brian", "embedding": _unit(45)},
+    ]
+    assert review_enrollments(close, FACENET) == {}
+    assert review_enrollments(close, OPENCV_SFACE)[1]["also_matches"] == "Brian"

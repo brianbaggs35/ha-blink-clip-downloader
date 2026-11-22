@@ -156,6 +156,43 @@ describe('BiometricsPage', () => {
     expect(wrapper.find('.privacy-banner').text()).not.toContain('Hugging Face')
   })
 
+  describe('which face-recognition backend runs', () => {
+    it.each<[Partial<FacesResponse>]>([[{ backend: 'facenet', backend_measured: true }], [{}]])(
+      'says nothing about the backend on the default one (%j)',
+      async (extra) => {
+        stubFetch(() => facesResponse([], extra))
+        const text = (await mountPage()).text()
+        expect(text).not.toContain('experimental')
+        expect(text).not.toContain('other face-recognition backend')
+      },
+    )
+
+    it('warns that the OpenCV backend is experimental and unmeasured', async () => {
+      stubFetch(() => facesResponse([], { backend: 'opencv', backend_measured: false }))
+      const text = (await mountPage()).text()
+      expect(text).toContain('experimental')
+      expect(text).toContain('OpenCV')
+      expect(text).toContain('have not been measured')
+      expect(text).toContain('never sets an unclear face aside')
+    })
+
+    it('says how many photos belong to the other backend, and that they are not used', async () => {
+      const faces = [enrollment({ id: 1, other_backend: true }), enrollment({ id: 2 })]
+      stubFetch(() => facesResponse(faces, { backend: 'opencv', backend_measured: false }))
+      const text = (await mountPage()).text()
+      expect(text).toContain('1 photo was enrolled with the other face-recognition backend')
+      expect(text).toContain('it is not used')
+    })
+
+    it('uses the plural for several', async () => {
+      const faces = [enrollment({ id: 1, other_backend: true }), enrollment({ id: 2, other_backend: true })]
+      stubFetch(() => facesResponse(faces))
+      const text = (await mountPage()).text()
+      expect(text).toContain('2 photos were enrolled with the other face-recognition backend')
+      expect(text).toContain('they are not used')
+    })
+  })
+
   describe('when the recognition models could not be loaded', () => {
     const failed = (extra: Partial<StageHealthReport>) => ({
       models: {

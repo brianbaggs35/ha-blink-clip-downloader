@@ -28,27 +28,10 @@ from typing import Any
 
 import numpy as np
 
-from .vision.faces import _FACE_MATCH_THRESHOLD
+from .vision.face_models import FACENET, FaceModel
 
-# Within one clip, a face this similar to one already kept is the same shot
-# a fraction of a second later — showing both is what made the old frame
-# picker look like it was full of duplicates.
-_NEAR_DUPLICATE_SIMILARITY = 0.95
-
-# Faces at least this similar to a group's average join it. Deliberately
-# above the highest different-person score measured (0.71): splitting one
-# person into two groups costs a click, merging two people would invite
-# enrolling a stranger under someone's name.
-_GROUP_SIMILARITY = 0.72
-
-# An enrolled photo whose *best* similarity to the same person's other
-# photos is below this probably shows someone else. Measured with 4-6 photos
-# per person: a genuine photo's best match never fell below 0.71, a
-# stranger's filed under that name reached 0.62 at most and 0.55 at the
-# 95th percentile. Worth a warning, because a stranger's face filed under an
-# approved name is exactly the enrollment mistake that would later let the
-# suspicious-flag bypass clear that stranger.
-_OUTLIER_SIMILARITY = 0.55
+# The similarity bars used below belong to the face model (vision/face_models.py:
+# FACENET's were measured on real faces shrunk to camera size; see there).
 
 # MTCNN's own cut-off is 0.7, and a single-person portrait was measured
 # returning two extra "faces" at 0.80-0.85 — a bag and a patch of shadow.
@@ -147,12 +130,14 @@ def _unit_rows(embeddings: Sequence[Sequence[float]]) -> np.ndarray:
 
 
 def suppress_near_duplicates(
-    embeddings: Sequence[Sequence[float]], qualities: Sequence[float]
+    embeddings: Sequence[Sequence[float]],
+    qualities: Sequence[float],
+    model: FaceModel = FACENET,
 ) -> list[int]:
     """Indices worth keeping, best quality first, dropping near-identical shots.
 
     Greedy: the best face is always kept, and each next-best is kept unless
-    it is at least ``_NEAR_DUPLICATE_SIMILARITY`` similar to one already
+    it is at least the model's near-duplicate bar similar to one already
     kept. The caller reports how many were dropped, so nothing disappears
     silently.
     """
@@ -162,18 +147,20 @@ def suppress_near_duplicates(
     kept: list[int] = []
     for index in sorted(range(len(qualities)), key=lambda i: -qualities[i]):
         if kept and float(np.max(unit[kept] @ unit[index])) >= (
-            _NEAR_DUPLICATE_SIMILARITY
+            model.near_duplicate_similarity
         ):
             continue
         kept.append(index)
     return kept
 
 
-def group_candidates(candidates: Sequence[FaceCandidate]) -> list[list[str]]:
+def group_candidates(
+    candidates: Sequence[FaceCandidate], model: FaceModel = FACENET
+) -> list[list[str]]:
     """Candidate ids grouped by apparent person, biggest group first.
 
     Each face, best quality first, joins the group whose average it is most
-    similar to — if that is at least ``_GROUP_SIMILARITY`` — or starts a
+    similar to — if that is at least the model's group bar — or starts a
     new one. Averaging is what makes this steadier than comparing faces
     pairwise: one blurry frame cannot bridge two different people.
     Presentation only; the user still sees and picks every face.
@@ -199,7 +186,7 @@ def group_candidates(candidates: Sequence[FaceCandidate]) -> list[list[str]]:
             # A zero-length sum (an all-zero embedding) matches nothing.
             similarity[norms[:count] == 0] = -np.inf
             last_best = count - 1 - int(np.argmax(similarity[::-1]))
-            if similarity[last_best] >= _GROUP_SIMILARITY:
+            if similarity[last_best] >= model.group_similarity:
                 best = last_best
         if best < 0:
             best = count
@@ -212,12 +199,14 @@ def group_candidates(candidates: Sequence[FaceCandidate]) -> list[list[str]]:
 
 
 def match_candidates(
-    candidates: Sequence[FaceCandidate], enrollments: Sequence[dict[str, Any]]
+    candidates: Sequence[FaceCandidate],
+    enrollments: Sequence[dict[str, Any]],
+    model: FaceModel = FACENET,
 ) -> dict[str, dict[str, Any] | None]:
     """Per candidate id, who clip analysis would recognize it as right now.
 
     The same answer as :func:`~blink_downloader.vision.faces.match_enrollment`
-    gives one face — the closest enrollment at or above ``_FACE_MATCH_THRESHOLD``, a tie
+    gives one face — the closest enrollment at or above the model's match bar, a tie
     going to the later one — as ``{"name", "similarity"}`` or ``None``. A
     scan answers this once, when a face is found; the picker asks again
     whenever the enrolled people change, so "already recognized as" never
@@ -241,7 +230,7 @@ def match_candidates(
     )
     for row, candidate in zip(similarity, candidates):
         best = len(row) - 1 - int(np.argmax(row[::-1]))
-        if row[best] >= _FACE_MATCH_THRESHOLD:
+        if row[best] >= model.match_threshold:
             result[candidate.id] = describe_match(
                 (str(usable[best]["name"]), float(row[best]))
             )
@@ -256,7 +245,9 @@ def describe_match(match: tuple[str, float] | None) -> dict[str, Any] | None:
     return {"name": match[0], "similarity": round(match[1], 3)}
 
 
-def review_enrollments(enrollments: Sequence[dict[str, Any]]) -> dict[int, dict]:
+def review_enrollments(
+    enrollments: Sequence[dict[str, Any]], model: FaceModel = FACENET
+) -> dict[int, dict]:
     """Per enrolled photo, the two mistakes worth pointing out.
 
     ``unlike_others``: the photo resembles none of the same person's other
@@ -276,13 +267,13 @@ def review_enrollments(enrollments: Sequence[dict[str, Any]]) -> dict[int, dict]
         same = [j for j in range(len(usable)) if j != i and names[j] == names[i]]
         other = [j for j in range(len(usable)) if names[j] != names[i]]
         unlike_others = bool(same) and float(similarity[i, same].max()) < (
-            _OUTLIER_SIMILARITY
+            model.outlier_similarity
         )
         also_matches = ""
         if other:
             # argmax, like max(), takes the first of any tie.
             closest = other[int(np.argmax(similarity[i, other]))]
-            if float(similarity[i, closest]) >= _FACE_MATCH_THRESHOLD:
+            if float(similarity[i, closest]) >= model.match_threshold:
                 also_matches = names[closest]
         if unlike_others or also_matches:
             warnings[int(enrollment["id"])] = {

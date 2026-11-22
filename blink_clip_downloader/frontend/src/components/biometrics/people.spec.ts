@@ -119,6 +119,15 @@ describe('photo checks', () => {
     expect(problems[2]).toContain('1280px')
     expect(photoProblems(photo(), 640)).toEqual([])
   })
+
+  it('says a photo made with the other backend is not in use, and counts it as a problem', () => {
+    const problems = photoProblems(photo({ other_backend: true }), 640)
+    expect(problems).toHaveLength(1)
+    expect(problems[0]).toContain('other face-recognition backend')
+    expect(problems[0]).toContain('not used')
+    expect(groupPeople([photo({ other_backend: true })], 640)[0].problemCount).toBe(1)
+    expect(photoProblems(photo({ other_backend: false }), 640)).toEqual([])
+  })
 })
 
 describe('initials', () => {

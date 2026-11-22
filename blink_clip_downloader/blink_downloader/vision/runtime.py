@@ -218,12 +218,20 @@ def torch_cpu_compatible() -> bool:
     return False
 
 
-def is_face_recognition_available() -> bool:
-    """Return True if facenet_pytorch is importable and the CPU supports it.
+def is_face_recognition_available(backend: str = "facenet") -> bool:
+    """Return True if the face-recognition *backend* can run here.
 
-    See :func:`torch_cpu_compatible` — facenet_pytorch depends on torch, so
-    this must gate on CPU compatibility too, not just package presence.
+    FaceNet (the default): facenet_pytorch is importable and the CPU supports
+    it -- see :func:`torch_cpu_compatible`, which must gate this too since
+    facenet_pytorch depends on torch. ``"opencv"``: this OpenCV build has the
+    YuNet/SFace classes; it needs no PyTorch, so the CPU check is not made.
     """
+    if backend == "opencv":
+        try:
+            cv2 = __import__("cv2")
+        except ImportError:
+            return False
+        return hasattr(cv2, "FaceDetectorYN") and hasattr(cv2, "FaceRecognizerSF")
     if not torch_cpu_compatible():
         return False
     try:

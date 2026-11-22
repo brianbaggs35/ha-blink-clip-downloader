@@ -169,7 +169,7 @@ def _force_face_recognition_available() -> None:
     as _redirect_data_files rebinding each constant where it is defined
     above). The model itself is replaced separately, by _E2EFaceEmbedder.
     """
-    media_server_faces.is_face_recognition_available = lambda: True
+    media_server_faces.is_face_recognition_available = lambda _backend="facenet": True
 
 
 # The three "faces" _E2EFaceEmbedder finds in every image: two people and a

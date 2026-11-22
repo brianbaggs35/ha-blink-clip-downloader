@@ -595,6 +595,9 @@ export interface FaceEnrollment {
   /** Camera whose clip it came from; null for an uploaded photo, or one
    *  enrolled before 6.0.7. */
   camera: string | null
+  /** True when another backend's model made this photo's embedding: it cannot
+   *  be compared with the running one's, so it is kept but not used. */
+  other_backend?: boolean
   warning: FacePhotoWarning | null
 }
 
@@ -620,6 +623,11 @@ export interface FacesResponse {
   analysis_enabled: boolean
   /** The width recognition matches faces at (ai_face_recognition_resolution). */
   frame_width: number
+  /** Which models find and compare faces (ai_face_recognition_backend). */
+  backend?: 'facenet' | 'opencv'
+  /** False for a backend whose thresholds were never measured on camera
+   *  footage (the opt-in OpenCV one). */
+  backend_measured?: boolean
   /** True when object detection runs on Hugging Face, so the clip frames
    *  (which can contain faces) are uploaded — enrollment data never is. */
   remote_vision?: boolean

@@ -449,6 +449,12 @@ configuration:
       “high”（960 像素）和“very_high”（1280 像素）会以更高细节重新查看相同时刻，
       能识别离摄像头更远的人，CPU 开销略有增加。更改后请在“生物识别”标签页重新
       扫描一段剪辑——人脸与相同分辨率下录入的照片匹配效果最好。
+  ai_face_recognition_backend:
+    name: 人脸识别后端
+    description: >-
+      由哪种模型查找并比对人脸。“facenet”（默认）是迄今所有登记所用的模型。“opencv”改用 OpenCV 运行的
+      YuNet 和 SFace，无需 PyTorch，但属于实验性功能：其阈值未在摄像头画面上测得，因此从不放过不清晰的人脸。
+      两者之间无法互相比对，切换后需要重新登记所有人。更改前请先阅读文档。
   hf_token:
     name: Hugging Face 令牌
     description: "Hugging Face 访问令牌。当一切都在本设备上运行时为可选项，此时它用于\

@@ -419,6 +419,13 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     # Enrollment scans follow it, so photos enrolled before a change match
     # best after being re-scanned.
     ai_face_recognition_resolution: str = "standard"
+    # Which models find and compare faces: "facenet" (facenet-pytorch's MTCNN
+    # + InceptionResnetV1, the default and what every enrollment so far was
+    # made with) or "opencv" (YuNet + SFace through OpenCV, no PyTorch needed;
+    # experimental -- its thresholds are unmeasured). Embeddings from the two
+    # are not comparable, so each enrollment records the one it was made
+    # with and a person must be enrolled again after switching.
+    ai_face_recognition_backend: str = "facenet"
     # Body-keypoint estimation (Ultralytics YOLO-pose) for the subject
     # nearest a protected asset, on the single frame the depth/contact
     # stages already examine. Its own toggle and its own small checkpoint:
@@ -791,6 +798,18 @@ def _parse_face_recognition_resolution(data: dict) -> str:
     return value if value in FACE_RECOGNITION_RESOLUTIONS else "standard"
 
 
+#: Every ai_face_recognition_backend value (vision/face_models.py's
+#: FACE_BACKENDS; tests/test_config.py keeps the two, and config.yaml, in step).
+FACE_RECOGNITION_BACKENDS = ("facenet", "opencv")
+
+
+def _parse_face_recognition_backend(data: dict) -> str:
+    """The configured face backend; anything unrecognised is "facenet", the
+    one every enrollment made before the option existed was made with."""
+    value = str(data.get("ai_face_recognition_backend", "") or "").strip().lower()
+    return value if value in FACE_RECOGNITION_BACKENDS else "facenet"
+
+
 def _text_option(data: dict, key: str, default: str = "") -> str:
     """A string option, trimmed; *default* when it is missing, null or blank."""
     return str(data.get(key, "") or "").strip() or default
@@ -931,6 +950,7 @@ def _parse_ai_detection_kwargs(data: dict) -> dict[str, Any]:
             data.get("ai_face_recognition_ignore_unclear_faces", False)
         ),
         "ai_face_recognition_resolution": _parse_face_recognition_resolution(data),
+        "ai_face_recognition_backend": _parse_face_recognition_backend(data),
         "ai_pose_estimation_enabled": bool(
             data.get("ai_pose_estimation_enabled", False)
         ),
