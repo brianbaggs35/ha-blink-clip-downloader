@@ -1,5 +1,15 @@
 # Changelog
 
+## 6.2.3
+
+### Bug fixes
+
+### Dependency Updates
+
+### Release Workflow
+
+- Updated the add-on to version 6.2.3 (add-on manifest, Python package, web UI About dialog and the npm package files).
+
 ## 6.2.2
 
 ### Bug fixes
