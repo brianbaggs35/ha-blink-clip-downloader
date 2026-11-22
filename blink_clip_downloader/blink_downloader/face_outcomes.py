@@ -30,25 +30,11 @@ class RecognitionOutcome(Protocol):
     type checking, made the two modules a cycle.
     """
 
-    @property
-    def approved_names(self) -> list[str]:
-        """The approved household members recognized in the clip."""
-
-    @property
-    def other_names(self) -> list[str]:
-        """Recognized people who are not approved for the bypass."""
-
-    @property
-    def unrecognized_present(self) -> bool:
-        """Whether a face matched nobody, or a frame was not examined."""
-
-    @property
-    def unclear_faces(self) -> int:
-        """How many unmatched faces were set aside as too unclear to judge."""
-
-    @property
-    def tally(self) -> FaceTally | None:
-        """The per-clip counts, or ``None`` when nothing was examined."""
+    approved_names: list[str]
+    other_names: list[str]
+    unrecognized_present: bool
+    unclear_faces: int
+    tally: FaceTally | None
 
 
 @dataclass(frozen=True)
