@@ -128,6 +128,11 @@ def _candidate_ids(body: dict[str, Any]) -> list[str]:
     return list(dict.fromkeys(ids))
 
 
+def _made_with(enrollment: dict[str, Any], model_name: str) -> bool:
+    """Whether *enrollment*'s embedding came from the face model *model_name*."""
+    return enrollment.get("model") == model_name
+
+
 def _data_url(jpeg: bytes) -> str:
     return "data:image/jpeg;base64," + base64.b64encode(jpeg).decode("ascii")
 
@@ -181,11 +186,18 @@ class FaceRoutesMixin(_MediaServerBase):
         ``models`` says whether the recognition models loaded and, when they
         did not, why (``null`` until something has asked for them).
         """
+        model = self._face_model
         enrollments = await self._db.list_face_enrollments()
-        warnings = review_enrollments(enrollments)
+        # Photos made with another backend's model cannot be compared with
+        # this one's, so they are not reviewed against it and are marked.
+        warnings = review_enrollments(
+            [e for e in enrollments if _made_with(e, model.name)], model
+        )
         return web.json_response(
             {
-                "available": is_face_recognition_available(),
+                "available": is_face_recognition_available(self._face_backend),
+                "backend": self._face_backend,
+                "backend_measured": model.measured,
                 "recognition_enabled": self._face_recognition_enabled,
                 "analysis_enabled": self._analyzer is not None,
                 "frame_width": self._face_frame_width,
@@ -200,6 +212,7 @@ class FaceRoutesMixin(_MediaServerBase):
                         "has_thumbnail": bool(e.get("has_thumbnail")),
                         "frame_width": e.get("frame_width"),
                         "camera": e.get("camera"),
+                        "other_backend": not _made_with(e, model.name),
                         "warning": warnings.get(e["id"]),
                     }
                     for e in enrollments
@@ -223,7 +236,7 @@ class FaceRoutesMixin(_MediaServerBase):
 
     async def _detection_ready(self) -> str | None:
         """Why faces cannot be detected right now, or ``None`` if they can."""
-        if not is_face_recognition_available():
+        if not is_face_recognition_available(self._face_backend):
             return _UNAVAILABLE
         if not await self._face_embedder.ensure_ready(retry_now=True):
             health = self._face_embedder.health()
@@ -274,7 +287,9 @@ class FaceRoutesMixin(_MediaServerBase):
             "quality": face.quality,
             "width": face.width,
             "time": time,
-            "match": describe_match(match_enrollment(face.embedding, enrollments)),
+            "match": describe_match(
+                match_enrollment(face.embedding, enrollments, self._face_model)
+            ),
         }
 
     async def _handle_faces_detect(self, request: web.Request) -> web.Response:
@@ -319,7 +334,7 @@ class FaceRoutesMixin(_MediaServerBase):
             (f for f in faces if f.probability >= MIN_CANDIDATE_PROBABILITY),
             key=lambda f: -f.quality,
         )
-        enrollments = await self._db.list_face_enrollments()
+        enrollments = await self._db.list_face_enrollments(self._face_model.name)
         return web.json_response(
             {"faces": [self._offer(face, enrollments) for face in usable]}
         )
@@ -379,9 +394,11 @@ class FaceRoutesMixin(_MediaServerBase):
                 if face.probability >= MIN_CANDIDATE_PROBABILITY:
                     found.append((face, round(index * interval, 1)))
         keep = suppress_near_duplicates(
-            [face.embedding for face, _ in found], [face.quality for face, _ in found]
+            [face.embedding for face, _ in found],
+            [face.quality for face, _ in found],
+            self._face_model,
         )
-        enrollments = await self._db.list_face_enrollments()
+        enrollments = await self._db.list_face_enrollments(self._face_model.name)
         return web.json_response(
             {
                 **empty,
@@ -413,11 +430,14 @@ class FaceRoutesMixin(_MediaServerBase):
         ids = _candidate_ids(await _json_object(request))
         held = {i: self._face_candidates.get(i) for i in ids}
         live = [c for c in held.values() if c]
-        enrollments = await self._db.list_face_enrollments()
+        enrollments = await self._db.list_face_enrollments(self._face_model.name)
         # In a worker thread: even vectorized, a full store is real numpy
         # work, and it must not stall every other request while it runs.
         groups, matches = await asyncio.to_thread(
-            lambda: (group_candidates(live), match_candidates(live, enrollments))
+            lambda: (
+                group_candidates(live, self._face_model),
+                match_candidates(live, enrollments, self._face_model),
+            )
         )
         return web.json_response(
             {
@@ -463,6 +483,7 @@ class FaceRoutesMixin(_MediaServerBase):
                 thumbnail=candidate.thumbnail or None,
                 frame_width=candidate.frame_width,
                 camera=candidate.camera,
+                model=self._face_model.name,
             )
             enrolled += 1
 

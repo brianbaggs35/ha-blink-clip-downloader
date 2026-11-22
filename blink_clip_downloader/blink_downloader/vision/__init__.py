@@ -62,6 +62,8 @@ from .contact import ContactResult, ContactSegmenter
 from .depth import DepthComparison, DepthEstimator
 from .detection import DetectedObject, ObjectDetector
 from .enhance import FrameEnhancer
+from .face_backends import create_face_embedder
+from .face_models import FACE_BACKENDS, FaceModel
 from .faces import (
     FACE_RESOLUTION_WIDTHS,
     DetectedFace,
@@ -91,6 +93,7 @@ from .runtime import (
 )
 
 __all__ = [
+    "FACE_BACKENDS",
     "FACE_RESOLUTION_WIDTHS",
     "SOURCE_CONTACT_SEGMENTATION",
     "SOURCE_DEPTH_ESTIMATION",
@@ -107,6 +110,7 @@ __all__ = [
     "DetectedFace",
     "DetectedObject",
     "FaceEmbedder",
+    "FaceModel",
     "FaceRecognitionResult",
     "FaceRecognizer",
     "FrameEnhancer",
@@ -120,6 +124,7 @@ __all__ = [
     "VisionPipeline",
     "configure_cv_concurrency",
     "cosine_similarity",
+    "create_face_embedder",
     "is_face_recognition_available",
     "torch_cpu_compatible",
 ]

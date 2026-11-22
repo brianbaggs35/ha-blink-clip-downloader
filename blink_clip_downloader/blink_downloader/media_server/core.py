@@ -24,7 +24,7 @@ from ..arming_schedule import ArmingScheduler
 from ..backup import RestoreStaging
 from ..database import ClipDatabase
 from ..face_enrollment import FaceCandidateStore
-from ..vision import FaceEmbedder
+from ..vision import FaceEmbedder, FaceModel
 from .access_control import AccessControl
 
 if TYPE_CHECKING:
@@ -61,6 +61,8 @@ class _MediaServerBase:
     _face_recognition_enabled: bool
     _face_ignore_unclear: bool
     _face_frame_width: int
+    _face_backend: str
+    _face_model: FaceModel
     _remote_vision: bool
 
     # Narrow callables from BlinkDownloader, so no route module has to

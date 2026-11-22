@@ -88,6 +88,11 @@ export function photoProblems(photo: FaceEnrollment, frameWidth: number): string
   if (photo.warning?.also_matches) {
     problems.push(`Also looks like ${photo.warning.also_matches} — recognition could confuse the two.`)
   }
+  if (photo.other_backend) {
+    problems.push(
+      'Made with the other face-recognition backend, so it is not used — scan a clip or photo of this person again to enroll them with the current one.',
+    )
+  }
   if (isResolutionMismatch(photo, frameWidth)) {
     problems.push(
       `Captured at ${photo.frame_width}px, but recognition now runs at ${frameWidth}px — scan a clip again to add a matching photo.`,

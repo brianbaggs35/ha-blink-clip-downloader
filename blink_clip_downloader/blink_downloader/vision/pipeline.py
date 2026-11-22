@@ -51,8 +51,8 @@ from .detection import (
     _ZoneReference,
 )
 from .enhance import FrameEnhancer
+from .face_backends import create_face_embedder
 from .faces import (
-    FaceEmbedder,
     FaceRecognitionResult,
     FaceRecognizer,
     _build_recognition_hint,
@@ -121,6 +121,9 @@ class VisionConfig:
     #: width the face stage reuses the frames already extracted; any other
     #: width re-extracts the same moments at that size.
     face_frame_width: int = ANALYSIS_FRAME_WIDTH
+    #: ``ai_face_recognition_backend``: "facenet" (the default) or "opencv"
+    #: (see :mod:`.face_backends`). Which models find and compare faces.
+    face_backend: str = "facenet"
     #: ``ai_face_recognition_ignore_unclear_faces``: whether a face too poor to
     #: identify may be set aside rather than counted as a possible stranger
     #: (see :meth:`.faces.FaceRecognizer.recognize`). Off keeps every
@@ -287,7 +290,7 @@ class VisionPipeline:
         self._depth = DepthEstimator(config.hf_token, config.depth_estimation_model)
         self._segmenter = ContactSegmenter(config.hf_token)
         self._pose = PoseEstimator(config.pose_model)
-        self._face_embedder = FaceEmbedder()
+        self._face_embedder = create_face_embedder(config.face_backend)
         self._audio = AudioTagger(config.audio_model, config.hf_token)
 
     def stage_health(self) -> list[runtime.StageHealth]:

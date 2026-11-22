@@ -616,6 +616,16 @@ configuration:
       éloignées de la caméra pour un coût processeur modéré. Après un
       changement, rescannez un clip dans l'onglet Biométrie — les visages
       correspondent mieux aux photos enregistrées à la même résolution.
+  ai_face_recognition_backend:
+    name: Moteur de reconnaissance faciale
+    description: >-
+      Quels modèles détectent et comparent les visages. « facenet » (par
+      défaut) est ce avec quoi toutes les inscriptions ont été faites
+      jusqu'ici. « opencv » utilise YuNet et SFace via OpenCV, sans PyTorch,
+      mais reste expérimental : ses seuils n'ont pas été mesurés sur des
+      images de caméras, il n'écarte donc jamais un visage peu net. Les deux
+      ne sont pas comparables entre eux : il faut réinscrire tout le monde
+      après un changement. Lisez la documentation avant de le modifier.
   hf_token:
     name: Jeton Hugging Face
     description: >-

@@ -534,6 +534,16 @@ configuration:
       recognizes people farther from the camera at a modest extra CPU
       cost. After changing it, re-scan a clip on the Biometrics tab —
       faces match best against photos enrolled at the same resolution.
+  ai_face_recognition_backend:
+    name: Face Recognition Backend
+    description: >-
+      Which models find and compare faces. "facenet" (the default) is what
+      every enrollment so far was made with. "opencv" runs YuNet and SFace
+      through OpenCV instead, with no PyTorch needed, but it is experimental:
+      its thresholds are not measured on camera footage, so it never sets an
+      unclear face aside. The two cannot be compared with each other, so
+      everyone must be enrolled again after switching. Read the
+      documentation before changing it.
   hf_token:
     name: Hugging Face Token
     description: >-

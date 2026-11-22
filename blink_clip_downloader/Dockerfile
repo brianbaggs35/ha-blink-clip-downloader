@@ -193,7 +193,9 @@ RUN pip3 install --no-cache-dir -r /tmp/requirements.txt \
 # mismatched one — verified by hand: without this, `import torchvision`
 # raises "RuntimeError: operator torchvision::nms does not exist" at runtime.
 #
-# facenet-pytorch is installed separately with --no-deps: its pinned
+# facenet-pytorch (the default face backend; the opt-in `opencv` one runs YuNet +
+# SFace through the opencv-python-headless installed above and needs none of
+# this) is installed separately with --no-deps: its pinned
 # `Pillow<10.3.0,>=10.2.0` predates Python 3.13 wheel support, so pip falls
 # back to building Pillow 10.2.0 from source, which fails outright under
 # current setuptools (KeyError: '__version__' in Pillow's legacy setup.py) —

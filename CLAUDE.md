@@ -259,6 +259,30 @@ architecture.
     real faces shrunk to camera size; the comments say what they are.
     `media_server/faces.py` is the route side; `vision/faces.py`'s
     `FaceEmbedder.detect()` finds the faces.
+  - `vision/face_models.py` + `vision/opencv_faces.py` + `vision/face_backends.py`
+    (6.2.3, BCD-54) — the two face-recognition backends. `ai_face_recognition_backend`
+    is `facenet` (default; facenet-pytorch, unmaintained since 2024) or `opencv`
+    (YuNet + SFace via `cv2.FaceDetectorYN`/`FaceRecognizerSF`, no PyTorch).
+    `face_models.py` (stdlib only) holds a `FaceModel` profile per backend --
+    **every number that decides who a face is lives with the model it was
+    measured on**: match bar, resemblance, near-duplicate/group/outlier bars.
+    FACENET's are the measured ones; OPENCV_SFACE's are conservative guesses
+    (`measured=False`, `resemblance_similarity=None`) and **must be re-measured
+    on camera footage before any is relaxed**. An unmeasured model gets **no
+    unclear-face leniency**: `FaceRecognizer` treats `resemblance_similarity is
+    None` as "never set a face aside", whatever
+    `ai_face_recognition_ignore_unclear_faces` says. Embeddings from different
+    models are never compared: `face_enrollments.model` (default
+    `facenet-vggface2`, so existing rows read as FaceNet's) tags each row, the
+    recognizer and every enrollment-tab computation read only the running
+    model's rows (`list_face_enrollments(model)`), and the tab lists the others
+    marked `other_backend` rather than hiding or converting them. Anything new
+    that reads enrollments must pass the model. The OpenCV model files come from
+    opencv_zoo at a pinned commit into `/data/model_cache/opencv_faces/`, size-
+    bounded because GitHub serves an LFS pointer where it cannot serve the file;
+    no hash is published to check against, so the add-on logs the SHA-256.
+    `is_face_recognition_available(backend)` takes the backend (the OpenCV one
+    needs no torch); the e2e/standalone patches of it must accept that argument.
   - `face_outcomes.py` — what face recognition made of a clip, stdlib only
     (the analyzer, which stores it, does not import the optional `vision`
     package): `FaceTally` (faces seen/matched/unclear, how many of the unclear

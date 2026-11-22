@@ -4391,6 +4391,28 @@ async def test_add_face_enrollment_records_where_it_came_from(
     assert (by_id[uploaded]["camera"], by_id[uploaded]["frame_width"]) == (None, None)
 
 
+async def test_face_enrollments_record_which_model_made_them(
+    db: ClipDatabase,
+) -> None:
+    """Rows from before the column existed, and any added without saying,
+    read as FaceNet's; another model's are kept apart from them."""
+    from blink_downloader.database.faces import DEFAULT_FACE_MODEL
+
+    await db.add_face_enrollment("Brian", [0.1, 0.2])
+    await db.add_face_enrollment("Brian", [0.3], model="opencv-sface")
+
+    everything = await db.list_face_enrollments()
+    assert sorted(e["model"] for e in everything) == [
+        DEFAULT_FACE_MODEL,
+        "opencv-sface",
+    ]
+    only_sface = await db.list_face_enrollments("opencv-sface")
+    assert [e["embedding"] for e in only_sface] == [[0.3]]
+    only_default = await db.list_face_enrollments(DEFAULT_FACE_MODEL)
+    assert [e["embedding"] for e in only_default] == [[0.1, 0.2]]
+    assert await db.list_face_enrollments("some-other-model") == []
+
+
 async def test_rename_camera_carries_face_enrollments(db: ClipDatabase) -> None:
     """A person's photos keep saying which camera they came from after
     Blink renames it; photos from another camera, and uploads, are left."""

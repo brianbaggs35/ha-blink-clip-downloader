@@ -695,6 +695,44 @@ def test_face_recognition_resolutions_agree_everywhere():
     assert FACE_RESOLUTION_WIDTHS["standard"] == 640
 
 
+def test_face_recognition_backend_defaults_to_facenet():
+    """FaceNet is what every enrollment made before the option existed came
+    from, so it is also where anything unrecognised lands."""
+    for data in (
+        {},
+        {"ai_face_recognition_backend": "dlib"},
+        {"ai_face_recognition_backend": None},
+    ):
+        cfg = _parse_config({"username": "u", "password": "p", **data})
+        assert cfg.ai_face_recognition_backend == "facenet"
+
+
+def test_face_recognition_backend_accepts_every_listed_value():
+    for value in ("facenet", "opencv", " OpenCV "):
+        cfg = _parse_config(
+            {"username": "u", "password": "p", "ai_face_recognition_backend": value}
+        )
+        assert cfg.ai_face_recognition_backend == value.strip().lower()
+
+
+def test_face_recognition_backends_agree_everywhere():
+    """config.py validates the option, vision/face_models.py names the backends,
+    config.yaml offers it and every translation describes it."""
+    from blink_downloader.config import FACE_RECOGNITION_BACKENDS
+    from blink_downloader.vision import FACE_BACKENDS
+
+    root = Path(__file__).resolve().parent.parent
+    manifest = yaml.safe_load((root / "config.yaml").read_text())
+    offered = manifest["schema"]["ai_face_recognition_backend"]
+    assert offered == "list(" + "|".join(FACE_RECOGNITION_BACKENDS) + ")"
+    assert set(FACE_BACKENDS) == set(FACE_RECOGNITION_BACKENDS)
+    assert manifest["options"]["ai_face_recognition_backend"] == "facenet"
+    for translation in (root / "translations").glob("*.yaml"):
+        described = yaml.safe_load(translation.read_text())["configuration"]
+        assert described["ai_face_recognition_backend"]["name"], translation.name
+        assert described["ai_face_recognition_backend"]["description"], translation.name
+
+
 def test_ignore_unclear_faces_is_off_unless_asked_for():
     """Off is the strict rule every install has always had, so an options.json
     written before the option existed (or one that says nothing) keeps it."""

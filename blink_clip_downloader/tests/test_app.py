@@ -2493,6 +2493,31 @@ def test_face_recognition_resolution_reaches_recognition_and_enrollment(
 
 
 @pytest.mark.parametrize(
+    ("backend", "model"), [("facenet", "facenet-vggface2"), ("opencv", "opencv-sface")]
+)
+def test_face_recognition_backend_reaches_recognition_and_enrollment(
+    base_config, tmp_path, backend, model
+) -> None:
+    """Recognition and the Biometrics tab must read faces in the same
+    embedding space, or enrolling someone could never match them."""
+    app, mock_create_analyzer = _build_app_with_camera_configs(
+        base_config,
+        tmp_path,
+        None,
+        ai_face_recognition_enabled=True,
+        ai_face_recognition_backend=backend,
+    )
+    pipeline = mock_create_analyzer.return_value.attach_vision_pipeline.call_args.args[
+        0
+    ]
+    assert pipeline._config.face_backend == backend
+    assert pipeline._face_embedder.model.name == model
+    assert app._media_server._face_backend == backend
+    assert app._media_server._face_model.name == model
+    assert app._media_server._face_embedder.model.name == model
+
+
+@pytest.mark.parametrize(
     ("overrides", "active", "named"),
     [
         ({"ai_routine_door_use_enabled": False}, False, None),

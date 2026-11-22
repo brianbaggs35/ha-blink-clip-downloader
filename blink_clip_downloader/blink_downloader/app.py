@@ -294,6 +294,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             face_frame_width=FACE_RESOLUTION_WIDTHS[
                 config.ai_face_recognition_resolution
             ],
+            face_backend=config.ai_face_recognition_backend,
             remote_vision=self._remote_vision,
             live_view=self._live_view,
             merge_downloaded_clip_ids=self._tracker.merge_downloaded,
@@ -815,6 +816,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
                     face_frame_width=FACE_RESOLUTION_WIDTHS[
                         config.ai_face_recognition_resolution
                     ],
+                    face_backend=config.ai_face_recognition_backend,
                     face_ignore_unclear=config.ai_face_recognition_ignore_unclear_faces,
                     pose_estimation_enabled=config.ai_pose_estimation_enabled,
                     pose_model=config.ai_pose_model,

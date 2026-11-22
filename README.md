@@ -287,6 +287,11 @@ strong enough to raise an alert on its own. If the recognition models can't
 be loaded, the Biometrics tab says why and that nothing is being recognized
 until it's fixed; the AI tab does the same for any optional vision model (object
 detection, depth, pose, contact segmentation, audio) that couldn't be loaded.
+Recognition uses facenet-pytorch by default; an experimental, opt-in OpenCV
+backend (`ai_face_recognition_backend: opencv`, YuNet + SFace, no PyTorch)
+is available for installs that would rather not depend on it. The two cannot
+be compared, so people are enrolled again after switching, and OpenCV's
+thresholds are not yet measured on camera footage.
 
 Details are in the docs:
 [Vehicles tab](blink_clip_downloader/DOCS.md#vehicles-tab--protected-vehicle-monitoring),
