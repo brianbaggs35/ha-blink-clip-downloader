@@ -1239,16 +1239,23 @@ class BaseAnalyzer(abc.ABC):
         Serialized via ``_analyze_lock`` — see the comment in ``__init__`` for
         why concurrent calls on the same instance are unsafe.
         """
+        # A clip keeps the name its camera had when it was recorded, but the
+        # camera's description, prompt, car rules, baselines and learning are
+        # kept under its current name -- so the analysis looks all of that up
+        # by the current name and only the stored result carries the clip's own.
+        current = self._db.current_camera_name(camera) if self._db else camera
         async with self._get_analyze_lock():
-            return await self._analyze_clip_locked(
+            result = await self._analyze_clip_locked(
                 clip_path=clip_path,
                 clip_id=clip_id,
-                camera=camera,
+                camera=current,
                 anomaly_score=anomaly_score,
                 clip_timestamp=clip_timestamp,
                 clip_duration=clip_duration,
                 recent_corrections=recent_corrections,
             )
+        result.camera = camera
+        return result
 
     async def _analyze_clip_locked(
         self,

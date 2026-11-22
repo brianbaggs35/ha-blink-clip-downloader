@@ -10935,6 +10935,7 @@ def test_attach_database_sets_attribute() -> None:
 async def _run_analyze_clip_with_mock_db(
     is_suspicious: bool,
     confidence: float | None = None,
+    renamed_to: str | None = None,
 ) -> tuple[MagicMock, object]:
     analyzer = ClipAnalyzer(
         ollama_url="http://localhost:11434",
@@ -10946,6 +10947,9 @@ async def _run_analyze_clip_with_mock_db(
     mock_db = MagicMock()
     mock_db.get_scene_deviation = AsyncMock(return_value=0.05)
     mock_db.record_scene_baseline = AsyncMock()
+    # What the real database does for a camera that was never renamed; a test
+    # about a rename says which camera the clip's name has become.
+    mock_db.current_camera_name.side_effect = lambda name: renamed_to or name
     analyzer.attach_database(mock_db)
 
     mock_proc = AsyncMock()
@@ -10986,6 +10990,23 @@ async def test_analyze_clip_records_scene_baseline_when_not_suspicious() -> None
     mock_db, _ = await _run_analyze_clip_with_mock_db(is_suspicious=False)
     mock_db.record_scene_baseline.assert_called_once()
     assert mock_db.record_scene_baseline.call_args[0][0] == "Driveway"
+
+
+@pytest.mark.asyncio
+async def test_analyze_clip_of_a_renamed_camera_uses_its_current_name_but_keeps_the_clips() -> (
+    None
+):
+    """A clip keeps the name its camera had when it was recorded, but its
+    baselines are kept under the camera's current name: re-analysing an old
+    clip must not start a baseline for a camera name that no longer exists,
+    nor file the verdict under the new name."""
+    mock_db, result = await _run_analyze_clip_with_mock_db(
+        is_suspicious=False, renamed_to="Back Garden"
+    )
+    mock_db.current_camera_name.assert_called_once_with("Driveway")
+    assert mock_db.get_scene_deviation.call_args[0][0] == "Back Garden"
+    assert mock_db.record_scene_baseline.call_args[0][0] == "Back Garden"
+    assert result.camera == "Driveway"  # type: ignore[attr-defined]
 
 
 @pytest.mark.asyncio

@@ -26,6 +26,7 @@ from .analyzer import (
 from .archiver import ClipArchiver
 from .arming_schedule import ArmingScheduler
 from .battery_monitor import BatteryMonitor
+from .camera_names import current_camera_name
 from .config import AppConfig
 from .database import ClipDatabase
 from .digest import DailyDigest
@@ -123,6 +124,10 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         self._tracker = ClipTracker()
         self._manifest = ClipManifest()
         self._db = ClipDatabase()
+        # A clip keeps the camera name it was recorded under; what a camera
+        # learns is kept under its current one, so the database asks which
+        # camera a clip's name is now (see camera_names.py).
+        self._db.set_camera_resolver(self._current_camera_name)
         self._notifier = HANotifier(
             supervisor_token=config.supervisor_token,
             enabled=config.notify_ha,
@@ -554,6 +559,20 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
 
     async def _handle_camera_renamed(self, old_name: str, new_name: str) -> None:
         """Keep database, analyzer, filters, and persisted settings in sync."""
+        # First, so that nothing running while the rest is carried over (an
+        # analysis, a rating) files what the camera learns under the old name.
+        # new_name belongs to a real camera now, so an alias that still sent
+        # it somewhere else (the camera it once named was renamed away
+        # earlier) would carry this camera's settings onto that other one.
+        self._camera_name_aliases = {
+            alias: target
+            for alias, target in self._camera_name_aliases.items()
+            if alias.lower() != new_name.lower()
+        }
+        self._camera_name_aliases[old_name] = new_name
+        for alias, target in self._camera_name_aliases.items():
+            if target.lower() == old_name.lower():
+                self._camera_name_aliases[alias] = new_name
         await self._db.rename_camera(old_name, new_name)
         if self._analyzer is not None:
             self._analyzer.rename_camera(old_name, new_name)
@@ -581,18 +600,6 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             new_name if camera.lower() == old_name.lower() else camera
             for camera in self._auto_analysis_disabled_cameras
         }
-        # new_name belongs to a real camera now, so an alias that still sent
-        # it somewhere else (the camera it once named was renamed away
-        # earlier) would carry this camera's settings onto that other one.
-        self._camera_name_aliases = {
-            alias: target
-            for alias, target in self._camera_name_aliases.items()
-            if alias.lower() != new_name.lower()
-        }
-        self._camera_name_aliases[old_name] = new_name
-        for alias, target in self._camera_name_aliases.items():
-            if target.lower() == old_name.lower():
-                self._camera_name_aliases[alias] = new_name
         try:
             CAMERA_NAME_ALIASES_FILE.write_text(
                 json.dumps(self._camera_name_aliases, indent=2)
@@ -602,6 +609,13 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             raise
         if hasattr(self, "_event_watcher"):
             self._event_watcher.rename_camera(old_name, new_name)
+
+    def _current_camera_name(self, name: str) -> str:
+        """Which camera *name* is today: itself if a camera on the account
+        carries it, else whatever it was renamed to."""
+        downloader = getattr(self, "_downloader", None)
+        live = downloader.list_camera_names() if downloader is not None else []
+        return current_camera_name(name, self._camera_name_aliases, live)
 
     @staticmethod
     def _load_camera_name_aliases() -> dict[str, str]:

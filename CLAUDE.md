@@ -72,7 +72,22 @@ architecture.
     and anything added to `cameras.py`'s rename path must cover **every**
     table with a `camera` column — there are 13, and the count is worth
     re-deriving from `schema.py` rather than trusting, since a missed one
-    is this repo's most-repeated bug.
+    is this repo's most-repeated bug. Since 6.2.3 (BCD-5) "cover" means
+    *decide*: a rename leaves the rows that describe one clip with the name
+    the camera had when it recorded it (`cameras.CLIP_HISTORY_TABLES`: clips,
+    analysis_results, the two queues, face_recognition_feedback,
+    security_events) and relabels only what names the camera as it is today
+    (`_RELABELLED_TABLES`); a rename that changes only capitals relabels all
+    of them. `test_a_table_is_either_relabelled_or_kept_with_its_clip` fails
+    for a table in neither list. What a camera *learns* (feedback, prompt
+    corrections, baselines, anomaly scores) is looked up under the camera's
+    **current** name: `learning.py` calls `current_camera_name()`, which the
+    app wires to `camera_names.current_camera_name` (the alias chain from
+    `camera_name_aliases.json`, stopping at the first name a live camera
+    carries; an empty live list during start-up means every alias applies),
+    and `BaseAnalyzer.analyze_clip` analyzes under it but hands back the
+    clip's own name. `_handle_camera_renamed` updates the alias map *before*
+    moving any row so nothing running meanwhile files under the old name.
   - `analyzer/` — AI vision analysis, a package since 6.0.6 (it was a
     single 5,200-line module). `base.py` holds `BaseAnalyzer` —
     everything that is the same whichever provider is configured: frame

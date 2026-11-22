@@ -110,6 +110,9 @@ class AdaptiveLearningMixin(_DatabaseBase):
         """
         if self._pool is None:
             return
+        # Learning is kept under the camera's current name, whatever name the
+        # clip being rated still carries (see current_camera_name).
+        camera = self.current_camera_name(camera)
         async with self._pool.acquire() as conn, conn.transaction():
             await conn.execute(
                 _qm("DELETE FROM analysis_feedback WHERE clip_id=?"), clip_id
@@ -166,6 +169,7 @@ class AdaptiveLearningMixin(_DatabaseBase):
         if self._pool is None:
             return []
         if camera:
+            camera = self.current_camera_name(camera)
             query = (
                 "SELECT * FROM analysis_feedback WHERE camera=? "
                 "ORDER BY created_at DESC LIMIT ?"
@@ -227,6 +231,8 @@ class AdaptiveLearningMixin(_DatabaseBase):
         if self._pool is None:
             return empty
 
+        if camera:
+            camera = self.current_camera_name(camera)
         where = "WHERE camera=?" if camera else ""
         params: tuple[Any, ...] = (camera,) if camera else ()
         row = await self._pool.fetchrow(
@@ -294,6 +300,7 @@ class AdaptiveLearningMixin(_DatabaseBase):
         """
         if self._pool is None:
             return []
+        camera = self.current_camera_name(camera)
         rows = await self._pool.fetch(
             _qm(
                 """
@@ -319,6 +326,7 @@ class AdaptiveLearningMixin(_DatabaseBase):
         """
         if self._pool is None:
             return
+        camera = self.current_camera_name(camera)
         await self._pool.execute(
             _qm(
                 """
@@ -358,6 +366,7 @@ class AdaptiveLearningMixin(_DatabaseBase):
         if self._pool is None:
             return 0.0
 
+        camera = self.current_camera_name(camera)
         total = await self._total_camera_events(camera)
         if total < 30:
             return 0.0
