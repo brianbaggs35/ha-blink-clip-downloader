@@ -6,9 +6,9 @@ Blink authentication state the UI polls while a login or 2FA is pending.
 
 from __future__ import annotations
 
-import json
 import logging
 import re
+from html import escape
 
 from aiohttp import web
 
@@ -43,12 +43,9 @@ class AppShellMixin(_MediaServerBase):
         # HA ingress sends X-Ingress-Path so the JS can prefix all API calls.
         # For direct port access the header is absent and the prefix is empty.
         # The header value is attacker-controlled on any deployment where a
-        # client can set arbitrary request headers, so it must never be
-        # interpolated into the page verbatim: json.dumps() produces a
-        # properly quote/backslash-escaped JS string literal, and the
-        # "</" -> "<\/" swap additionally prevents a value like
-        # "</script><script>..." from closing out the surrounding <script>
-        # tag early.
+        # client can set arbitrary request headers, so it is used only if it
+        # is a plain path (_INGRESS_PATH_RE: no quote, backslash or angle
+        # bracket) and is HTML-escaped on the way into the page as well.
         index_file = _STATIC_DIR / "index.html"
         if not index_file.exists():
             raise web.HTTPInternalServerError(
@@ -63,7 +60,10 @@ class AppShellMixin(_MediaServerBase):
         if ingress_path and not _INGRESS_PATH_RE.fullmatch(ingress_path):
             _LOGGER.warning("Ignoring an X-Ingress-Path that is not a plain path")
             ingress_path = ""
-        safe_literal = json.dumps(ingress_path).replace("</", "<\\/")
+        # The pattern leaves only characters escaping does not change, so
+        # this is the same string literal as before; the escape is the
+        # second, independent guard.
+        safe_literal = f'"{escape(ingress_path, quote=True)}"'
         html = index_file.read_text().replace("'__HAROOT__'", safe_literal)
         return web.Response(text=html, content_type="text/html")
 

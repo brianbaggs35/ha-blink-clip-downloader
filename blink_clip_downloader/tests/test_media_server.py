@@ -9728,6 +9728,26 @@ async def test_liveview_start_generic_live_view_error(db: ClipDatabase) -> None:
         await tc.close()
 
 
+async def test_liveview_start_error_text_is_only_ever_the_add_ons_own(
+    db: ClipDatabase,
+) -> None:
+    """A LiveViewError carrying anything but a sentence the add-on wrote
+    (a library's own text, a path) is answered with a fixed sentence."""
+    live_view = _make_live_view(
+        start_side_effect=LiveViewError("/data/auth_credentials.json: boom")
+    )
+    server = MediaServer(db=db, port=0, live_view=live_view)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post("/api/liveview/start", json={"camera": "Front Door"})
+        assert resp.status == 502
+        text = await resp.text()
+        assert "auth_credentials" not in text
+        assert text == "Could not start live view. The add-on log has the details."
+    finally:
+        await tc.close()
+
+
 async def test_liveview_stop_returns_stopped_true(db: ClipDatabase) -> None:
     live_view = _make_live_view(stopped=True)
     server = MediaServer(db=db, port=0, live_view=live_view)

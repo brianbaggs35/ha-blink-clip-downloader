@@ -4,6 +4,10 @@
 
 ### Bug fixes
 
+- Fixed seven of the ten CodeQL alerts that were still open, changing nothing for anyone using the add-on as intended apart from the two notes below. The page's ingress path is now HTML-escaped as well as checked before it goes into the page (the output is identical for the paths Supervisor sends). The sign-in cookie is now a random token with nothing from the sign-in form in it; who it belongs to is kept in `/data/web_access.json` as a hash, up to 200 sessions at once, and pressing the sign-out button now ends the session itself, so a copy of the cookie stops working too (before, it was a signed copy of the username that only expired). `face_outcomes.py` no longer names `vision/faces.py`, even for type checking, which removes the two import cycles between them. The Backup & Restore tab and Live View now answer an operating-system or live-view failure with only wording this add-on wrote (a file name or a library's own text is in the log, not on screen). A test no longer reaches the real filename-format call with a format CodeQL reads as having too few arguments, and a test's `__bool__` raises `TypeError`, which `_resolve_url` now also tolerates.
+- **Because sessions are now kept by the add-on, everyone signed in on the direct port signs in once more after updating** (the Home Assistant sidebar panel and the access token Home Assistant's own calls use are not affected). Live View reports a failure to start with the name of a built-in error (`RuntimeError`, `OSError` and so on) as before, and `Error` for one named by a library; a failed backup says "Permission denied" or "No space left on device" without the file's name.
+- Not changed, on purpose: the Google OAuth client secret stays in `/data/google_drive_settings.json` (the add-on has to read it back, and encrypting it with a key kept beside it would only silence the alert), and the text of a refused or damaged backup, which is wording this add-on writes for the person at the screen. Those two alerts need dismissing in GitHub's Security tab.
+
 ### Dependency Updates
 
 ### Release Workflow

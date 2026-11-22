@@ -322,7 +322,7 @@ def test_resolve_url_fallback_when_base_url_missing(dl):
     assert result == "https://rest-prod.immedia-semi.com/clip.mp4"
 
 
-def test_resolve_url_falls_back_when_urls_check_raises_attributeerror(dl):
+def test_resolve_url_falls_back_when_the_urls_value_cannot_be_tested(dl):
     """getattr(obj, name, default) already swallows an AttributeError raised
     while resolving `urls`/`base_url` themselves — the outer except only
     guards a stranger case where checking truthiness of the resolved value
@@ -331,7 +331,7 @@ def test_resolve_url_falls_back_when_urls_check_raises_attributeerror(dl):
 
     class _WeirdUrls:
         def __bool__(self):
-            raise AttributeError("boom")
+            raise TypeError("boom")
 
     class _WeirdBlink:
         urls = _WeirdUrls()
