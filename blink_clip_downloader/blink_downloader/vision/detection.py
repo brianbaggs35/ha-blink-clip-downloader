@@ -159,7 +159,7 @@ class ObjectDetector:
         with runtime._native_import_lock:
             from ultralytics import YOLO  # type: ignore[import-not-found]
 
-            # A bare filename (the default "yolo11n.pt", or any custom
+            # A bare filename (the default "yolo26n.pt", or any custom
             # ai_object_detection_model naming a standard pretrained
             # checkpoint) downloads into YOLO()'s cwd if given as-is;
             # resolving it against a persistent absolute directory first

@@ -501,8 +501,11 @@ options:
   # Ultralytics model the object-detection stage above runs. YOLO26
   # (yolo26n/s/m/l/x.pt) is the current generation — end-to-end inference,
   # lighter and more accurate than YOLO11 at every size — and is the
-  # recommended default; yolo11n/s/m/l/x.pt remain selectable for
-  # compatibility with existing configurations. "n" (nano) is
+  # recommended default. yolo11n/s/m/l/x.pt are deprecated: they still work
+  # (and stay in the schema below, so a saved configuration naming one still
+  # starts) but will be removed in a later release, and a warning is logged
+  # at start-up while one is selected. YOLO27 will be added once Ultralytics
+  # publishes weights for it. "n" (nano) is
   # fastest/lightest and the recommended starting point on CPU-only
   # hardware; "s"/"m"/"l"/"x" trade speed for accuracy, with "x"
   # (extra-large) the most accurate and much slower. Downloaded
@@ -557,8 +560,9 @@ options:
   ai_pose_estimation_enabled: false
   # Ultralytics pose checkpoint the stage above runs. YOLO26-pose
   # (yolo26n/s/m/l/x-pose.pt) is the current generation and matches the
-  # object detector's own default; yolo11n/s/m/l/x-pose.pt remain
-  # selectable for anyone already using them. "n" (nano) is
+  # object detector's own default; yolo11n/s/m/l/x-pose.pt are deprecated
+  # in the same way (still work, warned about at start-up, to be removed).
+  # "n" (nano) is
   # fastest/lightest and the recommended starting point on CPU-only
   # hardware; larger sizes are more accurate and much slower. Downloaded
   # automatically on first use.

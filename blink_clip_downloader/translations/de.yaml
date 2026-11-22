@@ -559,10 +559,13 @@ configuration:
     description: >-
       Ultralytics-Modelldatei, die die obige Erkennungsstufe verwendet.
       YOLO26 (yolo26n/s/m/l/x.pt) ist die aktuelle Generation —
-      Ende-zu-Ende-Inferenz, leichter und genauer als YOLO11 in jeder
-      Größe — und die empfohlene Standardeinstellung; yolo11n/s/m/l/x.pt
-      bleiben zur Kompatibilität mit bestehenden Konfigurationen
-      weiterhin wählbar. "n" (nano) ist am schnellsten/leichtesten und
+      Ende-zu-Ende-Inferenz, leichter und genauer als YOLO11 in jeder Größe
+      — und die empfohlene Standardeinstellung; YOLO11 (yolo11n/s/m/l/x.pt)
+      ist veraltet: Es funktioniert weiterhin, bestehende Konfigurationen
+      laufen also unverändert, wird aber in einer späteren Version entfernt,
+      und solange es ausgewählt ist, wird beim Start eine Warnung
+      protokolliert. YOLO27 wird hinzugefügt, sobald Ultralytics es
+      veröffentlicht. "n" (nano) ist am schnellsten/leichtesten und
       empfohlen auf reiner CPU-Hardware; "s"/"m"/"l"/"x" tauschen
       Geschwindigkeit gegen Genauigkeit, wobei "x" (extra groß) am
       genauesten und deutlich langsamer ist. Wird beim ersten Gebrauch
@@ -648,9 +651,16 @@ configuration:
   ai_pose_model:
     name: Posenmodell
     description: >-
-      Welcher Ultralytics-Posen-Checkpoint verwendet wird. "n" (Nano) ist am
-      schnellsten und leichtesten und für reine CPU-Hardware empfohlen;
-      größere Modelle sind genauer, aber deutlich langsamer.
+      YOLO26-pose (yolo26n/s/m/l/x-pose.pt) ist die aktuelle Generation und
+      entspricht dem Standard des Objektdetektors. YOLO11
+      (yolo11n/s/m/l/x-pose.pt) ist veraltet: Es funktioniert weiterhin,
+      bestehende Konfigurationen laufen also unverändert, wird aber in einer
+      späteren Version entfernt, und solange es ausgewählt ist, wird beim
+      Start eine Warnung protokolliert. YOLO27 wird hinzugefügt, sobald
+      Ultralytics es veröffentlicht. Welcher Ultralytics-Posen-Checkpoint
+      verwendet wird. "n" (Nano) ist am schnellsten und leichtesten und für
+      reine CPU-Hardware empfohlen; größere Modelle sind genauer, aber
+      deutlich langsamer.
   ai_audio_analysis_enabled:
     name: Audioanalyse aktivieren
     description: >-
