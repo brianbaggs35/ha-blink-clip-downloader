@@ -18,6 +18,12 @@
 
 - Deprecated YOLO11 for object detection and pose (BCD-4). YOLO26 has been the default since an earlier release, and YOLO27 is announced but not released: as of ultralytics 8.4.216 its README says models are "not yet available" and its list of downloadable weights has no `yolo27` entry, so it is not offered yet (a choice that could only fail to download would be worse than none). `yolo11n/s/m/l/x.pt` and `yolo11n/s/m/l/x-pose.pt` **keep working and stay in the options' lists**, because Supervisor refuses a saved value its schema does not list and removing them would stop the add-on starting for anyone who chose one. What changes: while one is in use (Enhanced Detection on, the local detection backend, and for pose the pose switch on), the add-on logs a warning at start-up naming the option and the same-size YOLO26 file to switch to; the Object Detection Model and Pose Model descriptions in all six languages, `config.yaml`, DOCS.md and CLAUDE.md say it is deprecated and to be removed. The add-on never swaps your model for you, since a different model detects differently. Adding YOLO27 once it exists is one entry in `model_catalog.YOLO_CURRENT_GENERATIONS`, the two schema lists and the translations, and a new test fails if the schemas and that list ever disagree.
 
+- Updated vue to 3.5.46
+- Updated @types/node to 26.6.11
+- Updated @vitest/coverage-v8 to 5.1.2
+- Updated vitest to 5.1.2
+- Updated typescript-eslint to 8.74.0
+
 ### Release Workflow
 
 - Updated the add-on to version 6.2.3 (add-on manifest, Python package, web UI About dialog and the npm package files).
