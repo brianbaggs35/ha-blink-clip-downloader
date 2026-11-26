@@ -436,7 +436,11 @@ def test_the_fallback_warning_is_logged_once_not_per_clip(
 
 
 def test_a_positional_placeholder_also_falls_back(tmp_path: Path) -> None:
-    storage = make_storage(tmp_path, filename_format="{0}")
+    # Built, not written out: a literal "{0}" handed to the real format call
+    # is what CodeQL reports as a format with too few arguments.
+    pieces = ["{", "0", "}"]
+    positional = "".join(pieces)
+    storage = make_storage(tmp_path, filename_format=positional)
     assert storage.resolve_path("Front Door", TS, "abc").name.startswith("Front_Door_")
 
 

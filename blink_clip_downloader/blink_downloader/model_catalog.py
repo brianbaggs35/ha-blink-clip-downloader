@@ -30,6 +30,8 @@ __all__ = [
     "HUGGINGFACE_ROUTER_URL",
     "REPLICATE_API_URL",
     "REPLICATE_VISION_MODELS",
+    "YOLO_CURRENT_GENERATIONS",
+    "YOLO_DEPRECATED_GENERATIONS",
     "_ANTHROPIC_DATED_SNAPSHOT_RE",
     "_ANTHROPIC_FALLBACK_MODELS",
     "_OLLAMA_CLOUD_RECOMMENDED_MODELS",
@@ -733,3 +735,63 @@ def lookup_model_pricing(model: str) -> tuple[float, float] | None:
             if lower.startswith(prefix) or prefix in lower:
                 return pricing
     return None
+
+
+# ----------------------------------------------------------------------
+# Ultralytics YOLO generations (object detection and pose checkpoints)
+# ----------------------------------------------------------------------
+
+#: Generations the add-on recommends and tests against. YOLO27 joins this
+#: tuple (and ``config.yaml``'s two ``list(...)`` schemas) once Ultralytics
+#: publishes weights: as of ultralytics 8.4.216 its README still says "Models
+#: are not yet available, and no launch date is set", and its list of
+#: downloadable assets (``GITHUB_ASSETS_NAMES``) has no ``yolo27`` entry, so
+#: offering it now would only produce a failed download.
+YOLO_CURRENT_GENERATIONS: tuple[int, ...] = (26,)
+
+#: Generations that still load but are on their way out. They stay in the
+#: options' schemas on purpose: Supervisor rejects an option value its schema
+#: does not list, so dropping them would stop the add-on starting for anyone
+#: whose saved configuration names one. Removing them is a later, separate
+#: step once nobody is expected to be on one.
+YOLO_DEPRECATED_GENERATIONS: tuple[int, ...] = (11,)
+
+_YOLO_GENERATION_RE = re.compile(r"^yolo(\d+)(?=[a-z])", re.IGNORECASE)
+
+
+def _checkpoint_file_name(model: str) -> str:
+    """The file name of a checkpoint given as a bare name or a path."""
+    return model.replace("\\", "/").rsplit("/", 1)[-1]
+
+
+def yolo_generation(model: str) -> int | None:
+    """The YOLO generation a checkpoint filename belongs to (``yolo11n.pt`` is 11).
+
+    ``None`` for anything that is not named like an Ultralytics ``yolo<N>``
+    release: a custom path or file, ``yolov8n.pt`` and ``yolo12n.pt`` (never
+    offered here, so neither current nor deprecated, and left entirely alone).
+    """
+    match = _YOLO_GENERATION_RE.match(_checkpoint_file_name(model))
+    return int(match.group(1)) if match else None
+
+
+def yolo_deprecation_notice(option: str, model: str) -> str | None:
+    """A log line for a configured checkpoint of a deprecated generation.
+
+    Says which option holds it and what to set instead (the same size and
+    task of the newest current generation), or ``None`` when the checkpoint is
+    current or is not one of the add-on's own generations. It is a notice
+    only: the checkpoint keeps working and is never swapped for another, since
+    a different model detects differently from the one the user chose.
+    """
+    generation = yolo_generation(model)
+    if generation is None or generation not in YOLO_DEPRECATED_GENERATIONS:
+        return None
+    replacement = _YOLO_GENERATION_RE.sub(
+        f"yolo{max(YOLO_CURRENT_GENERATIONS)}", _checkpoint_file_name(model), count=1
+    )
+    return (
+        f"{option} is '{model}': YOLO{generation} is deprecated and will be "
+        f"removed in a later release. Switch to '{replacement}' (it needs a "
+        "one-off download on first use)."
+    )

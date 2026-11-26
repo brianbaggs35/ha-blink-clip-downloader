@@ -12,11 +12,14 @@ doesn't itself need the mocked library.
 from __future__ import annotations
 
 import asyncio
+import builtins
 import io
 import random
 import sys
+import threading
 import time
-from collections.abc import Sequence
+import types
+from collections.abc import Mapping, Sequence
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -86,6 +89,7 @@ from blink_downloader.vision.detection import (
     _proximity_label,
     _ZoneReference,
 )
+from blink_downloader.vision.face_models import FACENET, OPENCV_SFACE
 from blink_downloader.vision.faces import (
     DetectedFace,
     _build_recognition_hint,
@@ -2537,20 +2541,27 @@ def _face(
     )
 
 
-def _detecting(by_frame: dict[bytes, list[DetectedFace] | None]) -> MagicMock:
+def _fake_embedder() -> MagicMock:
+    """A FaceEmbedder stand-in that, like the real one, says which model it runs."""
+    embedder = MagicMock(spec=FaceEmbedder)
+    embedder.model = FACENET
+    return embedder
+
+
+def _detecting(by_frame: Mapping[bytes, list[DetectedFace] | None]) -> MagicMock:
     """A FaceEmbedder whose detect() answers each frame from *by_frame*;
     ``None`` is a frame it could not examine."""
 
     async def _detect(frame: bytes, **_kwargs: Any) -> list[DetectedFace] | None:
         return by_frame[frame]
 
-    embedder = MagicMock(spec=FaceEmbedder)
+    embedder = _fake_embedder()
     embedder.detect = _detect
     return embedder
 
 
 async def test_face_recognizer_no_enrollments_returns_empty(db: ClipDatabase) -> None:
-    embedder = MagicMock(spec=FaceEmbedder)
+    embedder = _fake_embedder()
     recognizer = FaceRecognizer(embedder, db)
     result = await recognizer.recognize([b"frame"])
     assert result == FaceRecognitionResult()
@@ -2644,7 +2655,7 @@ async def test_face_recognizer_multiple_faces_same_frame(db: ClipDatabase) -> No
 
 
 async def test_face_recognizer_db_error_returns_empty(db: ClipDatabase) -> None:
-    embedder = MagicMock(spec=FaceEmbedder)
+    embedder = _fake_embedder()
     broken_db = MagicMock(spec=ClipDatabase)
     broken_db.list_face_enrollments = MagicMock(
         side_effect=RuntimeError("db unavailable")
@@ -2673,6 +2684,130 @@ async def test_face_recognizer_frame_that_cannot_be_examined_blocks_the_bypass(
     )
     assert result.approved_names == ["Brian"]
     assert result.unrecognized_present is True
+
+
+# ------------------------------------------------------------------
+# FaceRecognizer with the OpenCV (SFace) model: its own enrollments, its own
+# match bar, and no set-aside leniency because none of its figures was measured.
+# ------------------------------------------------------------------
+
+
+def _sface_detecting(
+    by_frame: Mapping[bytes, list[DetectedFace] | None],
+) -> MagicMock:
+    embedder = _detecting(by_frame)
+    embedder.model = OPENCV_SFACE
+    return embedder
+
+
+async def test_recognizer_only_reads_enrollments_made_with_its_own_model(
+    db: ClipDatabase,
+) -> None:
+    """Another model's embeddings mean nothing to this one: a FaceNet photo of
+    Brian is neither a match nor a reason to call a face a stranger's."""
+    await db.add_face_enrollment("Brian", [1.0, 0.0, 0.0], model=FACENET.name)
+    await db.add_face_enrollment("Amy", [0.0, 1.0, 0.0], model=OPENCV_SFACE.name)
+
+    sface = await FaceRecognizer(
+        _sface_detecting({b"f": [_face([0.0, 1.0, 0.0])]}), db
+    ).recognize([b"f"])
+    assert sface.approved_names == ["Amy"]
+
+    facenet = await FaceRecognizer(
+        _detecting({b"f": [_face([1.0, 0.0, 0.0])]}), db
+    ).recognize([b"f"])
+    assert facenet.approved_names == ["Brian"]
+
+    # Brian's face under SFace: nobody enrolled *with SFace* looks like him.
+    unknown = await FaceRecognizer(
+        _sface_detecting({b"f": [_face([1.0, 0.0, 0.0])]}), db
+    ).recognize([b"f"])
+    assert unknown.approved_names == []
+    assert unknown.unrecognized_present is True
+
+
+async def test_recognizer_with_nobody_enrolled_under_its_model_finds_nobody(
+    db: ClipDatabase,
+) -> None:
+    """Switching backend leaves nobody enrolled for the new model until people
+    are enrolled again: no faces are matched or searched for."""
+    await db.add_face_enrollment("Brian", [1.0, 0.0, 0.0], model=FACENET.name)
+    embedder = _sface_detecting({b"f": [_face([1.0, 0.0, 0.0])]})
+    result = await FaceRecognizer(embedder, db).recognize([b"f"])
+    assert result == FaceRecognitionResult()
+
+
+async def test_recognizer_uses_the_models_own_match_bar(db: ClipDatabase) -> None:
+    """A cosine of 0.6 is a match for SFace (bar 0.50) and not for FaceNet (0.75)."""
+    await db.add_face_enrollment("Amy", _axis(0), model=OPENCV_SFACE.name)
+    await db.add_face_enrollment("Amy", _axis(0), model=FACENET.name)
+    face = _face(_like(0, 0.6))
+
+    sface = await FaceRecognizer(_sface_detecting({b"f": [face]}), db).recognize([b"f"])
+    assert sface.approved_names == ["Amy"]
+
+    facenet = await FaceRecognizer(_detecting({b"f": [face]}), db).recognize([b"f"])
+    assert facenet.approved_names == []
+
+
+async def test_an_unmeasured_model_never_sets_an_unclear_face_aside(
+    db: ClipDatabase,
+) -> None:
+    """The option exists for FaceNet's measured behaviour. Asked for with SFace,
+    a poor look at somebody still counts as a possible stranger, exactly as
+    with the option off (and a stranger is never waved through)."""
+    for name in ("Amy", "Brian"):
+        await db.add_face_enrollment(
+            name, _axis(_PEOPLE[name]), approved=True, model=OPENCV_SFACE.name
+        )
+    frames = [[_person("Amy"), _person("Brian")], [_person("Amy"), _blurred()]]
+    keyed = {f"frame-{i}".encode(): faces for i, faces in enumerate(frames)}
+
+    for ignore_unclear in (False, True):
+        result = await FaceRecognizer(_sface_detecting(keyed), db).recognize(
+            list(keyed), ignore_unclear=ignore_unclear
+        )
+        assert result.unrecognized_present is True
+        assert result.unclear_faces == 0
+
+    # Control: the measured model sets the same blurred face aside.
+    for name in ("Amy", "Brian"):
+        await db.add_face_enrollment(name, _axis(_PEOPLE[name]), approved=True)
+    relaxed = await FaceRecognizer(_detecting(keyed), db).recognize(
+        list(keyed), ignore_unclear=True
+    )
+    assert relaxed.unrecognized_present is False
+    assert relaxed.unclear_faces == 1
+
+
+def test_match_enrollment_uses_the_given_models_bar() -> None:
+    enrollments = [{"name": "Amy", "embedding": _axis(0)}]
+    embedding = _like(0, 0.6)
+    assert match_enrollment(embedding, enrollments) is None
+    match = match_enrollment(embedding, enrollments, OPENCV_SFACE)
+    assert match is not None
+    assert match[0] == "Amy"
+
+
+def test_is_face_recognition_available_for_opencv_needs_its_face_classes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The OpenCV backend needs no PyTorch, so an incompatible CPU does not
+    count against it; it needs an OpenCV with YuNet and SFace."""
+    monkeypatch.setattr(
+        "blink_downloader.vision.runtime.torch_cpu_compatible", lambda: False
+    )
+    good = types.SimpleNamespace(FaceDetectorYN=object, FaceRecognizerSF=object)
+    monkeypatch.setitem(sys.modules, "cv2", good)
+    assert is_face_recognition_available("opencv") is True
+    assert is_face_recognition_available() is False
+
+    old = types.SimpleNamespace(FaceDetectorYN=object)
+    monkeypatch.setitem(sys.modules, "cv2", old)
+    assert is_face_recognition_available("opencv") is False
+
+    monkeypatch.setitem(sys.modules, "cv2", None)
+    assert is_face_recognition_available("opencv") is False
 
 
 # ------------------------------------------------------------------
@@ -3429,7 +3564,16 @@ async def test_vision_pipeline_enhanced_detection_all_deps_missing(
     unchanged frames behind."""
     monkeypatch.delitem(sys.modules, "cv2", raising=False)
     monkeypatch.delitem(sys.modules, "ultralytics", raising=False)
-    with patch("builtins.__import__", side_effect=ImportError):
+    real_import = builtins.__import__
+
+    def _without_the_cv_packages(name: str, *args: Any, **kwargs: Any) -> Any:
+        # Only the optional packages are missing; the standard library (which
+        # the thread pool imports lazily) is not what this test is about.
+        if name.split(".")[0] in {"cv2", "ultralytics", "torch", "transformers"}:
+            raise ImportError(name)
+        return real_import(name, *args, **kwargs)
+
+    with patch("builtins.__import__", side_effect=_without_the_cv_packages):
         pipeline = VisionPipeline(VisionConfig(enhanced_detection_enabled=True))
         hints = await pipeline.process_clip([b"frame"], car_description="Silver Kia")
         # opencv unavailable -> enhance() returns frames unchanged, but the
@@ -5257,6 +5401,29 @@ async def test_pipeline_enhances_only_the_prompt_frames(
     pipeline = VisionPipeline(VisionConfig(enhanced_detection_enabled=True))
     await pipeline.process_clip([_real_jpeg_bytes(size=(200, 200))])
     assert calls == 1
+
+
+async def test_pipeline_enhances_off_the_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Denoising is seconds of CPU on the add-on's target boards; run on the
+    loop's own thread it would stall every request the server is handling."""
+    _yolo_env(
+        monkeypatch,
+        _FakeBoxes(cls=[0], conf=[0.9], xyxy=[(10.0, 10.0, 30.0, 90.0)], ids=[1]),
+        {0: "person"},
+    )
+    threads: list[int] = []
+
+    def _record(frames: list[bytes]) -> list[bytes]:
+        threads.append(threading.get_ident())
+        return frames
+
+    monkeypatch.setattr(FrameEnhancer, "enhance", staticmethod(_record))
+    pipeline = VisionPipeline(VisionConfig(enhanced_detection_enabled=True))
+    await pipeline.process_clip([_real_jpeg_bytes(size=(200, 200))])
+    assert threads
+    assert threading.get_ident() not in threads
 
 
 async def test_pipeline_never_enhances_the_frames_the_detector_scans(

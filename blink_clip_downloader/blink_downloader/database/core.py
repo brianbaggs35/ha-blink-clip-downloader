@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Callable
 
 import asyncpg
 
@@ -38,6 +39,23 @@ class _DatabaseBase:
 
     _dsn: str
     _pool: asyncpg.Pool | None
+    _camera_resolver: Callable[[str], str] | None
+
+    def set_camera_resolver(self, resolver: Callable[[str], str] | None) -> None:
+        """Say how to find which camera a name now belongs to (see
+        :func:`~blink_downloader.camera_names.current_camera_name`)."""
+        self._camera_resolver = resolver
+
+    def current_camera_name(self, name: str) -> str:
+        """The camera *name* has become after renames; *name* itself when no
+        resolver is set or it has not been renamed.
+
+        A clip keeps the name its camera had when it was recorded, but what a
+        camera learns (baselines, feedback, threshold tuning) is kept under
+        its current name -- so the methods keyed that way take a clip's name
+        and call this on it, and no caller can forget to.
+        """
+        return self._camera_resolver(name) if self._camera_resolver else name
 
 
 class ConnectionMixin(_DatabaseBase):
@@ -46,6 +64,7 @@ class ConnectionMixin(_DatabaseBase):
     def __init__(self, dsn: str = DEFAULT_DSN) -> None:
         self._dsn = dsn
         self._pool: asyncpg.Pool | None = None
+        self._camera_resolver: Callable[[str], str] | None = None
 
     async def init(self) -> None:
         """Connect to PostgreSQL and create tables if needed."""

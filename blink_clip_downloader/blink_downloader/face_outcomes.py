@@ -18,10 +18,23 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import Any, Protocol
 
-if TYPE_CHECKING:
-    from .vision.faces import FaceRecognitionResult
+
+class RecognitionOutcome(Protocol):
+    """What this module reads from a clip's face-recognition result.
+
+    ``vision.faces.FaceRecognitionResult`` is what really arrives. It is
+    described here rather than imported because ``vision/faces.py`` imports
+    :class:`FaceTally` from this module: importing it back, even only for
+    type checking, made the two modules a cycle.
+    """
+
+    approved_names: list[str]
+    other_names: list[str]
+    unrecognized_present: bool
+    unclear_faces: int
+    tally: FaceTally | None
 
 
 @dataclass(frozen=True)
@@ -100,7 +113,7 @@ HELD_BACK_OUTCOMES = (
 
 
 def classify_face_outcome(
-    result: FaceRecognitionResult, *, recognized: bool, extra_people: bool
+    result: RecognitionOutcome, *, recognized: bool, extra_people: bool
 ) -> str:
     """The :class:`FaceOutcome` of a clip, or ``""`` if nothing was examined.
 
@@ -160,7 +173,7 @@ class FaceEvidence(StrEnum):
     CONTRADICTS = "contradicts"
 
 
-def face_evidence(result: FaceRecognitionResult | None) -> FaceEvidence:
+def face_evidence(result: RecognitionOutcome | None) -> FaceEvidence:
     """The :class:`FaceEvidence` of a clip's recognition *result*.
 
     "A clear look at a face that matched nobody" is the same count

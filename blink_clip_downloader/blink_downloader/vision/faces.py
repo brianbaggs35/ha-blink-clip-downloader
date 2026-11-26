@@ -1,4 +1,4 @@
-"""Stage 6: local-only face recognition (facenet-pytorch).
+"""Stage 6: local-only face recognition (facenet-pytorch, or opt-in OpenCV).
 
 Embeddings are computed and compared entirely inside this add-on; nothing
 about an enrolled household member — photo, embedding or name — is ever
@@ -27,6 +27,12 @@ from typing import TYPE_CHECKING, Any
 from ..face_outcomes import FaceTally
 from ..ffmpeg_output import ANALYSIS_FRAME_WIDTH
 from . import runtime
+from .face_models import (
+    FACENET,
+    FACENET_MATCH_THRESHOLD,
+    FACENET_RESEMBLANCE_SIMILARITY,
+    FaceModel,
+)
 
 if TYPE_CHECKING:
     from ..database import ClipDatabase
@@ -43,7 +49,7 @@ _LOGGER = logging.getLogger(__name__)
 # crops of five different people, the closest pair of *different* people
 # scored 0.71 (both faces ~30px wide), which is how little room there is
 # below this.
-_FACE_MATCH_THRESHOLD = 0.75
+_FACE_MATCH_THRESHOLD = FACENET_MATCH_THRESHOLD
 
 #: ``ai_face_recognition_resolution`` -> the width, in pixels, of the frames
 #: faces are found and matched in. Face size is the biggest lever on
@@ -124,7 +130,7 @@ _CLEAR_FACE_QUALITY = 0.6
 # match scored a median 0.6-0.7 against their own photos; a stranger's face
 # reached this against two recognized people in 0.6% of cases, and against
 # eight in 1.9%.
-_RESEMBLANCE_SIMILARITY = 0.55
+_RESEMBLANCE_SIMILARITY = FACENET_RESEMBLANCE_SIMILARITY
 
 
 @dataclass
@@ -200,7 +206,17 @@ class FaceEmbedder:
     /data via TORCH_HOME (see the Dockerfile). Embeddings and any enrolled
     reference photos are stored in this add-on's own database, never sent
     to any cloud AI provider.
+
+    The other backend (:class:`~blink_downloader.vision.opencv_faces.OpenCVFaceEmbedder`)
+    is a subclass that replaces only what is model-specific: the load, the
+    detection and the three names below. *model* says which embedding space
+    and thresholds a backend's faces are read in.
     """
+
+    model: FaceModel = FACENET
+    _label = "face-recognition"
+    _package = "facenet_pytorch"
+    _install = "facenet-pytorch"
 
     def __init__(self) -> None:
         self._mtcnn: Any = None
@@ -216,6 +232,9 @@ class FaceEmbedder:
         if self._lock is None:
             self._lock = asyncio.Lock()
         return self._lock
+
+    def _is_loaded(self) -> bool:
+        return self._resnet is not None
 
     def _load_sync(self) -> None:
         if not runtime.torch_cpu_compatible():
@@ -246,12 +265,12 @@ class FaceEmbedder:
         return await runtime.load_model(
             self._load_guard,
             self._get_lock(),
-            lambda: self._resnet is not None,
+            self._is_loaded,
             self._load_sync,
             _LOGGER,
-            label="face-recognition",
-            package="facenet_pytorch",
-            install="facenet-pytorch",
+            label=self._label,
+            package=self._package,
+            install=self._install,
         )
 
     def _detect_sync(self, frame: bytes, thumbnails: bool) -> list[DetectedFace]:
@@ -471,17 +490,34 @@ class FaceRecognizer:
         process_clip() and failing the entire clip, and never the reverse.
         """
         try:
-            enrollments = await self._db.list_face_enrollments()
+            model: FaceModel = getattr(self._embedder, "model", FACENET)
+            # Only the photos this backend's model made: another model's
+            # embeddings are a different space, and a person enrolled only
+            # with it is simply not enrolled here (nothing bypasses).
+            enrollments = await self._db.list_face_enrollments(model.name)
             if not enrollments:
                 return FaceRecognitionResult()
-            sightings = [await self._sight(frame, enrollments) for frame in frames]
-            return _account_for(sightings, ignore_unclear)
+            sightings = [
+                await self._sight(frame, enrollments, model.match_threshold)
+                for frame in frames
+            ]
+            # A model whose thresholds were never measured here gets none of
+            # the set-aside leniency, whatever the option says: every face that
+            # matched nobody and is wide enough to judge counts as a stranger.
+            return _account_for(
+                sightings,
+                ignore_unclear and model.resemblance_similarity is not None,
+                model.resemblance_similarity,
+            )
         except Exception as exc:  # noqa: BLE001
             _LOGGER.warning("Face recognition failed: %s", exc)
             return FaceRecognitionResult()
 
     async def _sight(
-        self, frame: bytes, enrollments: list[dict[str, Any]]
+        self,
+        frame: bytes,
+        enrollments: list[dict[str, Any]],
+        threshold: float = _FACE_MATCH_THRESHOLD,
     ) -> _Sighting | None:
         """What one frame showed, or ``None`` if it could not be examined."""
         faces = await self._embedder.detect(frame)
@@ -492,7 +528,7 @@ class FaceRecognizer:
             # Worked out once and used for both: the cosines are what cost
             # time here, and they run on the event loop.
             similarities = _similarities(face.embedding, enrollments)
-            closest = _closest(similarities, enrollments)
+            closest = _closest(similarities, enrollments, threshold)
             if closest is None:
                 likeness = _by_person(similarities, enrollments)
                 sighting.unmatched.append(_Unmatched(face, likeness))
@@ -504,7 +540,9 @@ class FaceRecognizer:
 
 
 def _account_for(
-    sightings: list[_Sighting | None], ignore_unclear: bool
+    sightings: list[_Sighting | None],
+    ignore_unclear: bool,
+    resemblance: float | None = _RESEMBLANCE_SIMILARITY,
 ) -> FaceRecognitionResult:
     """The clip's result from what each of its frames showed.
 
@@ -519,7 +557,7 @@ def _account_for(
     unmatched = [u for s in examined for u in s.unmatched]
     approved = {name for name, is_approved in matches if is_approved}
     other = {name for name, is_approved in matches if not is_approved}
-    blocked, set_aside, unclear = _account_unmatched(sightings)
+    blocked, set_aside, unclear = _account_unmatched(sightings, resemblance)
     if ignore_unclear:
         unrecognized = bool(unexamined) or blocked
     else:
@@ -540,7 +578,10 @@ def _account_for(
     )
 
 
-def _account_unmatched(sightings: list[_Sighting | None]) -> tuple[bool, int, int]:
+def _account_unmatched(
+    sightings: list[_Sighting | None],
+    resemblance: float | None = _RESEMBLANCE_SIMILARITY,
+) -> tuple[bool, int, int]:
     """Apply the set-aside rule to every frame: whether any face still counts
     as a stranger, how many faces it set aside, and how many of the faces that
     matched nobody gave no clear look at anybody (too small to judge among
@@ -554,7 +595,7 @@ def _account_unmatched(sightings: list[_Sighting | None]) -> tuple[bool, int, in
         if sighting is None or not sighting.unmatched:
             continue
         available = _available(index, names_by_frame)
-        options = [_could_be(u, available) for u in sighting.unmatched]
+        options = [_could_be(u, available, resemblance) for u in sighting.unmatched]
         unclear += sum(people is not None for people in options)
         candidates = [people for people in options if people]
         if len(candidates) == len(options) and _each_has_their_own(candidates):
@@ -571,7 +612,11 @@ def _available(index: int, names_by_frame: list[set[str]]) -> set[str]:
     return nearby - names_by_frame[index]
 
 
-def _could_be(unmatched: _Unmatched, available: set[str]) -> set[str] | None:
+def _could_be(
+    unmatched: _Unmatched,
+    available: set[str],
+    resemblance: float | None = _RESEMBLANCE_SIMILARITY,
+) -> set[str] | None:
     """Who this face matching nobody could still be: ``None`` for a clear look
     at somebody unfamiliar (sharp, whole and like no one *available*),
     otherwise the *available* people it leaves open -- empty when it is too
@@ -583,16 +628,20 @@ def _could_be(unmatched: _Unmatched, available: set[str]) -> set[str] | None:
     only be one it clearly resembles. A face too narrow to judge is no clear
     look at anybody either, so it is tallied as unclear, but it can never be
     put down to anyone: it is as likely to be someone farther off.
+
+    *resemblance* is the model's likeness bar; ``None`` (a model whose numbers
+    were never measured here) leaves nothing but the width floor, so every
+    other face that matched nobody is a clear look at somebody unfamiliar.
     """
     face = unmatched.face
     if face.width < _MIN_JUDGEABLE_WIDTH:
         return set()
+    if resemblance is None:
+        return None
     if face.quality < _CLEAR_FACE_QUALITY or face.cut_off:
         return set(available)
     likenesses = {
-        name
-        for name in available
-        if unmatched.resemblance[name] >= _RESEMBLANCE_SIMILARITY
+        name for name in available if unmatched.resemblance[name] >= resemblance
     }
     return likenesses or None
 
@@ -637,10 +686,12 @@ def _by_person(
 
 
 def _closest(
-    similarities: list[float], enrollments: list[dict[str, Any]]
+    similarities: list[float],
+    enrollments: list[dict[str, Any]],
+    threshold: float = _FACE_MATCH_THRESHOLD,
 ) -> tuple[dict[str, Any], float] | None:
     """The best-scoring enrollment for one face and its similarity, or
-    ``None`` below ``_FACE_MATCH_THRESHOLD``.
+    ``None`` below *threshold* (``_FACE_MATCH_THRESHOLD`` for FaceNet).
 
     Comparison is ``>=`` so that a later enrollment wins an exact tie —
     arbitrary either way, but preserved from the loop this was lifted out
@@ -649,7 +700,7 @@ def _closest(
     different".
     """
     best: dict[str, Any] | None = None
-    best_similarity = _FACE_MATCH_THRESHOLD
+    best_similarity = threshold
     for enrollment, similarity in zip(enrollments, similarities):
         if similarity >= best_similarity:
             best_similarity = similarity
@@ -658,20 +709,24 @@ def _closest(
 
 
 def _closest_enrollment(
-    embedding: Any, enrollments: list[dict[str, Any]]
+    embedding: Any,
+    enrollments: list[dict[str, Any]],
+    threshold: float = _FACE_MATCH_THRESHOLD,
 ) -> tuple[dict[str, Any], float] | None:
     """:func:`_closest` for one face on its own, as the enrollment picker
     asks it (see :func:`match_enrollment`)."""
-    return _closest(_similarities(embedding, enrollments), enrollments)
+    return _closest(_similarities(embedding, enrollments), enrollments, threshold)
 
 
 def match_enrollment(
-    embedding: list[float], enrollments: list[dict[str, Any]]
+    embedding: list[float],
+    enrollments: list[dict[str, Any]],
+    model: FaceModel = FACENET,
 ) -> tuple[str, float] | None:
     """``(name, similarity)`` of the enrollment clip analysis would match
     this face to, or ``None`` — so the enrollment picker says "already
     recognized as Brian" on exactly the faces analysis would."""
-    closest = _closest_enrollment(embedding, enrollments)
+    closest = _closest_enrollment(embedding, enrollments, model.match_threshold)
     if closest is None:
         return None
     enrollment, similarity = closest

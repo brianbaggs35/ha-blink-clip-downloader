@@ -105,7 +105,7 @@ LEFT_OUT: dict[str, str] = {
     "two_fa_code.txt": "A one-time code, deleted as soon as it is used.",
     "google_drive_credentials.json": "Your Google Drive sign-in; reconnect on the Storage tab.",
     "google_drive_settings.json": "Your Google OAuth client secret; enter it again on the Storage tab.",
-    "web_access.json": "The secret that signs browsers in and the access token Home Assistant's calls carry.",
+    "web_access.json": "The browsers that are signed in and the access token Home Assistant's calls carry.",
     "alert_action_key": "The key that signs the Not a threat button on alerts; made again when needed.",
     "camera_identities.json": "Rebuilt from your Blink account on the next poll.",
     "stats.json": "Rebuilt from the download history on the next poll.",

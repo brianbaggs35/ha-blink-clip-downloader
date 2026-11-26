@@ -3,10 +3,13 @@
 Battery history and low-battery tracking, and the rename path. Renaming is
 the awkward one: a camera's name is the key half a dozen tables use, so a
 rename in the Blink app has to be carried across all of them at once or
-the camera appears twice — once with its history and no new clips, once
-with new clips and no history. Every ``_migrate_camera_*`` helper here
-exists for one of those tables, and they merge rather than overwrite,
-because both names may already have rows.
+the camera appears twice — once with its settings and learning and no new
+clips, once with new clips and none of that. What a camera *is* (its
+baselines, feedback, enrolled faces, battery) moves to the new name; what
+a clip *recorded* keeps the name the camera had then (see
+``CLIP_HISTORY_TABLES``). Every ``_migrate_camera_*`` helper here exists
+for one of the first kind, and they merge rather than overwrite, because
+both names may already have rows.
 """
 
 from __future__ import annotations
@@ -25,6 +28,28 @@ from .sql import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+#: Tables whose ``camera`` column names the camera *as it is today*: what it
+#: has learned from feedback, who was enrolled from it, its battery. A rename
+#: relabels them, so none of it is lost or split between two names.
+_RELABELLED_TABLES = ("analysis_feedback", "face_enrollments", "battery_history")
+
+#: Tables whose rows each describe one clip. They keep the camera name the
+#: clip had when it was recorded -- a renamed camera's old clips stay under its
+#: old name, new ones carry the new name -- so searching and filtering the
+#: library still means what it meant then (and the file a clip lives in, the
+#: Drive folder it is uploaded to and the archive it is packed into keep
+#: agreeing with its name). Anything that looks a camera's *settings or
+#: learning* up from one of these names goes through
+#: :meth:`~blink_downloader.database.core._DatabaseBase.current_camera_name`.
+CLIP_HISTORY_TABLES = (
+    "clips",
+    "analysis_results",
+    "analysis_queue",
+    "gdrive_upload_queue",
+    "face_recognition_feedback",
+    "security_events",
+)
 
 
 class CameraStateMixin(_DatabaseBase):
@@ -325,18 +350,19 @@ class CameraStateMixin(_DatabaseBase):
     async def _rename_camera_rows(
         conn: asyncpg.Connection | PoolConnectionProxy, old_name: str, new_name: str
     ) -> bool:
+        """Relabel the rows that name a camera as it is today.
+
+        The rows that describe one clip keep the name the clip had
+        (:data:`CLIP_HISTORY_TABLES`), so the library, its filters and the
+        security timeline still say what they said when the clip was recorded.
+        A change of capitals only is the same name respelled, not a different
+        camera, so it relabels everything.
+        """
+        tables = _RELABELLED_TABLES
+        if old_name.lower() == new_name.lower():
+            tables = (*tables, *CLIP_HISTORY_TABLES)
         changed = False
-        for table in (
-            "clips",
-            "analysis_results",
-            "analysis_queue",
-            "gdrive_upload_queue",
-            "analysis_feedback",
-            "face_recognition_feedback",
-            "face_enrollments",
-            "battery_history",
-            "security_events",
-        ):
+        for table in tables:
             status = await conn.execute(
                 _qm(f"UPDATE {table} SET camera=? WHERE LOWER(camera)=LOWER(?)"),
                 new_name,

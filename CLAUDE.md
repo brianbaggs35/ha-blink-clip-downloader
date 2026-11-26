@@ -72,7 +72,22 @@ architecture.
     and anything added to `cameras.py`'s rename path must cover **every**
     table with a `camera` column — there are 13, and the count is worth
     re-deriving from `schema.py` rather than trusting, since a missed one
-    is this repo's most-repeated bug.
+    is this repo's most-repeated bug. Since 6.2.3 (BCD-5) "cover" means
+    *decide*: a rename leaves the rows that describe one clip with the name
+    the camera had when it recorded it (`cameras.CLIP_HISTORY_TABLES`: clips,
+    analysis_results, the two queues, face_recognition_feedback,
+    security_events) and relabels only what names the camera as it is today
+    (`_RELABELLED_TABLES`); a rename that changes only capitals relabels all
+    of them. `test_a_table_is_either_relabelled_or_kept_with_its_clip` fails
+    for a table in neither list. What a camera *learns* (feedback, prompt
+    corrections, baselines, anomaly scores) is looked up under the camera's
+    **current** name: `learning.py` calls `current_camera_name()`, which the
+    app wires to `camera_names.current_camera_name` (the alias chain from
+    `camera_name_aliases.json`, stopping at the first name a live camera
+    carries; an empty live list during start-up means every alias applies),
+    and `BaseAnalyzer.analyze_clip` analyzes under it but hands back the
+    clip's own name. `_handle_camera_renamed` updates the alias map *before*
+    moving any row so nothing running meanwhile files under the old name.
   - `analyzer/` — AI vision analysis, a package since 6.0.6 (it was a
     single 5,200-line module). `base.py` holds `BaseAnalyzer` —
     everything that is the same whichever provider is configured: frame
@@ -189,6 +204,18 @@ architecture.
     contains `o1` and was priced as OpenAI o1 ($15/$60 per 1M) until 6.1.2.
     Replicate's official model ids are the one exception, matched exactly
     (case-insensitively) in `_REPLICATE_MODEL_PRICING` before that rule.
+    It also holds the **YOLO generation bookkeeping** (6.2.3, BCD-4):
+    `YOLO_CURRENT_GENERATIONS` (26) and `YOLO_DEPRECATED_GENERATIONS` (11),
+    `yolo_generation()` and `yolo_deprecation_notice()`, used by
+    `app._warn_deprecated_yolo` for a start-up warning. YOLO11 stays in the
+    two options' `list(...)` schemas **on purpose** (Supervisor rejects a saved
+    value its schema does not list, so removing it would stop the add-on
+    starting) and is never auto-swapped (a different model detects
+    differently). YOLO27 is *not* offered yet -- ultralytics 8.4.216 says its
+    models are not available and lists no `yolo27` asset -- and adding it is
+    one tuple entry plus the two schemas plus the translations;
+    `tests/test_yolo_generations.py` fails if the schemas and the tuples
+    disagree.
   - `prompt_segments.py` — the individual blocks a clip-analysis prompt is
     assembled from (time of day, anomaly alert, scene baseline, motion
     trajectory, recent corrections, zone motion, vision hints, output
@@ -259,6 +286,30 @@ architecture.
     real faces shrunk to camera size; the comments say what they are.
     `media_server/faces.py` is the route side; `vision/faces.py`'s
     `FaceEmbedder.detect()` finds the faces.
+  - `vision/face_models.py` + `vision/opencv_faces.py` + `vision/face_backends.py`
+    (6.2.3, BCD-54) — the two face-recognition backends. `ai_face_recognition_backend`
+    is `facenet` (default; facenet-pytorch, unmaintained since 2024) or `opencv`
+    (YuNet + SFace via `cv2.FaceDetectorYN`/`FaceRecognizerSF`, no PyTorch).
+    `face_models.py` (stdlib only) holds a `FaceModel` profile per backend --
+    **every number that decides who a face is lives with the model it was
+    measured on**: match bar, resemblance, near-duplicate/group/outlier bars.
+    FACENET's are the measured ones; OPENCV_SFACE's are conservative guesses
+    (`measured=False`, `resemblance_similarity=None`) and **must be re-measured
+    on camera footage before any is relaxed**. An unmeasured model gets **no
+    unclear-face leniency**: `FaceRecognizer` treats `resemblance_similarity is
+    None` as "never set a face aside", whatever
+    `ai_face_recognition_ignore_unclear_faces` says. Embeddings from different
+    models are never compared: `face_enrollments.model` (default
+    `facenet-vggface2`, so existing rows read as FaceNet's) tags each row, the
+    recognizer and every enrollment-tab computation read only the running
+    model's rows (`list_face_enrollments(model)`), and the tab lists the others
+    marked `other_backend` rather than hiding or converting them. Anything new
+    that reads enrollments must pass the model. The OpenCV model files come from
+    opencv_zoo at a pinned commit into `/data/model_cache/opencv_faces/`, size-
+    bounded because GitHub serves an LFS pointer where it cannot serve the file;
+    no hash is published to check against, so the add-on logs the SHA-256.
+    `is_face_recognition_available(backend)` takes the backend (the OpenCV one
+    needs no torch); the e2e/standalone patches of it must accept that argument.
   - `face_outcomes.py` — what face recognition made of a clip, stdlib only
     (the analyzer, which stores it, does not import the optional `vision`
     package): `FaceTally` (faces seen/matched/unclear, how many of the unclear
@@ -413,8 +464,11 @@ architecture.
       middleware lets through requests from Supervisor's ingress proxy
       (`172.30.32.2`, matched on the TCP peer, never a header), `/health`,
       `/login` and the favicon; a browser with a valid session cookie
-      (signed with a secret in `/data/web_access.json`; its writes must pass
-      a `Sec-Fetch-Site`/`Origin` same-origin check); and a request carrying
+      (a random token with nothing from the request in it, looked up as a
+      SHA-256 hash among the sessions kept in `/data/web_access.json`, capped
+      at `MAX_SESSIONS` and ended by sign-out — never a value built from the
+      username, which is what CodeQL's cookie-injection rule is about; its
+      writes must pass a `Sec-Fetch-Site`/`Origin` same-origin check); and a request carrying
       the access token, but **only** to `access_control.TOKEN_ROUTES` — the
       endpoints the Automations tab's generated YAML has Home Assistant
       call. A new endpoint that Home Assistant itself must reach has to be

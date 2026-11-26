@@ -19,6 +19,11 @@ from .sql import (
     _qm,
 )
 
+#: The face-recognition model every enrollment made before 6.2.3 came from, and
+#: the column's default; ``vision.face_models.FACENET.name`` (a test checks they
+#: agree -- the database layer does not import the vision package).
+DEFAULT_FACE_MODEL = "facenet-vggface2"
+
 
 class FaceEnrollmentsMixin(_DatabaseBase):
     """Enrolled faces, their approval state, and bypass auditing."""
@@ -176,6 +181,7 @@ class FaceEnrollmentsMixin(_DatabaseBase):
         thumbnail: bytes | None = None,
         frame_width: int | None = None,
         camera: str | None = None,
+        model: str = DEFAULT_FACE_MODEL,
     ) -> int:
         """Store one enrolled photo's face embedding. Returns its id.
 
@@ -189,7 +195,9 @@ class FaceEnrollmentsMixin(_DatabaseBase):
         *frame_width* the width of the clip frame it was captured from
         (``None`` for an uploaded photo), which the tab compares against the
         width recognition currently matches at; *camera* the camera whose
-        clip it came from (``None`` for an uploaded photo).
+        clip it came from (``None`` for an uploaded photo), and *model* the
+        face-recognition model that made *embedding* (``vision/face_models.py``),
+        so it is only ever compared with embeddings from the same one.
         """
         if self._pool is None:
             return 0
@@ -197,7 +205,7 @@ class FaceEnrollmentsMixin(_DatabaseBase):
             _qm(
                 "INSERT INTO face_enrollments "
                 "(name, embedding, created_at, approved, thumbnail, frame_width, "
-                "camera) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id"
+                "camera, model) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id"
             ),
             name,
             json.dumps(embedding),
@@ -206,6 +214,7 @@ class FaceEnrollmentsMixin(_DatabaseBase):
             thumbnail,
             frame_width,
             camera,
+            model,
         )
         return new_id or 0
 
@@ -225,8 +234,14 @@ class FaceEnrollmentsMixin(_DatabaseBase):
             name,
         )
 
-    async def list_face_enrollments(self) -> list[dict[str, Any]]:
+    async def list_face_enrollments(
+        self, model: str | None = None
+    ) -> list[dict[str, Any]]:
         """Return every enrolled photo, with embeddings decoded to lists.
+
+        With *model*, only the photos whose embedding that face-recognition
+        model made: clip analysis passes the one it runs, since another
+        model's embeddings mean nothing to it.
 
         ``has_thumbnail`` says whether :meth:`get_face_enrollment_thumbnail`
         has anything to return; the bytes themselves are left out, since
@@ -234,10 +249,12 @@ class FaceEnrollmentsMixin(_DatabaseBase):
         """
         if self._pool is None:
             return []
+        where = "" if model is None else "WHERE model = $1 "
         rows = await self._pool.fetch(
             "SELECT id, name, embedding, created_at, approved, frame_width, camera, "
-            "thumbnail IS NOT NULL AS has_thumbnail "
-            "FROM face_enrollments ORDER BY name, id"
+            "model, thumbnail IS NOT NULL AS has_thumbnail "
+            f"FROM face_enrollments {where}ORDER BY name, id",
+            *(() if model is None else (model,)),
         )
         results = []
         for r in rows:

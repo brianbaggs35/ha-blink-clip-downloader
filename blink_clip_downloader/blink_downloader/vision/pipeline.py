@@ -14,6 +14,7 @@ did arrive — the AI provider still makes the final call either way.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 from dataclasses import dataclass, field
@@ -51,8 +52,8 @@ from .detection import (
     _ZoneReference,
 )
 from .enhance import FrameEnhancer
+from .face_backends import create_face_embedder
 from .faces import (
-    FaceEmbedder,
     FaceRecognitionResult,
     FaceRecognizer,
     _build_recognition_hint,
@@ -121,6 +122,9 @@ class VisionConfig:
     #: width the face stage reuses the frames already extracted; any other
     #: width re-extracts the same moments at that size.
     face_frame_width: int = ANALYSIS_FRAME_WIDTH
+    #: ``ai_face_recognition_backend``: "facenet" (the default) or "opencv"
+    #: (see :mod:`.face_backends`). Which models find and compare faces.
+    face_backend: str = "facenet"
     #: ``ai_face_recognition_ignore_unclear_faces``: whether a face too poor to
     #: identify may be set aside rather than counted as a possible stranger
     #: (see :meth:`.faces.FaceRecognizer.recognize`). Off keeps every
@@ -287,7 +291,7 @@ class VisionPipeline:
         self._depth = DepthEstimator(config.hf_token, config.depth_estimation_model)
         self._segmenter = ContactSegmenter(config.hf_token)
         self._pose = PoseEstimator(config.pose_model)
-        self._face_embedder = FaceEmbedder()
+        self._face_embedder = create_face_embedder(config.face_backend)
         self._audio = AudioTagger(config.audio_model, config.hf_token)
 
     def stage_health(self) -> list[runtime.StageHealth]:
@@ -517,7 +521,12 @@ class VisionPipeline:
         and locating the camera's marked assets."""
         # Enhancement exists for the *prompt* images: CLAHE lifts a dark
         # night frame into something a vision-language model can read.
-        hints.enhanced_frames = FrameEnhancer.enhance(frames)
+        # In a thread: CLAHE plus non-local-means denoising is seconds of CPU
+        # per clip on the aarch64 boards this add-on targets, and run inline it
+        # held the event loop for all of it -- the web UI, Live View's HLS
+        # segments and the sign-in gate all stalled while a clip was analyzed.
+        # Every model stage already runs in an executor for the same reason.
+        hints.enhanced_frames = await asyncio.to_thread(FrameEnhancer.enhance, frames)
 
         # `0` means "no wider scan" (see DOCS.md's ai_temporal_scan_frames):
         # detect over the frames the prompt already uses, not over the whole

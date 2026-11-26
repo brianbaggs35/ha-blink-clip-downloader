@@ -15,7 +15,8 @@ from dataclasses import asdict
 from aiohttp import web
 
 from ..downloader import AUTH_FATAL_EXCEPTIONS
-from ..live_view import CameraNotFoundError, LiveViewError
+from ..live_view import PUBLIC_MESSAGES, CameraNotFoundError, LiveViewError
+from ..public_text import known_text
 from .core import _MediaServerBase
 from .support import (
     _INVALID_REQUEST_BODY,
@@ -73,7 +74,14 @@ class LiveViewRoutesMixin(_MediaServerBase):
         except CameraNotFoundError:
             raise web.HTTPNotFound(text="Camera not found")
         except LiveViewError as exc:
-            raise web.HTTPBadGateway(text=str(exc))
+            # Only the add-on's own sentences are shown, whatever the error says.
+            raise web.HTTPBadGateway(
+                text=known_text(
+                    str(exc),
+                    PUBLIC_MESSAGES,
+                    "Could not start live view. The add-on log has the details.",
+                )
+            )
         return web.json_response(asdict(status))
 
     async def _handle_liveview_stop(self, request: web.Request) -> web.Response:

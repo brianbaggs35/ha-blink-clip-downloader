@@ -1,6 +1,6 @@
 ---
 name: Blink Clip Downloader
-version: "v6.2.2"
+version: "v6.2.3"
 slug: blink_clip_downloader
 image: "ghcr.io/brianbaggs35/blink_clip_downloader"
 description: >-
@@ -501,8 +501,11 @@ options:
   # Ultralytics model the object-detection stage above runs. YOLO26
   # (yolo26n/s/m/l/x.pt) is the current generation — end-to-end inference,
   # lighter and more accurate than YOLO11 at every size — and is the
-  # recommended default; yolo11n/s/m/l/x.pt remain selectable for
-  # compatibility with existing configurations. "n" (nano) is
+  # recommended default. yolo11n/s/m/l/x.pt are deprecated: they still work
+  # (and stay in the schema below, so a saved configuration naming one still
+  # starts) but will be removed in a later release, and a warning is logged
+  # at start-up while one is selected. YOLO27 will be added once Ultralytics
+  # publishes weights for it. "n" (nano) is
   # fastest/lightest and the recommended starting point on CPU-only
   # hardware; "s"/"m"/"l"/"x" trade speed for accuracy, with "x"
   # (extra-large) the most accurate and much slower. Downloaded
@@ -541,6 +544,13 @@ options:
   # the Biometrics tab after changing it — a face matches best against
   # photos enrolled at the same resolution.
   ai_face_recognition_resolution: "standard"
+  # Which models find and compare faces: "facenet" (facenet-pytorch, the
+  # default, and what every enrollment so far was made with) or "opencv"
+  # (YuNet + SFace run by OpenCV -- no PyTorch needed, but experimental: its
+  # thresholds are not measured on camera footage, so it never sets an
+  # unclear face aside). The two cannot be compared with each other, so
+  # everyone has to be enrolled again after switching. See DOCS.md.
+  ai_face_recognition_backend: "facenet"
   # Body-keypoint (pose) estimation for whoever is nearest the protected
   # vehicle, on the one frame the depth/contact stages already examine.
   # Adds three narrow facts a bounding box cannot give: an arm extended
@@ -550,8 +560,9 @@ options:
   ai_pose_estimation_enabled: false
   # Ultralytics pose checkpoint the stage above runs. YOLO26-pose
   # (yolo26n/s/m/l/x-pose.pt) is the current generation and matches the
-  # object detector's own default; yolo11n/s/m/l/x-pose.pt remain
-  # selectable for anyone already using them. "n" (nano) is
+  # object detector's own default; yolo11n/s/m/l/x-pose.pt are deprecated
+  # in the same way (still work, warned about at start-up, to be removed).
+  # "n" (nano) is
   # fastest/lightest and the recommended starting point on CPU-only
   # hardware; larger sizes are more accurate and much slower. Downloaded
   # automatically on first use.
@@ -766,6 +777,7 @@ schema:
   ai_face_recognition_enabled: "bool"
   ai_face_recognition_ignore_unclear_faces: "bool"
   ai_face_recognition_resolution: "list(standard|high|very_high)"
+  ai_face_recognition_backend: "list(facenet|opencv)"
   ai_pose_estimation_enabled: "bool"
   # yamllint disable rule:line-length
   ai_pose_model: "list(yolo26n-pose.pt|yolo26s-pose.pt|yolo26m-pose.pt|yolo26l-pose.pt|yolo26x-pose.pt|yolo11n-pose.pt|yolo11s-pose.pt|yolo11m-pose.pt|yolo11l-pose.pt|yolo11x-pose.pt)"

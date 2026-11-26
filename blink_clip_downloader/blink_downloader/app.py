@@ -26,6 +26,7 @@ from .analyzer import (
 from .archiver import ClipArchiver
 from .arming_schedule import ArmingScheduler
 from .battery_monitor import BatteryMonitor
+from .camera_names import current_camera_name
 from .config import AppConfig
 from .database import ClipDatabase
 from .digest import DailyDigest
@@ -48,6 +49,7 @@ from .live_view import LiveViewManager
 from .manifest import ClipManifest
 from .media_server import MediaServer
 from .media_server.tls import TlsConfigError, load_ssl_context
+from .model_catalog import yolo_deprecation_notice
 from .notification_channels import NotificationDispatcher
 from .notifier import HANotifier
 from .protected_assets import read_assets
@@ -111,6 +113,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         # Decided (and announced) once, here, so the media server and the
         # log agree on whether frames leave the device.
         self._remote_vision = self._remote_vision_active(config)
+        self._warn_deprecated_yolo(config)
 
         self._storage = StorageManager(
             base_path=config.download_path,
@@ -123,6 +126,10 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         self._tracker = ClipTracker()
         self._manifest = ClipManifest()
         self._db = ClipDatabase()
+        # A clip keeps the camera name it was recorded under; what a camera
+        # learns is kept under its current one, so the database asks which
+        # camera a clip's name is now (see camera_names.py).
+        self._db.set_camera_resolver(self._current_camera_name)
         self._notifier = HANotifier(
             supervisor_token=config.supervisor_token,
             enabled=config.notify_ha,
@@ -294,6 +301,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             face_frame_width=FACE_RESOLUTION_WIDTHS[
                 config.ai_face_recognition_resolution
             ],
+            face_backend=config.ai_face_recognition_backend,
             remote_vision=self._remote_vision,
             live_view=self._live_view,
             merge_downloaded_clip_ids=self._tracker.merge_downloaded,
@@ -553,6 +561,20 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
 
     async def _handle_camera_renamed(self, old_name: str, new_name: str) -> None:
         """Keep database, analyzer, filters, and persisted settings in sync."""
+        # First, so that nothing running while the rest is carried over (an
+        # analysis, a rating) files what the camera learns under the old name.
+        # new_name belongs to a real camera now, so an alias that still sent
+        # it somewhere else (the camera it once named was renamed away
+        # earlier) would carry this camera's settings onto that other one.
+        self._camera_name_aliases = {
+            alias: target
+            for alias, target in self._camera_name_aliases.items()
+            if alias.lower() != new_name.lower()
+        }
+        self._camera_name_aliases[old_name] = new_name
+        for alias, target in self._camera_name_aliases.items():
+            if target.lower() == old_name.lower():
+                self._camera_name_aliases[alias] = new_name
         await self._db.rename_camera(old_name, new_name)
         if self._analyzer is not None:
             self._analyzer.rename_camera(old_name, new_name)
@@ -580,18 +602,6 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             new_name if camera.lower() == old_name.lower() else camera
             for camera in self._auto_analysis_disabled_cameras
         }
-        # new_name belongs to a real camera now, so an alias that still sent
-        # it somewhere else (the camera it once named was renamed away
-        # earlier) would carry this camera's settings onto that other one.
-        self._camera_name_aliases = {
-            alias: target
-            for alias, target in self._camera_name_aliases.items()
-            if alias.lower() != new_name.lower()
-        }
-        self._camera_name_aliases[old_name] = new_name
-        for alias, target in self._camera_name_aliases.items():
-            if target.lower() == old_name.lower():
-                self._camera_name_aliases[alias] = new_name
         try:
             CAMERA_NAME_ALIASES_FILE.write_text(
                 json.dumps(self._camera_name_aliases, indent=2)
@@ -601,6 +611,13 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             raise
         if hasattr(self, "_event_watcher"):
             self._event_watcher.rename_camera(old_name, new_name)
+
+    def _current_camera_name(self, name: str) -> str:
+        """Which camera *name* is today: itself if a camera on the account
+        carries it, else whatever it was renamed to."""
+        downloader = getattr(self, "_downloader", None)
+        live = downloader.list_camera_names() if downloader is not None else []
+        return current_camera_name(name, self._camera_name_aliases, live)
 
     @staticmethod
     def _load_camera_name_aliases() -> dict[str, str]:
@@ -692,6 +709,28 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
                 ", ".join(missing),
             )
         return not missing
+
+    @staticmethod
+    def _warn_deprecated_yolo(config: AppConfig) -> None:
+        """Say once, at start-up, when a YOLO checkpoint of a deprecated
+        generation is about to be used.
+
+        Only for a stage that will actually load it: detection is local only
+        with Enhanced Detection on and the local backend, and pose needs its
+        own switch on top. A notice only -- see
+        :func:`~blink_downloader.model_catalog.yolo_deprecation_notice`.
+        """
+        if not (
+            config.ai_enhanced_detection_enabled and config.ai_vision_backend == "local"
+        ):
+            return
+        stages = [("ai_object_detection_model", config.ai_object_detection_model)]
+        if config.ai_pose_estimation_enabled:
+            stages.append(("ai_pose_model", config.ai_pose_model))
+        for option, model in stages:
+            notice = yolo_deprecation_notice(option, model)
+            if notice:
+                _LOGGER.warning("%s", notice)
 
     @staticmethod
     def _remote_vision_active(config: AppConfig) -> bool:
@@ -815,6 +854,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
                     face_frame_width=FACE_RESOLUTION_WIDTHS[
                         config.ai_face_recognition_resolution
                     ],
+                    face_backend=config.ai_face_recognition_backend,
                     face_ignore_unclear=config.ai_face_recognition_ignore_unclear_faces,
                     pose_estimation_enabled=config.ai_pose_estimation_enabled,
                     pose_model=config.ai_pose_model,

@@ -10,6 +10,7 @@ blink_downloader/arming_schedule.py
 blink_downloader/assistant.py
 blink_downloader/assistant_search.py
 blink_downloader/battery_monitor.py
+blink_downloader/camera_names.py
 blink_downloader/config.py
 blink_downloader/digest.py
 blink_downloader/downloader.py
@@ -26,6 +27,7 @@ blink_downloader/ha_entities.py
 blink_downloader/ha_links.py
 blink_downloader/library_scanner.py
 blink_downloader/live_view.py
+blink_downloader/log_text.py
 blink_downloader/manifest.py
 blink_downloader/model_catalog.py
 blink_downloader/moondream_finetune.py
@@ -34,6 +36,7 @@ blink_downloader/notifier.py
 blink_downloader/object_counts.py
 blink_downloader/prompt_segments.py
 blink_downloader/protected_assets.py
+blink_downloader/public_text.py
 blink_downloader/rich_alerts.py
 blink_downloader/snapshots.py
 blink_downloader/sqlite_migration.py
@@ -119,8 +122,11 @@ blink_downloader/vision/contact.py
 blink_downloader/vision/depth.py
 blink_downloader/vision/detection.py
 blink_downloader/vision/enhance.py
+blink_downloader/vision/face_backends.py
+blink_downloader/vision/face_models.py
 blink_downloader/vision/faces.py
 blink_downloader/vision/imaging.py
+blink_downloader/vision/opencv_faces.py
 blink_downloader/vision/pipeline.py
 blink_downloader/vision/pose.py
 blink_downloader/vision/remote_detection.py
@@ -146,6 +152,7 @@ tests/test_backup_export.py
 tests/test_backup_restore.py
 tests/test_backup_staging.py
 tests/test_battery_monitor.py
+tests/test_camera_names.py
 tests/test_config.py
 tests/test_data_dir.py
 tests/test_database.py
@@ -157,6 +164,7 @@ tests/test_downloader.py
 tests/test_e2e_fixtures.py
 tests/test_event_watcher.py
 tests/test_face_enrollment.py
+tests/test_face_models.py
 tests/test_face_outcomes.py
 tests/test_ffmpeg_output.py
 tests/test_frame_motion.py
@@ -167,6 +175,7 @@ tests/test_ha_entities.py
 tests/test_ha_links.py
 tests/test_library_scanner.py
 tests/test_live_view.py
+tests/test_log_text.py
 tests/test_main_logging.py
 tests/test_manifest.py
 tests/test_media_server.py
@@ -182,8 +191,10 @@ tests/test_notification_channels.py
 tests/test_notifier.py
 tests/test_object_counts.py
 tests/test_only_release_workflow_publishes.py
+tests/test_opencv_faces.py
 tests/test_protected_assets.py
 tests/test_providers_contract.py
+tests/test_public_text.py
 tests/test_release_attestations.py
 tests/test_rich_alerts.py
 tests/test_scene_baseline_lighting.py
@@ -212,5 +223,8 @@ tests/test_upgrade_from_previous_release.py
 tests/test_verdict_feedback.py
 tests/test_vision.py
 tests/test_vision_audio.py
+tests/test_vision_load_health.py
 tests/test_vision_marked_assets.py
 tests/test_vision_remote_detection.py
+tests/test_vision_runtime.py
+tests/test_yolo_generations.py

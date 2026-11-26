@@ -1,5 +1,41 @@
 # Changelog
 
+## 6.2.3
+
+### Bug fixes
+
+- Fixed seven of the ten CodeQL alerts that were still open, changing nothing for anyone using the add-on as intended apart from the two notes below. The page's ingress path is now HTML-escaped as well as checked before it goes into the page (the output is identical for the paths Supervisor sends). The sign-in cookie is now a random token with nothing from the sign-in form in it; who it belongs to is kept in `/data/web_access.json` as a hash, up to 200 sessions at once, and pressing the sign-out button now ends the session itself, so a copy of the cookie stops working too (before, it was a signed copy of the username that only expired). `face_outcomes.py` no longer names `vision/faces.py`, even for type checking, which removes the two import cycles between them. The Backup & Restore tab and Live View now answer an operating-system or live-view failure with only wording this add-on wrote (a file name or a library's own text is in the log, not on screen). A test no longer reaches the real filename-format call with a format CodeQL reads as having too few arguments, and a test's `__bool__` raises `TypeError`, which `_resolve_url` now also tolerates.
+- **Because sessions are now kept by the add-on, everyone signed in on the direct port signs in once more after updating** (the Home Assistant sidebar panel and the access token Home Assistant's own calls use are not affected). Live View reports a failure to start with the name of a built-in error (`RuntimeError`, `OSError` and so on) as before, and `Error` for one named by a library; a failed backup says "Permission denied" or "No space left on device" without the file's name.
+- Not changed, on purpose: the Google OAuth client secret stays in `/data/google_drive_settings.json` (the add-on has to read it back, and encrypting it with a key kept beside it would only silence the alert), and the text of a refused or damaged backup, which is wording this add-on writes for the person at the screen. Those two alerts need dismissing in GitHub's Security tab.
+
+- Renaming a camera no longer rewrites the camera name on every clip it ever recorded. Clips, their analyses and queue entries, security events and rating records now keep the name the camera had when it recorded them, so the Library's camera list still shows the old name for old clips and a new camera that later takes the old name does not inherit them. Only what describes the camera as it is today (its battery history, enrolled faces and the ratings used to tune it) follows the rename. What the camera has learned (ratings, corrections, its normal-activity baseline and the thresholds drawn from them) is looked up under its current name, so rating or re-analyzing a clip from before the rename still teaches the right camera and never starts a second one; analyzing such a clip still reports the clip's own camera name. A rename that changes only capitals (`Front door` to `Front Door`) still relabels everything, since it is the same camera. This applies to renames from this version on: a library that was already merged under one name by an earlier rename cannot be split back out, because nothing recorded which clips came from which name.
+
+- Reviewed the whole vision pipeline (BCD-57: object detection and tracking, depth, contact segmentation, pose, audio, face recognition, the security layer and the remote detection backend) and fixed the one defect that was a plain bug. Preparing the prompt's frames (contrast enhancement plus denoising, only when Enhanced Detection is on) ran on the same thread as the web server, so for the seconds it took on a slower board every page, Live View segment and sign-in request waited; it now runs in a worker thread like every model stage. What it produces is unchanged. The rest of the review changed nothing on purpose: detection, thresholds, security rules and the face bypass were left exactly as they are, because each is either measured or safety-critical. Two things it found are written up for a decision rather than changed: the temporal scan can use fewer frames than `ai_temporal_scan_frames` (a stride of whole frames keeps durations exact, so 13 frames with a cap of 12 scans 7), and `ai_cv_concurrency` above 1 has no effect on clip analysis, which is serialized.
+
+### Dependency Updates
+
+- Face recognition can now run on OpenCV instead of facenet-pytorch, which has not had a release since April 2024 and is installed with `--no-deps` because its pinned Pillow will not build on Python 3.13. The new `ai_face_recognition_backend` option (`facenet`, the default, or `opencv`) selects it: `opencv` uses YuNet to find faces and SFace to recognize them, both run by `opencv-python-headless`, which the add-on already ships and which needs no PyTorch. **Nothing changes unless you opt in**: `facenet` is the default, its thresholds and the suspicious-flag bypass are untouched, and an existing install keeps working with every enrollment it has. The two backends describe a face with different numbers (128 against 512) that cannot be compared, so each enrolled photo now records which model made it (a new `face_enrollments.model` column, existing rows read as FaceNet's), photos from the other backend stay on the Biometrics tab marked as not in use, and people have to be enrolled again after switching. The OpenCV backend is experimental: its thresholds are conservative choices above OpenCV's published SFace figure, not measurements on camera footage, so it never sets an unclear face aside (`ai_face_recognition_ignore_unclear_faces` has no effect with it), and the Biometrics tab says so. Its two small model files are downloaded once, from OpenCV's model zoo at a pinned commit, into `/data/model_cache/opencv_faces/` (the file sizes are checked, but the zoo publishes no hash to verify them against, so the add-on logs each file's SHA-256). `/api/ai/faces` gains `backend`, `backend_measured` and a per-photo `other_backend`. The other packages the Dockerfile pins were checked against PyPI on 2026-11-22: OpenCV 5.1.0.95 and `lap` 0.5.14 are the latest releases, and Transformers 5.23.0, Ultralytics 8.4.215 and `filelock` 4.2.12 are one release behind a version published that week, so facenet-pytorch (last release 2024-04-29) is the only one that has stopped being developed.
+
+- Deprecated YOLO11 for object detection and pose (BCD-4). YOLO26 has been the default since an earlier release, and YOLO27 is announced but not released: as of ultralytics 8.4.216 its README says models are "not yet available" and its list of downloadable weights has no `yolo27` entry, so it is not offered yet (a choice that could only fail to download would be worse than none). `yolo11n/s/m/l/x.pt` and `yolo11n/s/m/l/x-pose.pt` **keep working and stay in the options' lists**, because Supervisor refuses a saved value its schema does not list and removing them would stop the add-on starting for anyone who chose one. What changes: while one is in use (Enhanced Detection on, the local detection backend, and for pose the pose switch on), the add-on logs a warning at start-up naming the option and the same-size YOLO26 file to switch to; the Object Detection Model and Pose Model descriptions in all six languages, `config.yaml`, DOCS.md and CLAUDE.md say it is deprecated and to be removed. The add-on never swaps your model for you, since a different model detects differently. Adding YOLO27 once it exists is one entry in `model_catalog.YOLO_CURRENT_GENERATIONS`, the two schema lists and the translations, and a new test fails if the schemas and that list ever disagree.
+
+- Updated vue to 3.5.46
+- Updated @types/node to 26.6.11
+- Updated @vitest/coverage-v8 to 5.1.2
+- Updated vitest to 5.1.2
+- Updated typescript-eslint to 8.74.0
+- Updated anthropic to 2.14.0
+- Updated openai to 3.59.0
+- Updated PyYAML to 6.0.4
+- Updated ultralytics to 8.4.219
+- Updated transformers to 5.24.1
+- Updated torch to 2.15.0
+- Updated torchvision to 0.29.2
+- Updated filelock to 4.3.1
+
+### Release Workflow
+
+- Updated the add-on to version 6.2.3 (add-on manifest, Python package, web UI About dialog and the npm package files).
+
 ## 6.2.2
 
 ### Bug fixes

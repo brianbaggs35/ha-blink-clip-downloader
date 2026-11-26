@@ -18,6 +18,7 @@ a different camera stops the old session first. Sessions are in-memory only
 from __future__ import annotations
 
 import asyncio
+import builtins
 import contextlib
 import logging
 import shutil
@@ -32,6 +33,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from .downloader import AUTH_FATAL_EXCEPTIONS
 from .log_text import loggable
+from .public_text import known_text
 
 if TYPE_CHECKING:
     from blinkpy.camera import BlinkCamera
@@ -42,6 +44,45 @@ _LOGGER = logging.getLogger(__name__)
 # What the browser is told when starting a session fails for a reason the add-on
 # does not word itself: the kind of failure, not the library's own text.
 _START_FAILED = "Could not start live view ({kind}). The add-on log has the details."
+
+# The kinds a failure may be reported as: the built-in exception classes, which
+# is what a person can look up. A library's own class name is reported as
+# "Error", like a kind not listed here.
+_FAILURE_KINDS: tuple[str, ...] = tuple(
+    sorted(
+        name
+        for name, value in vars(builtins).items()
+        if isinstance(value, type) and issubclass(value, Exception)
+    )
+)
+
+
+def _start_failed(exc: BaseException) -> str:
+    """What the browser is told when starting failed with *exc*."""
+    return _START_FAILED.format(
+        kind=known_text(type(exc).__name__, _FAILURE_KINDS, "Error")
+    )
+
+
+# Every sentence a LiveViewError raised by this module can carry (the one
+# kind-dependent sentence once per kind): the only text media_server/ will
+# show the browser for one.
+_TIMEOUT = (
+    "The camera did not respond to the live view request in "
+    "time — check that it's online."
+)
+_UNSUPPORTED = "This camera does not support live view."
+_NO_SESSION = "Blink did not return a valid live view session for this camera."
+_NO_PORT = "Could not open a local port for the live view relay."
+_NO_FFMPEG = "ffmpeg is not available on this system."
+PUBLIC_MESSAGES: tuple[str, ...] = (
+    _TIMEOUT,
+    _UNSUPPORTED,
+    _NO_SESSION,
+    _NO_PORT,
+    _NO_FFMPEG,
+    *(_START_FAILED.format(kind=kind) for kind in (*_FAILURE_KINDS, "Error")),
+)
 
 _HLS_SEGMENT_PATTERN = "seg_%05d.ts"
 _HLS_PLAYLIST_NAME = "stream.m3u8"
@@ -367,19 +408,14 @@ class LiveViewManager:
                 camera.init_livestream(), timeout=self._init_timeout
             )
         except TimeoutError as exc:
-            raise LiveViewError(
-                "The camera did not respond to the live view request in "
-                "time — check that it's online."
-            ) from exc
+            raise LiveViewError(_TIMEOUT) from exc
         except NotImplementedError as exc:
             # blinkpy raises this when the liveview response isn't an
             # immis:// URL — see BlinkCamera.init_livestream().
-            raise LiveViewError("This camera does not support live view.") from exc
+            raise LiveViewError(_UNSUPPORTED) from exc
         except KeyError as exc:
             # Defensive: a malformed Blink response missing server/command_id.
-            raise LiveViewError(
-                "Blink did not return a valid live view session for this camera."
-            ) from exc
+            raise LiveViewError(_NO_SESSION) from exc
         except AUTH_FATAL_EXCEPTIONS:
             # Let TokenRefreshFailed/LoginError/UnauthorizedError through
             # untouched so app.py's reconnect logic can see them — only the
@@ -389,7 +425,7 @@ class LiveViewManager:
             _LOGGER.exception(
                 "Live view: could not start live view for %r", loggable(camera_name)
             )
-            raise LiveViewError(_START_FAILED.format(kind=type(exc).__name__)) from exc
+            raise LiveViewError(_start_failed(exc)) from exc
 
         _patch_short_reads(stream)
 
@@ -404,15 +440,13 @@ class LiveViewManager:
             # propagates, exactly as the ffmpeg failure below does.
             _stop_stream_quietly(stream)
             if isinstance(exc, OSError):
-                raise LiveViewError(
-                    "Could not open a local port for the live view relay."
-                ) from exc
+                raise LiveViewError(_NO_PORT) from exc
             _LOGGER.error(
                 "Live view: could not open the relay for %r",
                 loggable(camera_name),
                 exc_info=exc,
             )
-            raise LiveViewError(_START_FAILED.format(kind=type(exc).__name__)) from exc
+            raise LiveViewError(_start_failed(exc)) from exc
 
         hls_dir = Path(tempfile.mkdtemp(prefix="blink-liveview-"))
         try:
@@ -534,7 +568,7 @@ class LiveViewManager:
                 stderr=asyncio.subprocess.PIPE,
             )
         except OSError as exc:
-            raise LiveViewError("ffmpeg is not available on this system.") from exc
+            raise LiveViewError(_NO_FFMPEG) from exc
 
     async def _drain_stderr(self, session: _LiveViewSession) -> None:
         """Actively drain ffmpeg's stderr pipe for the session's whole life.

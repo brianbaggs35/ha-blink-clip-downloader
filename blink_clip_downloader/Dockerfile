@@ -193,7 +193,9 @@ RUN pip3 install --no-cache-dir -r /tmp/requirements.txt \
 # mismatched one — verified by hand: without this, `import torchvision`
 # raises "RuntimeError: operator torchvision::nms does not exist" at runtime.
 #
-# facenet-pytorch is installed separately with --no-deps: its pinned
+# facenet-pytorch (the default face backend; the opt-in `opencv` one runs YuNet +
+# SFace through the opencv-python-headless installed above and needs none of
+# this) is installed separately with --no-deps: its pinned
 # `Pillow<10.3.0,>=10.2.0` predates Python 3.13 wheel support, so pip falls
 # back to building Pillow 10.2.0 from source, which fails outright under
 # current setuptools (KeyError: '__version__' in Pillow's legacy setup.py) —
@@ -210,7 +212,7 @@ RUN pip3 install --no-cache-dir -r /tmp/requirements.txt \
 # add-on still builds and runs — the affected config toggles simply report
 # themselves unavailable at runtime (see vision/runtime.py's availability checks).
 RUN ( \
-        pip3 install --no-cache-dir "torch>=2.14,<3" "torchvision>=0.29,<1" \
+        pip3 install --no-cache-dir "torch>=2.15.0,<3" "torchvision>=0.29.2,<1" \
             --index-url https://download.pytorch.org/whl/cpu \
         # torch's own install pulls in a pinned, older setuptools/wheel as a
         # transitive build dependency (visible via `pip show`, not declared
@@ -255,7 +257,7 @@ RUN ( \
         && rm -rf /usr/lib/python3/dist-packages/wheel \
             /usr/lib/python3/dist-packages/wheel-*.dist-info \
         && pip3 install --no-cache-dir --only-binary :all: \
-            "filelock==4.2.12" \
+            "filelock==4.3.1" \
             # lap isn't in ultralytics' own declared dependencies (`pip show
             # ultralytics` doesn't list it) — it's an optional extra
             # ultralytics only imports inside YOLO.track() (the Hungarian-
@@ -294,8 +296,8 @@ RUN ( \
             # backward-compatible surface across major versions, and this
             # add-on's usage here is exactly that surface, never
             # trust_remote_code (which stays at its safe default of False).
-            "transformers==5.23.0" \
-            "ultralytics==8.4.215" \
+            "transformers==5.24.1" \
+            "ultralytics==8.4.219" \
         && pip3 install --no-cache-dir --only-binary :all: --no-deps "facenet-pytorch==2.6.0" \
         2>&1 | tail -20 \
     ) || echo "INFO: computer-vision pipeline install failed; ai_object_detection_enabled \
@@ -368,7 +370,7 @@ RUN chmod a+x /etc/services.d/blink-downloader/run \
 # here lets code-only releases reuse the large Python/CV layers and lets
 # Supervisor pull only the changed application layer.
 ARG BUILD_ARCH
-ARG BUILD_VERSION=6.1.1
+ARG BUILD_VERSION=6.2.3
 
 LABEL \
     org.opencontainers.image.title="Blink Clip Downloader" \

@@ -5203,6 +5203,111 @@ async def test_faces_list_flags_a_photo_unlike_the_persons_others(
     assert sum(1 for w in warnings.values() if w) == 1
 
 
+# --- the face-recognition backend --------------------------------------------
+
+
+@pytest.fixture
+async def sface_client(db: ClipDatabase, tmp_path: Path) -> AsyncGenerator[TestClient]:
+    """A server running the OpenCV (SFace) face backend."""
+    server = MediaServer(
+        db=db, port=0, clip_storage_dir=tmp_path, face_backend="opencv"
+    )
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    yield tc
+    await tc.close()
+
+
+async def test_faces_list_says_which_backend_runs(client: TestClient) -> None:
+    body = await (await client.get("/api/ai/faces")).json()
+    assert body["backend"] == "facenet"
+    assert body["backend_measured"] is True
+
+
+async def test_faces_list_says_the_opencv_backend_is_unmeasured(
+    sface_client: TestClient,
+) -> None:
+    body = await (await sface_client.get("/api/ai/faces")).json()
+    assert body["backend"] == "opencv"
+    assert body["backend_measured"] is False
+
+
+async def test_the_server_asks_availability_of_its_own_backend(
+    sface_client: TestClient,
+) -> None:
+    with patch(
+        "blink_downloader.media_server.faces.is_face_recognition_available",
+        return_value=False,
+    ) as available:
+        body = await (await sface_client.get("/api/ai/faces")).json()
+        resp = await sface_client.post("/api/ai/faces/detect", json=_photo_body())
+    assert body["available"] is False
+    assert resp.status == 400
+    assert {call.args for call in available.call_args_list} == {("opencv",)}
+
+
+async def test_enrolling_records_the_model_that_made_the_embedding(
+    client: TestClient, sface_client: TestClient, db: ClipDatabase
+) -> None:
+    await _enroll(client, "Brian", [1.0, 0.0])
+    await _enroll(sface_client, "Amy", [0.0, 1.0])
+    models = {e["name"]: e["model"] for e in await db.list_face_enrollments()}
+    assert models == {"Brian": "facenet-vggface2", "Amy": "opencv-sface"}
+
+
+async def test_the_list_marks_photos_made_with_another_backend(
+    client: TestClient, sface_client: TestClient
+) -> None:
+    """Both stay visible (so they can be deleted or the backend switched back),
+    but only the running backend's photos are in use."""
+    await _enroll(client, "Brian", [1.0, 0.0])
+    await _enroll(sface_client, "Amy", [0.0, 1.0])
+    for tc, in_use in ((client, "Brian"), (sface_client, "Amy")):
+        faces = (await (await tc.get("/api/ai/faces")).json())["faces"]
+        assert {f["name"]: f["other_backend"] for f in faces} == {
+            "Brian": in_use != "Brian",
+            "Amy": in_use != "Amy",
+        }
+
+
+async def test_a_face_is_only_compared_with_photos_from_its_own_backend(
+    client: TestClient, sface_client: TestClient
+) -> None:
+    await _enroll(client, "Brian", [1.0, 0.0])
+    (same_space,) = await _offer(client, _face([1.0, 0.0]))
+    assert same_space["match"]["name"] == "Brian"
+    (other_space,) = await _offer(sface_client, _face([1.0, 0.0]))
+    assert other_space["match"] is None
+
+
+async def test_the_review_ignores_photos_from_another_backend(
+    client: TestClient, sface_client: TestClient
+) -> None:
+    """A photo unlike its person's others is only unlike them in the same space."""
+    await _enroll(client, "Amy", [1.0, 0.0], [0.99, 0.1])
+    await _enroll(sface_client, "Amy", [0.0, 1.0])
+    for tc in (client, sface_client):
+        faces = (await (await tc.get("/api/ai/faces")).json())["faces"]
+        assert not any(f["warning"] for f in faces)
+
+
+async def test_grouping_and_matching_use_the_running_backends_bars(
+    sface_client: TestClient, client: TestClient
+) -> None:
+    """Two faces 45 degrees apart: one person to SFace's group bar, two to FaceNet's."""
+    import math
+
+    near = [math.cos(math.radians(45)), math.sin(math.radians(45))]
+    groups: dict[str, int] = {}
+    for label, tc in (("facenet", client), ("opencv", sface_client)):
+        offered = await _offer(tc, _face([1.0, 0.0]), _face(near))
+        resp = await tc.post(
+            "/api/ai/faces/group", json={"candidate_ids": [f["id"] for f in offered]}
+        )
+        groups[label] = len((await resp.json())["groups"])
+    assert groups == {"facenet": 2, "opencv": 1}
+
+
 # --- photo detection -------------------------------------------------------
 
 
@@ -9724,6 +9829,26 @@ async def test_liveview_start_generic_live_view_error(db: ClipDatabase) -> None:
         resp = await tc.post("/api/liveview/start", json={"camera": "Front Door"})
         assert resp.status == 502
         assert "ffmpeg" in (await resp.text()).lower()
+    finally:
+        await tc.close()
+
+
+async def test_liveview_start_error_text_is_only_ever_the_add_ons_own(
+    db: ClipDatabase,
+) -> None:
+    """A LiveViewError carrying anything but a sentence the add-on wrote
+    (a library's own text, a path) is answered with a fixed sentence."""
+    live_view = _make_live_view(
+        start_side_effect=LiveViewError("/data/auth_credentials.json: boom")
+    )
+    server = MediaServer(db=db, port=0, live_view=live_view)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post("/api/liveview/start", json={"camera": "Front Door"})
+        assert resp.status == 502
+        text = await resp.text()
+        assert "auth_credentials" not in text
+        assert text == "Could not start live view. The add-on log has the details."
     finally:
         await tc.close()
 

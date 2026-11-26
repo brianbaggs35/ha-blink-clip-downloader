@@ -11,6 +11,7 @@ import pytest
 from blinkpy.auth import LoginError, TokenRefreshFailed, UnauthorizedError
 
 from blink_downloader.live_view import (
+    PUBLIC_MESSAGES,
     CameraNotFoundError,
     LiveViewError,
     LiveViewManager,
@@ -456,6 +457,42 @@ async def test_start_session_generic_exception_wrapped(
     # The kind of failure reaches the browser; the library's own text does not.
     assert "RuntimeError" in str(caught.value)
     assert "boom" not in str(caught.value)
+    assert str(caught.value) in PUBLIC_MESSAGES
+
+
+async def test_a_library_exception_class_is_reported_only_as_an_error(
+    manager: LiveViewManager, camera_registry: dict[str, Any]
+) -> None:
+    """Only a built-in exception's name is passed on as the kind of failure;
+    a library's own class name is not something a person can look up."""
+
+    class BlinkWhateverError(Exception):
+        pass
+
+    camera = MagicMock()
+    camera.init_livestream = AsyncMock(side_effect=BlinkWhateverError("boom"))
+    camera_registry["Front Door"] = camera
+
+    with pytest.raises(LiveViewError) as caught:
+        await manager.start_session("Front Door")
+    assert str(caught.value) == (
+        "Could not start live view (Error). The add-on log has the details."
+    )
+    assert str(caught.value) in PUBLIC_MESSAGES
+
+
+def test_every_sentence_the_module_raises_can_be_shown() -> None:
+    for sentence in (
+        (
+            "The camera did not respond to the live view request in "
+            "time — check that it's online."
+        ),
+        "This camera does not support live view.",
+        "Blink did not return a valid live view session for this camera.",
+        "Could not open a local port for the live view relay.",
+        "ffmpeg is not available on this system.",
+    ):
+        assert sentence in PUBLIC_MESSAGES
 
 
 async def test_start_session_ffmpeg_missing_cleans_up_stream(

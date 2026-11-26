@@ -214,8 +214,13 @@ async def test_the_scratch_file_is_removed_after_a_download(
         ),
         pytest.param(
             PermissionError(13, "Permission denied", "/data/camera_configs.json"),
-            "Creating the backup failed: Permission denied (camera_configs.json).",
-            id="a file cannot be read",
+            "Creating the backup failed: Permission denied.",
+            id="a file cannot be read, and its name stays in the log",
+        ),
+        pytest.param(
+            OSError(5, "Input/output error: /data/library.db"),
+            "Creating the backup failed. The add-on logs have the reason.",
+            id="an operating-system reason this add-on has no words for",
         ),
         pytest.param(
             RuntimeError("secret internals"),
@@ -368,11 +373,13 @@ async def test_a_drive_client_that_blows_up_is_a_failure_not_a_crash(
     scratch = tmp_path / "scratch.zip"
     scratch.write_bytes(b"")
     monkeypatch.setattr(routes, "_scratch_zip", lambda: scratch)
-    drive = _drive(upload_file=AsyncMock(side_effect=OSError(5, "Input/output error")))
+    drive = _drive(
+        upload_file=AsyncMock(side_effect=OSError(28, "No space left on device"))
+    )
     api = await make_api(gdrive_client=drive)
     resp = await api.client.post("/api/backup/gdrive")
     assert resp.status == 500
-    assert "Input/output error" in await resp.text()
+    assert "No space left on device" in await resp.text()
     assert not scratch.exists()
 
 

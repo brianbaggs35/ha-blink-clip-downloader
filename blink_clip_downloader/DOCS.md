@@ -1062,13 +1062,14 @@ you'll see them report unavailable there.
 | `ai_enhanced_detection_enabled` | `false` | Frame preprocessing (CLAHE contrast enhancement + light denoising, OpenCV), object detection + tracking (YOLO + ByteTrack, via Ultralytics), monocular depth estimation (Depth Anything V2, via transformers), and pixel-level contact segmentation (SAM2, via transformers) — one switch for all four. Depth estimation and contact segmentation have always required object detection to run at all, and there was no real value in toggling preprocessing/detection independently, so earlier versions' four separate settings just multiplied untested on/off combinations without a matching benefit. Adds a code-computed **OBJECT DETECTION** hint (what was detected — people, vehicles, and animals — and how close a detected person or animal is to a detected vehicle), a **TRACKING** hint (lingering/casing vs. briefly passing through, via ByteTrack's frame-to-frame continuity), a **DEPTH ESTIMATE** hint ("overlapping in the 2D frame" vs. "actually at the same distance from the camera" — catches the case where a person or animal only *looks* close to the protected vehicle because of the camera angle), and a **CONTACT ANALYSIS** hint (refining a bounding-box overlap into an actual touching-or-not judgment, e.g. a dog jumping on the car vs. merely standing nearby, using each object's real visible outline). Vehicle-distance/depth/contact language only ever applies on a camera actually designated to view the protected vehicle (`ai_car_cameras`) — other cameras stay isolated even if they happen to detect an unrelated car. Detected objects also show up as a compact chip summary (e.g. "🧍 2 people 🚗 1 car") in the Library clip modal's AI panel — a quick at-a-glance count, not a bounding-box overlay, so it stays out of the way for anyone with this feature off. Each chip's number is how many distinct ones **appeared in the clip**, not how many boxes the detector stored: it runs over every sampled frame, so one parked car across a twelve-frame clip is one car, not twelve. They are counted by the tracker's own identities, the same ones the security layer groups its events by — so the chips and a "2 separate people were tracked" event can never disagree — which also means the count is only as good as the tracking, and tracking is only as good as the number of frames analyzed. One correction is made for anything that is not a person: the tracker can lose a parked car for a few frames and give it a new identity when it sees it again, so two identities whose boxes sit in the same place and were never in the same frame count as one (this is what showed 8 cars for a clip with 6). People are always counted by the tracker's identities, and the security events are not changed. Hover a chip for the raw box total behind it and the detector's best confidence. |
 | `ai_vision_backend` | `local` | Where the object-detection stage runs: `local` (on this device) or `huggingface` (on Hugging Face's servers, for hardware that cannot run the model). **`huggingface` uploads the sampled clip frames** — read *Running object detection on Hugging Face* below before turning it on. |
 | `ai_remote_detection_model` | `facebook/detr-resnet-50` | The Hugging Face object-detection model used when `ai_vision_backend` is `huggingface`. Its serverless inference currently serves `facebook/detr-resnet-50` and `facebook/detr-resnet-101`. |
-| `ai_object_detection_model` | `yolo26n.pt` | Which Ultralytics model the detection stage above runs. YOLO26 (`yolo26n/s/m/l/x.pt`) is the current generation — end-to-end inference, lighter and more accurate than YOLO11 at every size — and is the default; `yolo11n/s/m/l/x.pt` remain selectable for compatibility with existing configurations. "n" (nano) is fastest/lightest and the recommended starting point on CPU-only hardware; "s"/"m"/"l"/"x" trade speed for accuracy, with "x" (extra-large) the most accurate and much slower. Small subjects are where the sizes differ most: measured on 75 real dogs rendered into camera clips, a dog about 100px tall in a 1080p frame was found at night 2 times with `yolo26n`, 16 with `yolo26s` and 21 with `yolo26m` (13, 29 and 39 by day), at roughly 2× and 5× nano's detection time, with no more phantom animals in scenes that had none. If a pet or other small animal keeps going unnoticed, try `yolo26s` first. |
+| `ai_object_detection_model` | `yolo26n.pt` | Which Ultralytics model the detection stage above runs. YOLO26 (`yolo26n/s/m/l/x.pt`) is the current generation — end-to-end inference, lighter and more accurate than YOLO11 at every size — and is the default; `yolo11n/s/m/l/x.pt` are **deprecated**: they still work, so an existing configuration keeps running and still starts, but they will be removed in a later release and a warning naming the option is logged at start-up while one is selected (the add-on never switches your model for you, because a different model detects differently). YOLO27 will be added when Ultralytics publishes weights for it — as of ultralytics 8.4.216 it is announced but not released. "n" (nano) is fastest/lightest and the recommended starting point on CPU-only hardware; "s"/"m"/"l"/"x" trade speed for accuracy, with "x" (extra-large) the most accurate and much slower. Small subjects are where the sizes differ most: measured on 75 real dogs rendered into camera clips, a dog about 100px tall in a 1080p frame was found at night 2 times with `yolo26n`, 16 with `yolo26s` and 21 with `yolo26m` (13, 29 and 39 by day), at roughly 2× and 5× nano's detection time, with no more phantom animals in scenes that had none. If a pet or other small animal keeps going unnoticed, try `yolo26s` first. |
 | `ai_depth_estimation_model` | `depth-anything/Depth-Anything-V2-Small-hf` | Which Depth Anything V2 checkpoint the depth-estimation stage above runs. "Small" (default) is fastest/lightest and Apache-2.0 licensed; "Base"/"Large" are more accurate but slower/heavier, and are licensed CC-BY-NC-4.0 (**non-commercial use only**) by their publisher, unlike Small's Apache-2.0 — fine for this add-on's typical personal home-security use, but confirm that licensing fits your own situation before choosing either. |
-| `ai_face_recognition_enabled` | `false` | Local-only face recognition (facenet-pytorch) to suppress alerts for enrolled household members — see below. Kept as its own toggle since it's privacy-sensitive rather than just heavier compute. |
+| `ai_face_recognition_enabled` | `false` | Local-only face recognition (facenet-pytorch by default; an experimental OpenCV backend is selectable, see `ai_face_recognition_backend`) to suppress alerts for enrolled household members — see below. Kept as its own toggle since it's privacy-sensitive rather than just heavier compute. |
 | `ai_face_recognition_ignore_unclear_faces` | `false` | Whether a face too poor to identify still counts as a possible stranger. Off keeps the suspicious-flag bypass exactly as strict as it has always been: every face that matches nobody blocks it, so one blurred frame of a household member can stop a whole clip being marked recognized. On, such a face is set aside instead — only when it is a poor look or a clear likeness of someone recognized in the clip, and a different recognized person nearby can account for each one. See **Unclear faces** under the Biometrics tab below for exactly when, what it measured, and what it costs, and the **Recognition results** panel for how many of your own clips it would change. It needs enough pixels on a face, so raise `ai_face_recognition_resolution` to `high` or `very_high` with it. Face data stays on the device either way, and the hint sent to the AI provider stays nameless. |
+| `ai_face_recognition_backend` | `facenet` | Which models find and compare faces. `facenet` (the default) is facenet-pytorch's MTCNN + InceptionResnetV1, what every enrollment so far was made with and the only backend whose thresholds were measured. `opencv` is an **experimental, opt-in** alternative: YuNet (detection) and SFace (recognition), both run by `opencv-python-headless`, which is actively maintained and needs no PyTorch. The two cannot be compared with each other, so after switching everyone must be enrolled again — see **Switching the face-recognition backend** under the Biometrics tab below before changing it. |
 | `ai_face_recognition_resolution` | `standard` | How much detail faces are matched with — face recognition's equivalent of the other stages' model size, since it has one recognition network and what there is to trade is pixels per face. `standard` uses the 640px-wide frames analysis already extracts; `high` (960px) and `very_high` (1280px) look again at the same moments in more detail. Measured on a face about 60px wide in a 1080p frame (someone a few metres from the camera), standard recognized it 11 times in 30, high 27 and very high 30, with no wrong-person match at any setting, at roughly 1.2× and 1.7× the face stage's CPU time. The Biometrics tab's clip scans use the same resolution, and a face matches best against photos enrolled at the same one — after changing it, scan a clip of each person again (the tab points out which photos were captured at the old one). |
 | `ai_pose_estimation_enabled` | `false` | Body-keypoint (pose) estimation for whoever is nearest the protected vehicle, on the one frame the depth and contact stages already examine. Adds three facts a bounding box cannot give: an arm extended toward the vehicle (trying a handle, reaching through a window), an arm raised above shoulder height, and a crouched or bent-over posture. Its own small model, downloaded on first use. |
-| `ai_pose_model` | `yolo26n-pose.pt` | Which Ultralytics pose checkpoint the stage above runs. YOLO26-pose is the current generation, matching the object detector's own default; `yolo11n/s/m/l/x-pose.pt` remain selectable for anyone already using them. "n" (nano) is fastest/lightest and the recommended starting point on CPU-only hardware; larger sizes are more accurate and much slower. All output the same 17 COCO keypoints. |
+| `ai_pose_model` | `yolo26n-pose.pt` | Which Ultralytics pose checkpoint the stage above runs. YOLO26-pose is the current generation, matching the object detector's own default; `yolo11n/s/m/l/x-pose.pt` are deprecated in the same way (still work, warned about at start-up, to be removed in a later release). "n" (nano) is fastest/lightest and the recommended starting point on CPU-only hardware; larger sizes are more accurate and much slower. All output the same 17 COCO keypoints. |
 | `ai_audio_analysis_enabled` | `false` | Sound-event classification of the clip's own audio track (an Audio Spectrogram Transformer fine-tuned on Google's AudioSet, via transformers). Adds an **AUDIO** hint naming what it heard — breaking glass, a raised voice, a car alarm, a door, footsteps, a power tool, a dog — as weak supporting evidence the model has to reconcile with the frames, never as a verdict of its own. It **classifies sound and never transcribes speech**: no words are read, nothing is sent anywhere, and the model runs on the same machine as the add-on (see *Audio analysis and privacy* below). A general "animal" label is never reported by itself, because the classifier can rate it above its floor on a clip with no animal in it; a specific animal sound such as a dog, a cat or a bark is reported as usual. Clips from a camera with no microphone, or with it switched off, produce no hint at all — the stage detects that in the same pass it uses to read the audio, so it costs nothing on installs that have no audio to analyze. Independent of `ai_enhanced_detection_enabled`: this one reads the clip file, not the sampled frames. |
 | `ai_audio_model` | *(blank)* | Optional override for the audio-classification checkpoint the stage above runs. Blank uses the tested default (`MIT/ast-finetuned-audioset-10-10-0.4593`). Any Hugging Face `audio-classification` model works; a checkpoint whose class names don't resemble AudioSet's will mostly be filtered out as irrelevant, so only change this if you know the labels the model emits. |
 | `ai_cv_concurrency` | `1` | How many of these heavy stages may run at once **across every clip being analyzed**. The stages already run one after another within a single clip, so the default only serializes a multi-clip backlog — which would have contended for the same CPU anyway — while stopping four large models from being resident and computing simultaneously. Raise it only on hardware with real spare capacity. |
@@ -1901,6 +1902,48 @@ is hidden while face recognition is off and nothing has been recorded.
 
 ---
 
+##### Switching the face-recognition backend
+
+`ai_face_recognition_backend` chooses the models behind everything on this tab.
+`facenet` (the default) is facenet-pytorch, which has not had a release since
+April 2024 and is installed here with `--no-deps` because its pinned Pillow does
+not build on Python 3.13. `opencv` runs OpenCV's own face classes instead
+(`FaceDetectorYN`, the YuNet model, to find faces and `FaceRecognizerSF`, the
+SFace model, to turn each into 128 numbers). Both come with
+`opencv-python-headless`, which this add-on already ships and updates, and
+neither needs PyTorch. Nothing leaves the device either way: the two small
+model files (about 0.2 MB and 37 MB) are downloaded once from OpenCV's model
+zoo, at a pinned commit, into `/data/model_cache/opencv_faces/` (put them there
+by hand to run without internet access), and photos, faces and names stay local
+exactly as the banner above says.
+
+What to know before switching:
+
+- **Everyone has to be enrolled again.** The two backends describe a face with
+  different numbers, which cannot be compared. Each enrolled photo remembers
+  which backend made it (`face_enrollments.model`). After switching, photos
+  from the other backend stay on the tab, marked as not in use and counted in a
+  notice, but nobody is recognized until they are enrolled with the new one —
+  **Find faces** works as usual. Switching back makes the old photos work again.
+  Nothing is deleted or converted for you.
+- **It is experimental because its thresholds are not measured.** FaceNet's
+  match bar (0.75), what counts as a likeness (0.55) and the picker's and
+  review's bars were measured on real faces shrunk to camera size and put
+  through H.264. For SFace the figures that are used (a match at 0.50, grouping
+  at 0.50, a photo flagged as not the person at 0.40) are this add-on's own
+  conservative choices, above OpenCV's published decision threshold for SFace of
+  0.363, and have **not** been measured on camera footage. Treat its results as
+  unproven until you have checked them against your own clips with the
+  Recognition results panel.
+- **So it is held to the strictest rules.** The suspicious-flag bypass is as
+  strict as ever: a face that matches nobody blocks it. With the OpenCV backend
+  `ai_face_recognition_ignore_unclear_faces` has **no effect**, because its
+  rules for setting an unclear face aside were measured on FaceNet only. A
+  face is never set aside by a number nobody measured.
+- **Only faces are affected.** Object detection, tracking, depth, pose and audio
+  are separate stages and unchanged, as are the AI provider and the prompt (which
+  still never contains a name).
+
 ## AI Alerts (Extended Notifications)
 
 When AI analysis flags a clip as suspicious — or a camera's battery goes low,
@@ -2288,6 +2331,14 @@ Under the sync modules, the **Schedules** card arms or disarms on set days and t
 - A switch only says **armed** or **disarmed** once Blink has accepted the
   command. If Blink could not be reached, you get an error toast and the
   tab reloads what the add-on knows instead.
+- Renaming a camera in the Blink app: from 6.2.3 on, clips recorded before the
+  rename keep the name the camera had then (the Library's camera list still
+  shows it for those clips), while settings, battery history, enrolled faces and
+  what the add-on has learned about the camera (your ratings, corrections and
+  its normal-activity baseline) move to the new name, including when you rate or
+  re-analyze an old clip. Renames made by earlier versions had already merged
+  the history under one name and are not undone. Changing only the capitals
+  (`Front door` to `Front Door`) renames everything, since it is the same name.
 - Renaming a camera or sync module in the Blink app does not stop its
   switch working in a tab that has not refreshed yet: the tab arms by
   Blink's own id for it, not by the name. Two sync modules can each have a
@@ -2969,10 +3020,10 @@ Downloaded clips are saved under the `share` folder, accessible via:
 | `/data/arming_schedule_state.json` | What each schedule last did, so a restart does not run one twice (left out of a backup) |
 | `/data/vehicle_zone_snapshots/` | One reference frame (JPEG) per camera with a saved car zone — the exact image the zone was drawn on, so the Vehicles tab's preview never silently shows a different, newer frame |
 | `/data/moondream_packages/` | The `moondream` Python package itself, installed here via the AI tab's **Install** button so it persists across restarts |
-| `/data/model_cache/` | Downloaded computer-vision models (YOLO, Depth Anything V2, SAM2, facenet-pytorch) — see **Disk Space** above |
+| `/data/model_cache/` | Downloaded computer-vision models (YOLO, Depth Anything V2, SAM2, facenet-pytorch; the OpenCV face backend's two models are in its `opencv_faces/` subfolder) — see **Disk Space** above |
 | `/data/google_drive_settings.json` | Google OAuth client ID/secret and backup policy, set via the Storage tab |
 | `/data/google_drive_credentials.json` | Cached Google Drive OAuth token, selected backup folder, and whether Google has rejected the sign-in (do not edit) |
-| `/data/web_access.json` | The secret that signs direct-port sign-ins, and the access token Home Assistant's own calls carry (do not edit; delete it to sign every browser out and replace the token) |
+| `/data/web_access.json` | The direct-port sign-ins that are in force (kept as hashes, so the file cannot be used to sign in), and the access token Home Assistant's own calls carry (do not edit; delete it to sign every browser out and replace the token) |
 
 > All `/data/` files are stored inside the add-on's private data directory and are
 > automatically removed by the supervisor when the add-on is uninstalled. The

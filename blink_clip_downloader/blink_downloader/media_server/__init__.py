@@ -52,7 +52,8 @@ from ..backup import RestoreStaging
 from ..database import ClipDatabase
 from ..face_enrollment import FaceCandidateStore
 from ..ffmpeg_output import ANALYSIS_FRAME_WIDTH
-from ..vision import FaceEmbedder
+from ..vision import create_face_embedder
+from ..vision.face_models import face_model_for
 from .access import AccessRoutesMixin
 from .access_control import AccessControl
 from .ai import AiRoutesMixin
@@ -154,6 +155,7 @@ class MediaServer(
         face_recognition_enabled: bool = False,
         face_ignore_unclear: bool = False,
         face_frame_width: int = ANALYSIS_FRAME_WIDTH,
+        face_backend: str = "facenet",
         remote_vision: bool = False,
         live_view: LiveViewManager | None = None,
         list_camera_names: Callable[[], list[str]] | None = None,
@@ -238,7 +240,9 @@ class MediaServer(
         # hold (see vision/runtime.py) — enrollment is a rare, occasional action, so
         # a second lazily-loaded model instance here is simpler than piping
         # a reference to the analyzer's private pipeline through for it.
-        self._face_embedder = FaceEmbedder()
+        self._face_backend = face_backend
+        self._face_model = face_model_for(face_backend)
+        self._face_embedder = create_face_embedder(face_backend)
         # Faces a Biometrics scan found, held until the user enrolls some —
         # see face_enrollment.py for why the browser only ever gets ids.
         self._face_candidates = FaceCandidateStore()

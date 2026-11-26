@@ -368,8 +368,9 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     ai_enhanced_detection_enabled: bool = False
     # Which Ultralytics YOLO model the object-detection stage above runs.
     # YOLO26 (yolo26n/s/m/l/x.pt) is the current generation and the
-    # default; yolo11n/s/m/l/x.pt remain selectable for compatibility with
-    # existing configurations. "n" (nano) models are the fastest/lightest
+    # default; yolo11n/s/m/l/x.pt are deprecated (still work, warned about at
+    # start-up by the app, to be removed later -- see
+    # model_catalog.YOLO_DEPRECATED_GENERATIONS). "n" (nano) models are the fastest/lightest
     # and the recommended starting point on CPU-only hardware; larger
     # models (s/m/l/x) are more accurate but much slower.
     ai_object_detection_model: str = "yolo26n.pt"
@@ -419,6 +420,13 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     # Enrollment scans follow it, so photos enrolled before a change match
     # best after being re-scanned.
     ai_face_recognition_resolution: str = "standard"
+    # Which models find and compare faces: "facenet" (facenet-pytorch's MTCNN
+    # + InceptionResnetV1, the default and what every enrollment so far was
+    # made with) or "opencv" (YuNet + SFace through OpenCV, no PyTorch needed;
+    # experimental -- its thresholds are unmeasured). Embeddings from the two
+    # are not comparable, so each enrollment records the one it was made
+    # with and a person must be enrolled again after switching.
+    ai_face_recognition_backend: str = "facenet"
     # Body-keypoint estimation (Ultralytics YOLO-pose) for the subject
     # nearest a protected asset, on the single frame the depth/contact
     # stages already examine. Its own toggle and its own small checkpoint:
@@ -427,8 +435,8 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     # from a bounding box, and obvious from a skeleton. Off by default.
     ai_pose_estimation_enabled: bool = False
     # YOLO26-pose, matching ai_object_detection_model's own generation;
-    # yolo11n/s/m/l/x-pose.pt remain selectable for anyone who has already
-    # downloaded them. Same "n is the CPU-friendly starting point" advice.
+    # yolo11n/s/m/l/x-pose.pt are deprecated the same way. Same "n is the
+    # CPU-friendly starting point" advice.
     ai_pose_model: str = "yolo26n-pose.pt"
     # Sound-event classification of the clip's own audio track. The only
     # stage that looks at anything other than pixels, and worth its own
@@ -791,6 +799,18 @@ def _parse_face_recognition_resolution(data: dict) -> str:
     return value if value in FACE_RECOGNITION_RESOLUTIONS else "standard"
 
 
+#: Every ai_face_recognition_backend value (vision/face_models.py's
+#: FACE_BACKENDS; tests/test_config.py keeps the two, and config.yaml, in step).
+FACE_RECOGNITION_BACKENDS = ("facenet", "opencv")
+
+
+def _parse_face_recognition_backend(data: dict) -> str:
+    """The configured face backend; anything unrecognised is "facenet", the
+    one every enrollment made before the option existed was made with."""
+    value = str(data.get("ai_face_recognition_backend", "") or "").strip().lower()
+    return value if value in FACE_RECOGNITION_BACKENDS else "facenet"
+
+
 def _text_option(data: dict, key: str, default: str = "") -> str:
     """A string option, trimmed; *default* when it is missing, null or blank."""
     return str(data.get(key, "") or "").strip() or default
@@ -931,6 +951,7 @@ def _parse_ai_detection_kwargs(data: dict) -> dict[str, Any]:
             data.get("ai_face_recognition_ignore_unclear_faces", False)
         ),
         "ai_face_recognition_resolution": _parse_face_recognition_resolution(data),
+        "ai_face_recognition_backend": _parse_face_recognition_backend(data),
         "ai_pose_estimation_enabled": bool(
             data.get("ai_pose_estimation_enabled", False)
         ),

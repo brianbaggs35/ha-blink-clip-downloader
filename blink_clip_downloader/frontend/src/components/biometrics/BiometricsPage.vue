@@ -37,6 +37,8 @@ const approvedCount = computed(() => people.value.filter((p) => p.approved).leng
 const mismatchedCount = computed(
   () => data.value?.faces.filter((f) => isResolutionMismatch(f, frameWidth.value)).length ?? 0,
 )
+const unmeasuredBackend = computed(() => data.value?.backend === 'opencv' && data.value.backend_measured === false)
+const otherBackendCount = computed(() => data.value?.faces.filter((f) => f.other_backend).length ?? 0)
 const legacyCount = computed(() => people.value.filter((p) => p.onlyLegacy).length)
 
 // Whose photos the dialog shows. Held by name, so it follows a reload.
@@ -185,6 +187,18 @@ function scanReportedClip(clipId: string) {
       <template v-else-if="modelsFailed.retry_in !== null">
         The add-on tries again {{ retryWording(modelsFailed.retry_in) }}, or when you scan a clip or photo here.
       </template>
+    </Message>
+    <Message v-if="unmeasuredBackend" severity="info" size="small" :closable="false" class="status-banner">
+      Faces are being recognized with the experimental <strong>OpenCV</strong> backend (YuNet + SFace). Its matching
+      thresholds have not been measured on camera footage, so it is held to the strictest rules: it never sets an
+      unclear face aside, whatever <strong>Ignore Unclear Faces</strong> says. Check the results below before relying on
+      it for the suspicious-flag bypass.
+    </Message>
+    <Message v-if="otherBackendCount" severity="warn" size="small" :closable="false" class="status-banner">
+      {{ otherBackendCount }} photo{{ otherBackendCount === 1 ? ' was' : 's were' }} enrolled with the other
+      face-recognition backend. Their face data cannot be compared with the one running now, so
+      {{ otherBackendCount === 1 ? 'it is' : 'they are' }} not used: until those people are enrolled again with
+      <strong>Find faces</strong>, they are not recognized. The old photos stay until you remove them.
     </Message>
     <Message v-if="mismatchedCount" severity="info" size="small" :closable="false" class="status-banner">
       {{ mismatchedCount }} photo{{ mismatchedCount === 1 ? ' was' : 's were' }} captured at a different Face

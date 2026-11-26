@@ -356,6 +356,32 @@ async def test_insert_rows_keeps_binary_values_intact(db: ClipDatabase) -> None:
     assert enrollment["has_thumbnail"] is True
 
 
+async def test_an_enrollment_keeps_the_model_that_made_it_through_a_backup(
+    db: ClipDatabase,
+) -> None:
+    """The embedding is meaningless without its model: a restored SFace photo
+    must not come back tagged FaceNet's, and a backup from before the column
+    existed has no model to carry, so its rows read as FaceNet's."""
+    await db.add_face_enrollment("Riley", [0.1, 0.2], model="opencv-sface")
+    async with db.backup_snapshot() as snapshot:
+        (batch,) = [b async for b in snapshot.batches("face_enrollments")]
+    assert batch[0]["model"] == "opencv-sface"
+
+    assert db._pool is not None
+    await db._pool.execute("DELETE FROM face_enrollments")
+    async with db.restore_session() as session:
+        await session.insert_rows("face_enrollments", batch)
+    (restored,) = await db.list_face_enrollments()
+    assert restored["model"] == "opencv-sface"
+
+    old = {k: v for k, v in batch[0].items() if k not in ("id", "model")}
+    await db._pool.execute("DELETE FROM face_enrollments")
+    async with db.restore_session() as session:
+        await session.insert_rows("face_enrollments", [old])
+    (legacy,) = await db.list_face_enrollments()
+    assert legacy["model"] == "facenet-vggface2"
+
+
 async def test_one_session_takes_a_table_in_as_many_batches_as_it_likes(
     db: ClipDatabase,
 ) -> None:

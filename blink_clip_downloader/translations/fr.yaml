@@ -558,15 +558,18 @@ configuration:
     name: Modèle de détection d'objets
     description: >-
       Fichier de modèle Ultralytics utilisé par l'étape de détection
-      ci-dessus. YOLO26 (yolo26n/s/m/l/x.pt) est la génération actuelle
-      — inférence de bout en bout, plus léger et plus précis que
-      YOLO11 à toutes les tailles — et constitue la valeur par défaut
-      recommandée ; yolo11n/s/m/l/x.pt restent sélectionnables par
-      compatibilité avec les configurations existantes. "n" (nano) est
-      le plus rapide/léger, recommandé sur du matériel sans GPU ;
-      "s"/"m"/"l"/"x" échangent la vitesse contre la précision, "x"
-      (très grand) étant le plus précis et beaucoup plus lent.
-      Téléchargé automatiquement lors de la première utilisation.
+      ci-dessus. YOLO26 (yolo26n/s/m/l/x.pt) est la génération actuelle —
+      inférence de bout en bout, plus léger et plus précis que YOLO11 à
+      toutes les tailles — et constitue la valeur par défaut recommandée ;
+      YOLO11 (yolo11n/s/m/l/x.pt) est obsolète : il fonctionne toujours,
+      donc les configurations existantes continuent de tourner, mais il sera
+      retiré dans une prochaine version et un avertissement est consigné au
+      démarrage tant qu'il est sélectionné. YOLO27 sera ajouté dès
+      qu'Ultralytics le publiera. "n" (nano) est le plus rapide/léger,
+      recommandé sur du matériel sans GPU ; "s"/"m"/"l"/"x" échangent la
+      vitesse contre la précision, "x" (très grand) étant le plus précis et
+      beaucoup plus lent. Téléchargé automatiquement lors de la première
+      utilisation.
   ai_depth_estimation_model:
     name: Modèle d'estimation de profondeur
     description: >-
@@ -616,6 +619,16 @@ configuration:
       éloignées de la caméra pour un coût processeur modéré. Après un
       changement, rescannez un clip dans l'onglet Biométrie — les visages
       correspondent mieux aux photos enregistrées à la même résolution.
+  ai_face_recognition_backend:
+    name: Moteur de reconnaissance faciale
+    description: >-
+      Quels modèles détectent et comparent les visages. « facenet » (par
+      défaut) est ce avec quoi toutes les inscriptions ont été faites
+      jusqu'ici. « opencv » utilise YuNet et SFace via OpenCV, sans PyTorch,
+      mais reste expérimental : ses seuils n'ont pas été mesurés sur des
+      images de caméras, il n'écarte donc jamais un visage peu net. Les deux
+      ne sont pas comparables entre eux : il faut réinscrire tout le monde
+      après un changement. Lisez la documentation avant de le modifier.
   hf_token:
     name: Jeton Hugging Face
     description: >-
@@ -638,9 +651,16 @@ configuration:
   ai_pose_model:
     name: Modèle de pose
     description: >-
-      Quel point de contrôle de pose Ultralytics exécuter. « n » (nano) est
-      le plus rapide et le plus léger, recommandé sur du matériel sans GPU ;
-      les tailles supérieures sont plus précises et bien plus lentes.
+      YOLO26-pose (yolo26n/s/m/l/x-pose.pt) est la génération actuelle et
+      correspond à la valeur par défaut du détecteur d'objets. YOLO11
+      (yolo11n/s/m/l/x-pose.pt) est obsolète : il fonctionne toujours, donc
+      les configurations existantes continuent de tourner, mais il sera
+      retiré dans une prochaine version et un avertissement est consigné au
+      démarrage tant qu'il est sélectionné. YOLO27 sera ajouté dès
+      qu'Ultralytics le publiera. Quel point de contrôle de pose Ultralytics
+      exécuter. « n » (nano) est le plus rapide et le plus léger, recommandé
+      sur du matériel sans GPU ; les tailles supérieures sont plus précises
+      et bien plus lentes.
   ai_audio_analysis_enabled:
     name: Activer l'analyse audio
     description: >-
