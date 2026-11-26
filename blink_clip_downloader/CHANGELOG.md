@@ -23,6 +23,11 @@
 - Updated @vitest/coverage-v8 to 5.1.2
 - Updated vitest to 5.1.2
 - Updated typescript-eslint to 8.74.0
+- Updated anthropic to 2.14.0
+- Updated openai to 3.59.0
+- Updated PyYAML to 6.0.4
+- Updated ultralytics to 8.4.219
+- Updated transformers to 5.24.1
 
 ### Release Workflow
 
