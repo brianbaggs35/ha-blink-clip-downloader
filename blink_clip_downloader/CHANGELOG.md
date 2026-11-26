@@ -28,6 +28,9 @@
 - Updated PyYAML to 6.0.4
 - Updated ultralytics to 8.4.219
 - Updated transformers to 5.24.1
+- Updated torch to 2.15.0
+- Updated torchvision to 0.29.2
+- Updated filelock to 4.3.1
 
 ### Release Workflow
 
